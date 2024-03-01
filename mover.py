@@ -1,4 +1,4 @@
-"""Handles DAS, ARR, and Softdrop"""
+"""Handles DAS, ARR, and Softdrop for the Human Player"""
 import time
 from const import *
 

@@ -36,7 +36,7 @@ class Game:
     def place_piece(self):
         self.add_history()
         self.human_player.place_piece()
-        self.ai_player.make_move()
+        # self.ai_player.make_move()
 
     def add_history(self):
         player_history = []
