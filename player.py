@@ -11,6 +11,8 @@ class Player:
         self.queue = Queue()
         self.stats = Stats()
 
+        self.game_over = False
+
         self.piece = None
         self.held_piece = None
 
@@ -335,5 +337,5 @@ class AI(Player):
         super().__init__()
         self.draw_coords = (600, 0)
     
-    def make_move():
-        pass
+    def make_move(self):
+        self.place_piece()

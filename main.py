@@ -45,7 +45,7 @@ class Main:
                             game.human_player.move_down()
                             mover.start_down()
                         elif event.key == k_hard_drop:
-                            game.place_piece()
+                            game.make_move()
                         elif event.key == k_rotate_cw:
                             game.human_player.try_wallkick(1)
                         elif event.key == k_rotate_180:

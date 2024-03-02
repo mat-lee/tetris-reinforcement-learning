@@ -14,7 +14,6 @@ class Game:
         
         self.players = [self.ai_player, self.human_player]
 
-        self.game_over = False
         self.history = []
 
     # Game methods
@@ -33,22 +32,28 @@ class Game:
         for player in self.players:
             player.queue.add_bag(bag)
 
-    def place_piece(self):
-        self.add_history()
-        self.human_player.place_piece()
-        # self.ai_player.make_move()
-
+    def make_move(self):
+        if (self.human_player.game_over == False or 
+            self.ai_player.game_over == False):
+            self.add_history()
+        if self.human_player.game_over != True:
+            self.human_player.place_piece()
+        if self.ai_player.game_over != True:
+            self.ai_player.make_move()
+        
     def add_history(self):
         player_history = []
         for player in self.players:
             piece = copy.deepcopy(player.piece)
-            piece.move_to_spawn()
+            if piece != None:
+                piece.move_to_spawn()
             dictionary = {
                 'board': copy.deepcopy(player.board), 
                 'queue': copy.deepcopy(player.queue), 
                 'stats': copy.deepcopy(player.stats), 
                 'piece': piece,
                 'held_piece': copy.deepcopy(player.held_piece),
+                'game_over': copy.deepcopy(player.game_over)
                 }
             player_history.append(dictionary.copy())
         self.history.append(player_history)
