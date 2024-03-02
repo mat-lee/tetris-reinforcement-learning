@@ -36,10 +36,13 @@ class Main:
                     # On key down
                     if event.type == pygame.KEYDOWN:
                         if event.key == k_move_left:
+                            game.human_player.move_left()
                             mover.start_left()
                         elif event.key == k_move_right:
+                            game.human_player.move_right()
                             mover.start_right()
                         elif event.key == k_soft_drop:
+                            game.human_player.move_down()
                             mover.start_down()
                         elif event.key == k_hard_drop:
                             game.place_piece()
@@ -53,8 +56,7 @@ class Main:
                             game.human_player.hold_piece()
                         elif event.key == k_undo:
                             game.undo()
-                        mover.reset_counter(is_sd=False)
-                        mover.reset_counter(is_sd=True)
+
                     # On key release
                     elif event.type == pygame.KEYUP:
                         # pain
@@ -71,25 +73,36 @@ class Main:
 
             pygame.display.update()
 
-            # Moving pieces snippet 
-            # Add piece moves to a queue
+            # DAS, ARR, and Softdrop
             current_time = time.time()
-            mover.update_queue(current_time, is_sd=False)
-            mover.update_queue(current_time, is_sd=True)
 
-            while len(mover.movement_string) > 0:
-                str = mover.movement_string
+            ### This code, while cool, does not matter
+            ### I still need to consider sliding off and corners
+            '''# Stop code from running if das is into a wall  
+            if ((mover.lr_das_direction == "L" and not game.human_player.can_move_left())
+                or (mover.lr_das_direction == "R" and not game.human_player.can_move_right())):
+                mover.can_lr_das = False
+            
+            # Stop code from runing if sd is into floor
+            if (mover.sd_held == True and not game.human_player.can_move_down()):
+                mover.can_sd_das = False'''
 
-                if str[0] == "L":
-                    game.human_player.move_left()
-                    mover.reset_counter(is_sd=False)
-                elif str[0] == "R":
-                    game.human_player.move_right()
-                    mover.reset_counter(is_sd=False)
-                elif str[0] == "D":
-                    game.human_player.move_down()
-                    mover.reset_counter(is_sd=True)
-                mover.movement_string = str[1:]
+            if mover.can_lr_das:
+                if mover.lr_das_start_time != None:
+                    if current_time - mover.lr_das_start_time > mover.lr_das_counter:
+                        if mover.lr_das_direction == "L":
+                            game.human_player.move_left()
+                        elif mover.lr_das_direction == "R":
+                            game.human_player.move_right()      
+                        mover.lr_das_counter += ARR/1000
+#                        print(mover.can_lr_das,mover.lr_das_direction, game.human_player.can_move_left(), current_time)
+
+            if mover.can_sd_das:
+                if mover.sd_start_time != None:
+                    if current_time - mover.sd_start_time > mover.sd_counter:
+                        game.human_player.move_down()
+                        mover.sd_counter += (1 / SDF) / 1000
+#                        print(mover.can_sd_das, game.human_player.can_move_down(),current_time)
 
 main = Main()
 main.mainloop()

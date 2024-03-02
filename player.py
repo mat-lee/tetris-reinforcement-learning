@@ -67,23 +67,38 @@ class Player:
         
         return(ghost_y)
 
-    def move_right(self):
+    def can_move_right(self):
         piece = self.piece
 
         if not self.collision(piece.x_0 + 1, piece.y_0, piece.matrix):
-            piece.x_0 += 1
+            return True
+        return False
 
-    def move_left(self):
+    def move_right(self):
+        if self.can_move_right():
+            self.piece.x_0 += 1
+
+    def can_move_left(self):
         piece = self.piece
 
         if not self.collision(piece.x_0 - 1, piece.y_0, piece.matrix):
-            piece.x_0 -= 1
+            return True
+        return False
+
+    def move_left(self):
+        if self.can_move_left():
+            self.piece.x_0 -= 1
     
-    def move_down(self):
+    def can_move_down(self):
         piece = self.piece
 
         if not self.collision(piece.x_0 , piece.y_0 + 1, piece.matrix):
-            piece.y_0 += 1
+            return True
+        return False
+
+    def move_down(self):
+        if self.can_move_down():
+            self.piece.y_0 += 1
     
     def rotate_piece(self, piece, final):
         diff = (final - piece.rotation) % 4
