@@ -213,7 +213,7 @@ class Player:
                         is_all_clear = False
                         break
 
-        attack = stats.update_stats(rows_cleared, is_tspin, is_mini, is_all_clear)
+        attack = stats.get_attack(rows_cleared, is_tspin, is_mini, is_all_clear) # also updates stats
         stats.pieces += 1
 
         if attack > 0:
