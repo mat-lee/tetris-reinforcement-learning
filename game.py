@@ -36,12 +36,16 @@ class Game:
         if (self.human_player.game_over == False or 
             self.ai_player.game_over == False):
             self.add_history()
+
         if self.human_player.game_over != True:
             self.human_player.place_piece()
             self.check_garbage(self.human_player)
+            self.human_player.create_next_piece() # Create piece after garbage
+            
         if self.ai_player.game_over != True:
             self.ai_player.make_move()
             self.check_garbage(self.ai_player)
+            self.ai_player.create_next_piece() # Create piece after garbage
         
     def add_history(self):
         player_history = []
@@ -55,7 +59,7 @@ class Game:
                 'stats': copy.deepcopy(player.stats), 
                 'piece': piece,
                 'held_piece': copy.deepcopy(player.held_piece),
-                'garbage_received': copy.deepcopy(player.garbage_received),
+                'garbage_received': copy.deepcopy(player.garbage_to_receive),
                 'game_over': copy.deepcopy(player.game_over)
                 }
             player_history.append(dictionary.copy())

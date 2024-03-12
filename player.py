@@ -220,10 +220,6 @@ class Player:
             column = random.randint(0, 9)
             for _ in range(attack):
                 self.garbage_to_send.append(column)
-
-        # Create the next piece
-        if len(self.queue.pieces) > 0:
-            self.create_next_piece()
         
     def hold_piece(self):
         if self.held_piece == None:
