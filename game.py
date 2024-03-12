@@ -38,8 +38,10 @@ class Game:
             self.add_history()
         if self.human_player.game_over != True:
             self.human_player.place_piece()
+            self.check_garbage(self.human_player)
         if self.ai_player.game_over != True:
             self.ai_player.make_move()
+            self.check_garbage(self.ai_player)
         
     def add_history(self):
         player_history = []
@@ -67,6 +69,22 @@ class Game:
                     setattr(self.players[i], key, player_state[key])
                 
             self.history.pop(-1)
+    
+    def check_garbage(self, player):
+        other_player = [x for x in self.players if x != player][0]
+
+        # Checks for sending garbage, sends garbage, and canceling
+        while len(player.garbage_to_send) > 0 and len(player.garbage_to_receive) > 0: # Cancel garbage
+            # Remove first elements
+            player.garbage_to_send.pop(0)
+            player.garbage_to_receive.pop(0)
+        
+        if len(player.garbage_to_send) > 0:
+            other_player.garbage_to_receive += player.garbage_to_send # Send garbage
+            player.garbage_to_send = [] # Stop sending garbage
+        
+        if len(player.garbage_to_receive) > 0:
+            player.spawn_garbage()
     
     # Show methods
     def show_bg(self, surface):

@@ -3,6 +3,7 @@ from piece_queue import Queue
 from stats import Stats
 from piece import Piece
 from const import *
+import random
 
 class Player:
     """Parent class for both human and AI players."""
@@ -12,6 +13,8 @@ class Player:
         self.stats = Stats()
 
         self.game_over = False
+        self.garbage_to_receive = [] # index 0 appears first
+        self.garbage_to_send = [] # sends and receive are in same order
 
         self.piece = None
         self.held_piece = None
@@ -199,7 +202,8 @@ class Player:
             for row in range(cleared_row)[::-1]:
                 for col in range(COLS):
                     grid[row + 1][col].type = grid[row][col].type
-                    self.board.empty_line(0)
+
+            self.board.empty_line(0)
 
         if rows_cleared > 0:
             is_all_clear = True
@@ -209,13 +213,18 @@ class Player:
                         is_all_clear = False
                         break
 
-        stats.update_stats(rows_cleared, is_tspin, is_mini, is_all_clear)
+        attack = stats.update_stats(rows_cleared, is_tspin, is_mini, is_all_clear)
         stats.pieces += 1
+
+        if attack > 0:
+            column = random.randint(0, 9)
+            for _ in range(attack):
+                self.garbage_to_send.append(column)
 
         # Create the next piece
         if len(self.queue.pieces) > 0:
             self.create_next_piece()
-
+        
     def hold_piece(self):
         if self.held_piece == None:
             self.held_piece = self.piece.type
@@ -226,6 +235,12 @@ class Player:
             self.held_piece = self.piece.type
             self.create_piece(temp)
     
+    def spawn_garbage(self):
+        for column in self.garbage_to_receive: # Using pop changes the order of the list
+            self.board.garbage_line(column)
+        
+        self.garbage_to_receive = []
+
     # Draw methods
     def draw_piece(self, surface, _x_0, _y_0, piece_matrix, color):
         """Draw a piece matrix"""
@@ -249,6 +264,7 @@ class Player:
         self.show_minos(screen)
         self.show_queue(screen)
         self.show_hold(screen)
+        self.show_garbage(screen)
         self.show_stats(screen)
 
     def show_ghost(self, surface):
@@ -309,19 +325,38 @@ class Player:
             for coord in coords:
                 col, row = coord
                 self.draw_mino(surface, row, col, color_dict[held_piece])
-    
+
+    def show_garbage(self, screen):
+        # Show amount of incoming garbage
+        # Can't do pygame rects from the bottom
+        top_left_x = HOLD_WIDTH + E_BUFFER + self.draw_coords[0] - 1/2 * MINO_SIZE
+        top_left_y = ROWS * MINO_SIZE + N_BUFFER + self.draw_coords[1]
+        width = MINO_SIZE / 3
+        height = len(self.garbage_to_receive) * MINO_SIZE
+        
+        rect = (top_left_x, top_left_y - height, 
+                    width, height)
+
+        pygame.draw.rect(screen, (255, 0, 0), rect)
+
     def show_stats(self, screen):
-        font = pygame.font.Font('freesansbold.ttf', 18)
+        factor = MINO_SIZE / 30
+        font = pygame.font.Font('freesansbold.ttf', int(18 * factor))
 
         render_lists = [["PIECES", self.stats.pieces, 5],
                        ["ATTACK", self.stats.lines_sent, 6],
                        ["B2B", self.stats.b2b, 7],
                        ["COMBO", self.stats.combo, 8]]
-
+        
         for render_list in render_lists:
             text = font.render(f'{render_list[0]}: {render_list[1]}', True, (255, 255, 255))
             screen.blit(text, (1 * MINO_SIZE + E_BUFFER + self.draw_coords[0], 
                            render_list[2] * MINO_SIZE + N_BUFFER + self.draw_coords[1]))
+        
+        if self.game_over == True:
+            text = font.render('LOSES', True, (255, 255, 255))
+            screen.blit(text, (1 * MINO_SIZE + E_BUFFER + self.draw_coords[0],
+                           9 * MINO_SIZE + N_BUFFER + self.draw_coords[1]))
 
         '''text_5 = font.render(f'LEVEL: {self.stats.b2b_level}', True, (255, 255, 255))
         screen.blit(text_5, (1 * MINO_SIZE + E_BUFFER, 
@@ -335,7 +370,7 @@ class Human(Player):
 class AI(Player):
     def __init__(self) -> None:
         super().__init__()
-        self.draw_coords = (600, 0)
+        self.draw_coords = (WIDTH/2, 0)
     
     def make_move(self):
         self.place_piece()

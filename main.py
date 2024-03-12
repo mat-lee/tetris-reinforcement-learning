@@ -78,14 +78,16 @@ class Main:
 
             ### This code, while cool, does not matter
             ### I still need to consider sliding off and corners
-            '''# Stop code from running if das is into a wall  
+            '''
+            # Stop code from running if das is into a wall  
             if ((mover.lr_das_direction == "L" and not game.human_player.can_move_left())
                 or (mover.lr_das_direction == "R" and not game.human_player.can_move_right())):
                 mover.can_lr_das = False
             
             # Stop code from runing if sd is into floor
             if (mover.sd_held == True and not game.human_player.can_move_down()):
-                mover.can_sd_das = False'''
+                mover.can_sd_das = False
+            '''
 
             if mover.can_lr_das:
                 if mover.lr_das_start_time != None:

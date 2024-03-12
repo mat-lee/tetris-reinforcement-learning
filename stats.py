@@ -10,7 +10,7 @@ class Stats:
         self.combo = 0
         self.lines_sent = 0
 
-    def update_b2b(self):
+    def update_b2b_level(self):
         b2b_chart = [[-1, 0],
                      [1, 1],
                      [3, 2], 
@@ -25,6 +25,9 @@ class Stats:
             if (self.b2b >= list[0]) and (self.b2b_level < list[1]):
                 self.b2b_level = list[1]
 
+    def get_attack(self, rows_cleared, is_tspin, is_mini, is_all_clear):
+        pass
+
     def update_stats(self, rows_cleared, is_tspin, is_mini, is_all_clear):
         attack = 0
 
@@ -37,42 +40,48 @@ class Stats:
                     self.b2b = -1
                     attack = math.floor(0.5 + 0.25 * self.combo)
                 else:
+                    self.b2b += 1
+                    self.update_b2b_level()
+
                     if is_mini == True:
-                        if self.b2b == 0:
+                        if self.b2b <= 0 and self.b2b_level <= 0:
                             attack = math.floor(0.5 + 0.25 * self.combo)
                         else:
-                            self.update_b2b()
                             attack = math.floor(self.b2b_level * (1 + 0.25 * self.combo))
                     else:
-                        self.b2b += 1
-                        self.update_b2b()
                         attack = math.floor((2 + self.b2b_level) * (1 + 0.25 * self.combo))
+
             elif rows_cleared == 2:
                 if is_tspin == False:
-                    self.b2b = 0
+                    self.b2b = -1
                     attack = math.floor(1 + 0.25 * self.combo)
                 else:
+                    self.b2b += 1
+                    self.update_b2b_level()
+
                     if is_mini == True:
-                        self.update_b2b()
                         attack = math.floor((1 + self.b2b_level) * (1 + 0.25 * self.combo))
                     else:
-                        self.b2b += 1
-                        self.update_b2b()
                         attack = math.floor((1 + 0.25 * self.b2b_level) * (4 + 1 * self.combo))
+
             elif rows_cleared == 3:
                 if is_tspin == False:
-                    self.b2b = 0
+                    self.b2b = -1
                     attack = math.floor(2 + 0.5 * self.combo)
                 else:
                     self.b2b += 1
-                    self.update_b2b()
+                    self.update_b2b_level()
+
                     attack = math.floor((1 + 1/6 * self.b2b_level) * (6 + 1.5 * self.combo))
+
             elif rows_cleared == 4:
                 self.b2b += 1
-                self.update_b2b()
+                self.update_b2b_level()
+
                 attack += math.floor((1 + 0.25 * self.b2b_level) * (4 + 1 * self.combo))
+
             self.combo += 1
-        
+
         if is_all_clear:
             attack += 10
 
@@ -80,11 +89,13 @@ class Stats:
 
         self.lines_cleared += rows_cleared
 
+        return attack
+
     # for making sure I implemented garbage sending correctly...
     # don't look please
     # it does work though
 
-    '''def make_chart(self):
+    def make_chart(self):
         combo_max = 5
         types = [
             [1, False, False, 0],
@@ -114,7 +125,13 @@ class Stats:
             for j, type in enumerate(types):
                 chart[j][i] = Stats()
                 chart[j][i].combo = i
-                chart[j][i].b2b = type[3]
-                chart[j][i].update_stats(type[0],type[1],type[2])
+                chart[j][i].b2b_level = type[3]
+                chart[j][i].update_stats(type[0],type[1],type[2], False)
                 chart[j][i] = chart[j][i].lines_sent
-        print(chart)'''
+        
+        for row in chart:
+            print(row)
+
+if __name__ == "__main__":
+    test = Stats()
+    test.make_chart()
