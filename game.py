@@ -55,6 +55,7 @@ class Game:
                 'stats': copy.deepcopy(player.stats), 
                 'piece': piece,
                 'held_piece': copy.deepcopy(player.held_piece),
+                'garbage_received': copy.deepcopy(player.garbage_received),
                 'game_over': copy.deepcopy(player.game_over)
                 }
             player_history.append(dictionary.copy())
