@@ -13,7 +13,7 @@ class Player:
         self.stats = Stats()
 
         self.game_over = False
-        self.garbage_to_receive = [] # index 0 appears first
+        self.garbage_to_receive = [] # index 0 spawns first
         self.garbage_to_send = [] # sends and receive are in same order
 
         self.piece = None
@@ -36,23 +36,10 @@ class Player:
             # If the block can't spawn lose
             self.game_over = True
 
-    def get_mino_coords(self, _x_0, _y_0, piece_matrix):
-        coordinate_list = []
-        cols = len(piece_matrix[0])
-        rows = len(piece_matrix)
-        for x in range(cols):
-            for y in range(rows):
-                if piece_matrix[y][x] != 0:
-                    col = _x_0 + x
-                    row = _y_0 + y
-                    coordinate_list.append([col, row])
-        
-        return(coordinate_list)
-
-    def collision(self, _x_0, _y_0, matrix):
+    def collision(self, x_0, y_0, matrix):
         grid = self.board.grid
 
-        coords = self.get_mino_coords(_x_0, _y_0, matrix)
+        coords = Piece.get_mino_coords(x_0, y_0, matrix)
 
         for col, row in coords:
             if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
@@ -62,46 +49,30 @@ class Player:
 
         return False
 
-    def get_ghost_y(self):
-        piece = self.piece
-
-        ghost_y = piece.y_0
-        while(not self.collision(piece.x_0, ghost_y + 1, piece.matrix)):
+    @property
+    def ghost_y(self):
+        ghost_y = self.piece.y_0
+        while(not self.collision(self.piece.x_0, ghost_y + 1, self.piece.matrix)):
             ghost_y += 1
         
         return(ghost_y)
 
-    def can_move_right(self):
-        piece = self.piece
-
-        if not self.collision(piece.x_0 + 1, piece.y_0, piece.matrix):
+    def can_move(self, x_offset=0, y_offset=0):
+        if not self.collision(self.piece.x_0 + x_offset, 
+                              self.piece.y_0 + y_offset, self.piece.matrix):
             return True
         return False
 
     def move_right(self):
-        if self.can_move_right():
+        if self.can_move(x_offset=1):
             self.piece.x_0 += 1
 
-    def can_move_left(self):
-        piece = self.piece
-
-        if not self.collision(piece.x_0 - 1, piece.y_0, piece.matrix):
-            return True
-        return False
-
     def move_left(self):
-        if self.can_move_left():
+        if self.can_move(x_offset=-1):
             self.piece.x_0 -= 1
-    
-    def can_move_down(self):
-        piece = self.piece
-
-        if not self.collision(piece.x_0 , piece.y_0 + 1, piece.matrix):
-            return True
-        return False
 
     def move_down(self):
-        if self.can_move_down():
+        if self.can_move(y_offset=1):
             self.piece.y_0 += 1
     
     def rotate_piece(self, piece, final):
@@ -146,7 +117,7 @@ class Player:
         grid = self.board.grid
         stats = self.stats
 
-        place_y = self.get_ghost_y()
+        place_y = self.ghost_y
 
         rows = []
         cleared_rows = []
@@ -180,7 +151,7 @@ class Player:
                 rows.append(int(place_y + y))
 
         # Place the pieces
-        coords = self.get_mino_coords(piece.x_0, place_y, piece.matrix)
+        coords = Piece.get_mino_coords(piece.x_0, place_y, piece.matrix)
 
         for col, row in coords:
             grid[row][col].type = piece.type
@@ -234,9 +205,9 @@ class Player:
         self.garbage_to_receive = []
 
     # Draw methods
-    def draw_piece(self, surface, _x_0, _y_0, piece_matrix, color):
+    def draw_piece(self, surface, x_0, y_0, piece_matrix, color):
         """Draw a piece matrix"""
-        coords = self.get_mino_coords(_x_0, _y_0, piece_matrix)
+        coords = Piece.get_mino_coords(x_0, y_0, piece_matrix)
         for coord in coords:
             col, row = coord
             self.draw_mino(surface, row, col, color)
@@ -263,7 +234,7 @@ class Player:
         if self.piece != None:
             piece = self.piece
 
-            ghost_y = self.get_ghost_y()
+            ghost_y = self.ghost_y
             self.draw_piece(surface, piece.x_0, ghost_y, piece.matrix, color_dict["ghost"])
 
     def show_grid_lines(self, surface):
@@ -300,7 +271,7 @@ class Player:
                 x_0 = (12 if piece == "O" else 11) - 0.5
                 y_0 = (0 if piece == "I" else 1)
                 
-                coords = self.get_mino_coords(x_0, y_0 + i * 3, piece_matrix)
+                coords = Piece.get_mino_coords(x_0, y_0 + i * 3, piece_matrix)
                 for coord in coords:
                     col, row = coord
                     self.draw_mino(surface, row, col, color_dict[piece])
@@ -313,7 +284,7 @@ class Player:
             x_0 = (-4 if held_piece == "O" else -5) + 0.5
             y_0 = 1
 
-            coords = self.get_mino_coords(x_0, y_0, piece_matrix)
+            coords = Piece.get_mino_coords(x_0, y_0, piece_matrix)
             for coord in coords:
                 col, row = coord
                 self.draw_mino(surface, row, col, color_dict[held_piece])

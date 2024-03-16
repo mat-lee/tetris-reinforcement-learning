@@ -18,16 +18,16 @@ class Game:
         self.history = History()
 
     # Game methods
-    def generate_bag(self):
-        mino_list = list(minos)
-        random.shuffle(mino_list)
-        return mino_list
-
     def setup_game(self):
         self.add_bag_to_all()
         for player in self.players:
             player.create_next_piece()
         self.add_history()
+
+    def generate_bag(self):
+        mino_list = list(minos)
+        random.shuffle(mino_list)
+        return mino_list
 
     def add_bag_to_all(self):
         bag = self.generate_bag()
@@ -35,12 +35,12 @@ class Game:
             player.queue.add_bag(bag)
 
     def make_move(self):
-        if self.human_player.game_over != True:
+        if self.human_player.game_over == False:
             self.human_player.place_piece()
             self.check_garbage(self.human_player)
             self.human_player.create_next_piece() # Create piece after garbage
 
-        if self.ai_player.game_over != True:
+        if self.ai_player.game_over == False:
             self.ai_player.make_move()
             self.check_garbage(self.ai_player)
             self.ai_player.create_next_piece() # Create piece after garbage

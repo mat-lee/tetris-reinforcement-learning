@@ -21,15 +21,20 @@ class Piece:
         self.x_0 = 3 + displacement
         self.y_0 = 0
 
-    def get_mino_coords(self):
+    @property
+    def coords(self):
+        return(Piece.get_mino_coords(self.x_0, self.y_0, self.matrix))
+    
+    @staticmethod
+    def get_mino_coords(x_0, y_0, piece_matrix):
         coordinate_list = []
-        cols = len(self.matrix[0])
-        rows = len(self.matrix)
+        cols = len(piece_matrix[0])
+        rows = len(piece_matrix)
         for x in range(cols):
             for y in range(rows):
-                if self.matrix[y][x] != 0:
-                    col = self.x_0 + x
-                    row = self.y_0 + y
+                if piece_matrix[y][x] != 0:
+                    col = x_0 + x
+                    row = y_0 + y
                     coordinate_list.append([col, row])
         
         return(coordinate_list)

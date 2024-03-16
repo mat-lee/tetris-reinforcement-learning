@@ -73,8 +73,6 @@ class Main:
                     pygame.quit()
                     sys.exit()
 
-            pygame.display.update()
-
             # DAS, ARR, and Softdrop
             current_time = time.time()
 
@@ -107,6 +105,8 @@ class Main:
                         game.human_player.move_down()
                         mover.sd_counter += (1 / SDF) / 1000
 #                        print(mover.can_sd_das, game.human_player.can_move_down(),current_time)
+            
+            pygame.display.update()
 
 main = Main()
 main.mainloop()

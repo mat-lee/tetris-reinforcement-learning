@@ -44,28 +44,27 @@ class Stats:
             if rows_cleared == 1:
                 if is_tspin == False:
                     self.b2b = -1
-                    attack = math.floor(0.5 + 0.25 * self.combo) ###
+                    attack = math.floor(0.5 + 0.25 * self.combo) ### formula exception
                 else:
                     if is_mini == True:
                         if self.b2b <= 0 and self.b2b_level <= 0:
-                            attack = math.floor(0.5 + 0.25 * self.combo) ###
+                            attack = math.floor(0.5 + 0.25 * self.combo) ### formula exception
                         else:
-                            attack = math.floor(self.b2b_level * (1 + 0.25 * self.combo)) ###
+                            attack = math.floor(self.b2b_level * (1 + 0.25 * self.combo)) ### formula exception
                     else:
                         attack = math.floor((2 + self.b2b_level) * (1 + 0.25 * self.combo))
             
             else: attack += math.floor((1 + 0.25 * self.combo) * 
                                         (2 * rows_cleared * is_tspin * (-3/4 * is_mini + 1)
                                             + 2**(rows_cleared-2) * (1 - is_tspin)
-                                            + 1 * self.b2b_level)) # General formula for 2-4 rows cleared
+                                            + self.b2b_level)) # General formula for 2-4 rows cleared
 
             self.combo += 1
 
-        if is_all_clear:
-            attack += 10
+            if is_all_clear:
+                attack += 10
 
         self.lines_sent += attack
-
         self.lines_cleared += rows_cleared
 
         return attack
