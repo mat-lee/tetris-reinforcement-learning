@@ -56,6 +56,8 @@ class Main:
                             game.human_player.hold_piece()
                         elif event.key == k_undo:
                             game.undo()
+                        elif event.key == k_redo:
+                            game.redo()
 
                     # On key release
                     elif event.type == pygame.KEYUP:

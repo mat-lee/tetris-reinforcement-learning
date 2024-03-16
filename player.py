@@ -54,8 +54,7 @@ class Player:
 
         coords = self.get_mino_coords(_x_0, _y_0, matrix)
 
-        for coord in coords:
-            col, row = coord
+        for col, row in coords:
             if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
                 return True
             elif grid[row][col].type != "empty":
@@ -166,9 +165,8 @@ class Player:
                 col = corners[i][0] + piece.x_0 
                 if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
                     corner_filled[i] = True
-                else:
-                    if grid[row][col].type != "empty":
-                        corner_filled[i] = True
+                elif grid[row][col].type != "empty":
+                    corner_filled[i] = True
 
             if sum(corner_filled) >= 3:
                 is_tspin = True
@@ -184,15 +182,14 @@ class Player:
         # Place the pieces
         coords = self.get_mino_coords(piece.x_0, place_y, piece.matrix)
 
-        for coord in coords:
-            col, row = coord
+        for col, row in coords:
             grid[row][col].type = piece.type
         
         self.piece = None
 
         # Check which rows should be cleared
         for row in rows:
-            if all(mino.type != "empty" for mino in grid[row]):
+            if all(mino.type != "empty" for mino in grid[row]): # careful with ghost type
                 cleared_rows.append(row)
         
         rows_cleared = len(cleared_rows)
@@ -207,9 +204,9 @@ class Player:
 
         if rows_cleared > 0:
             is_all_clear = True
-            for row in range(ROWS):
+            for row in range(rows_cleared, ROWS): # rows_cleared num of empty lines at top
                 for col in range(COLS):
-                    if grid[row][col].type != "empty":
+                    if grid[row][col].type != "empty": # careful with ghost type
                         is_all_clear = False
                         break
 
@@ -218,8 +215,7 @@ class Player:
 
         if attack > 0:
             column = random.randint(0, 9)
-            for _ in range(attack):
-                self.garbage_to_send.append(column)
+            self.garbage_to_send.extend([column] * attack)
         
     def hold_piece(self):
         if self.held_piece == None:
@@ -368,5 +364,8 @@ class AI(Player):
         super().__init__()
         self.draw_coords = (WIDTH/2, 0)
     
+    def create_move_list(self, board, piece):
+        pass
+
     def make_move(self):
         self.place_piece()

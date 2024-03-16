@@ -7,6 +7,7 @@ class Piece:
     '''
 
     def __init__(self, matrix, type=None, x_0=0, y_0=0):
+        # Coords describe top left corner of piece
         self.x_0 = x_0
         self.y_0 = y_0
         self.type = type

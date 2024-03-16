@@ -10,6 +10,7 @@ k_rotate_cw =   pygame.K_UP
 k_rotate_180 =  pygame.K_a
 k_hold =        pygame.K_c
 k_undo =        pygame.K_1
+k_redo =        pygame.K_2
 
 # graphics break when ARR = 0
 # idc

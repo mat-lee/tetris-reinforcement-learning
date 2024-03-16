@@ -1,4 +1,5 @@
 from const import *
+from history import History
 from player import Human, AI
 
 import copy
@@ -14,7 +15,7 @@ class Game:
         
         self.players = [self.ai_player, self.human_player]
 
-        self.history = []
+        self.history = History()
 
     # Game methods
     def generate_bag(self):
@@ -26,6 +27,7 @@ class Game:
         self.add_bag_to_all()
         for player in self.players:
             player.create_next_piece()
+        self.add_history()
 
     def add_bag_to_all(self):
         bag = self.generate_bag()
@@ -33,22 +35,29 @@ class Game:
             player.queue.add_bag(bag)
 
     def make_move(self):
-        if (self.human_player.game_over == False or 
-            self.ai_player.game_over == False):
-            self.add_history()
-
         if self.human_player.game_over != True:
             self.human_player.place_piece()
             self.check_garbage(self.human_player)
             self.human_player.create_next_piece() # Create piece after garbage
-            
+
         if self.ai_player.game_over != True:
             self.ai_player.make_move()
             self.check_garbage(self.ai_player)
             self.ai_player.create_next_piece() # Create piece after garbage
         
+        # Add history after placing piece
+        if (self.human_player.game_over == False or 
+            self.ai_player.game_over == False):
+            self.add_history()
+
     def add_history(self):
-        player_history = []
+        # If placing a piece after undoing, get rid if future history
+        if self.history.index != None:
+            while self.history.index + 1 < len(self.history.boards) and self.history.index >= 0:
+                self.history.boards.pop(-1)
+        
+        # Add on history
+        player_boards = []
         for player in self.players:
             piece = copy.deepcopy(player.piece)
             if piece != None:
@@ -59,21 +68,36 @@ class Game:
                 'stats': copy.deepcopy(player.stats), 
                 'piece': piece,
                 'held_piece': copy.deepcopy(player.held_piece),
-                'garbage_received': copy.deepcopy(player.garbage_to_receive),
+                'garbage_to_receive': copy.deepcopy(player.garbage_to_receive),
                 'game_over': copy.deepcopy(player.game_over)
                 }
-            player_history.append(dictionary.copy())
-        self.history.append(player_history)
+            player_boards.append(dictionary.copy())
+        self.history.boards.append(player_boards)
+
+        # Move history index
+        if self.history.index == None:
+            self.history.index = 0
+        else: self.history.index += 1
+
+    def update_state(self, state):
+        for player_idx in range(len(self.players)):
+            player_state = state[player_idx]
+            for key in player_state:
+                setattr(self.players[player_idx], key, player_state[key])
 
     def undo(self):
-        if len(self.history) > 0:
-            state = self.history[-1]
-            for i in range(len(self.players)):
-                player_state = state[i]
-                for key in player_state:
-                    setattr(self.players[i], key, player_state[key])
-                
-            self.history.pop(-1)
+        if len(self.history.boards) > 1 and self.history.index != 0:
+            state = self.history.copy_board_state(self.history.index - 1)
+            self.update_state(state)
+
+            self.history.index -= 1
+                    
+    def redo(self):
+        if len(self.history.boards) > self.history.index + 1:
+            state = self.history.copy_board_state(self.history.index + 1)
+            self.update_state(state)
+            
+            self.history.index += 1
     
     def check_garbage(self, player):
         other_player = [x for x in self.players if x != player][0]
