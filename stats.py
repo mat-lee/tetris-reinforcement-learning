@@ -9,6 +9,7 @@ class Stats:
         self.b2b_level = 0
         self.combo = 0
         self.lines_sent = 0
+        self.attack_text = ''
 
     def update_b2b_level(self):
         b2b_chart = [[-1, 0],
@@ -66,6 +67,27 @@ class Stats:
 
         self.lines_sent += attack
         self.lines_cleared += rows_cleared
+
+        # Getting text for the type of attack
+        attack_text = ''
+
+        # If it's a mini the text will appear in the line above
+        if is_mini == True:
+            attack_text += 'MINI '
+
+        if is_tspin == True:
+            attack_text += 'T-SPIN '
+
+        if rows_cleared == 4:
+            attack_text += 'QUAD'
+        elif rows_cleared == 3:
+            attack_text += 'TRIPLE'
+        elif rows_cleared == 2:
+            attack_text +='DOUBLE'
+        elif rows_cleared == 1:
+            attack_text +='SINGLE'
+
+        self.attack_text = attack_text
 
         return attack
 
