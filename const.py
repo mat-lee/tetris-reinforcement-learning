@@ -39,6 +39,18 @@ QUEUE_WIDTH = 5 * MINO_SIZE
 WIDTH = 2 * (COLS * MINO_SIZE + HOLD_WIDTH + QUEUE_WIDTH + E_BUFFER + W_BUFFER)
 HEIGHT = ROWS * MINO_SIZE + N_BUFFER + S_BUFFER
 
+# Stats locations
+STAT_SETTINGS = [
+    {'text': "B2B",         'size': int(MINO_SIZE * 1)  , 'location': (0            , 7 * MINO_SIZE)},
+    {'text': "COMBO",       'size': int(MINO_SIZE * 1)  , 'location': (0            , 9 * MINO_SIZE)},
+    {'text': "PIECES",      'size': int(MINO_SIZE * 0.7), 'location': (0            , 16 * MINO_SIZE)},
+    {'text': "pieces_stat", 'size': int(MINO_SIZE * 0.7), 'location': (0            , 17 * MINO_SIZE)},
+    {'text': "ATTACK",      'size': int(MINO_SIZE * 0.7), 'location': (0            , 18 * MINO_SIZE)},
+    {'text': "attack_stat", 'size': int(MINO_SIZE * 0.7), 'location': (0            , 19 * MINO_SIZE)},
+    {'text': "LOSES",       'size': int(MINO_SIZE * 0.7), 'location': (0            , 14 * MINO_SIZE)}
+]
+
+
 # Piece Matrices:
 piece_dict = {
     "Z": [

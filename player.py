@@ -3,7 +3,9 @@ from piece_queue import Queue
 from stats import Stats
 from piece import Piece
 from const import *
+
 import random
+import copy
 
 class Player:
     """Parent class for both human and AI players."""
@@ -303,23 +305,50 @@ class Player:
         pygame.draw.rect(screen, (255, 0, 0), rect)
 
     def show_stats(self, screen):
-        factor = MINO_SIZE / 30
-        font = pygame.font.Font('freesansbold.ttf', int(18 * factor))
+        # factor = MINO_SIZE / 30
+        # font = pygame.font.Font('freesansbold.ttf', int(18 * factor))
 
-        render_lists = [["PIECES", self.stats.pieces, 5],
-                       ["ATTACK", self.stats.lines_sent, 6],
-                       ["B2B", self.stats.b2b, 7],
-                       ["COMBO", self.stats.combo, 8]]
+        # render_lists = [["PIECES", self.stats.pieces, 5],
+        #                ["ATTACK", self.stats.lines_sent, 6],
+        #                ["B2B", self.stats.b2b, 7],
+        #                ["COMBO", self.stats.combo, 8]]
         
-        for render_list in render_lists:
-            text = font.render(f'{render_list[0]}: {render_list[1]}', True, (255, 255, 255))
-            screen.blit(text, (1 * MINO_SIZE + E_BUFFER + self.draw_coords[0], 
-                           render_list[2] * MINO_SIZE + N_BUFFER + self.draw_coords[1]))
+        # for render_list in render_lists:
+        #     text = font.render(f'{render_list[0]}: {render_list[1]}', True, (255, 255, 255))
+        #     screen.blit(text, (1 * MINO_SIZE + E_BUFFER + self.draw_coords[0], 
+        #                    render_list[2] * MINO_SIZE + N_BUFFER + self.draw_coords[1]))
         
-        if self.game_over == True:
-            text = font.render('LOSES', True, (255, 255, 255))
-            screen.blit(text, (1 * MINO_SIZE + E_BUFFER + self.draw_coords[0],
-                           9 * MINO_SIZE + N_BUFFER + self.draw_coords[1]))
+        # if self.game_over == True:
+        #     text = font.render('LOSES', True, (255, 255, 255))
+        #     screen.blit(text, (1 * MINO_SIZE + E_BUFFER + self.draw_coords[0],
+        #                    9 * MINO_SIZE + N_BUFFER + self.draw_coords[1]))
+
+        for stat in STAT_SETTINGS:
+            text = copy.deepcopy(stat['text'])
+            if stat['text'] == 'B2B':
+                if self.stats.b2b > 0:
+                    text = f'B2B X{self.stats.b2b}'
+                else:
+                    text = None
+            elif stat['text'] == 'COMBO':
+                if self.stats.combo > 1: 
+                    text = f'{self.stats.combo - 1} COMBO'
+                else:
+                    text = None
+            elif stat['text'] == 'pieces_stat': 
+                text = str(self.stats.pieces)
+            elif stat['text'] == 'attack_stat': 
+                text = str(self.stats.lines_sent)
+
+            if stat['text'] == 'LOSES' and self.game_over == False:
+                text = None
+            
+            if text != None:
+                font = pygame.font.Font('freesansbold.ttf', stat['size'])
+                render_text = font.render(text, True, (255, 255, 255))
+                screen.blit(render_text, 
+                            (self.draw_coords[0] + E_BUFFER + stat['location'][0], 
+                            self.draw_coords[1] + N_BUFFER + stat['location'][1]))
 
         '''text_5 = font.render(f'LEVEL: {self.stats.b2b_level}', True, (255, 255, 255))
         screen.blit(text_5, (1 * MINO_SIZE + E_BUFFER, 
