@@ -3,9 +3,6 @@ from history import History
 from player import Human, AI
 
 import copy
-import random
-
-minos = "ZLOSIJT"
 
 class Game:
     """Contains all players and communicates with them."""
@@ -24,13 +21,8 @@ class Game:
             player.create_next_piece()
         self.add_history()
 
-    def generate_bag(self):
-        mino_list = list(minos)
-        random.shuffle(mino_list)
-        return mino_list
-
     def add_bag_to_all(self):
-        bag = self.generate_bag()
+        bag = self.human_player.queue.generate_bag()
         for player in self.players:
             player.queue.add_bag(bag)
 

@@ -201,9 +201,7 @@ class Player:
             self.create_piece(temp)
     
     def spawn_garbage(self):
-        for column in self.garbage_to_receive: # Using pop changes the order of the list
-            self.board.garbage_line(column)
-        
+        self.board.create_garbage(self.garbage_to_receive)
         self.garbage_to_receive = []
 
     # Draw methods
