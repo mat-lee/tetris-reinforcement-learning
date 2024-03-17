@@ -41,14 +41,14 @@ HEIGHT = ROWS * MINO_SIZE + N_BUFFER + S_BUFFER
 
 # Stats locations
 STAT_SETTINGS = [
-    {'text': "attack_text", 'size': int(MINO_SIZE * 1.0), 'location': (0            , 4  * MINO_SIZE)},
-    {'text': "B2B",         'size': int(MINO_SIZE * 1.0), 'location': (0            , 7  * MINO_SIZE)},
-    {'text': "COMBO",       'size': int(MINO_SIZE * 1.0), 'location': (0            , 9  * MINO_SIZE)},
-    {'text': "LOSES",       'size': int(MINO_SIZE * 0.8), 'location': (0            , 14 * MINO_SIZE)},
-    {'text': "PIECES",      'size': int(MINO_SIZE * 0.8), 'location': (0            , 16 * MINO_SIZE)},
-    {'text': "pieces_stat", 'size': int(MINO_SIZE * 1.0), 'location': (0            , 17 * MINO_SIZE)},
-    {'text': "ATTACK",      'size': int(MINO_SIZE * 0.8), 'location': (0            , 18 * MINO_SIZE)},
-    {'text': "attack_stat", 'size': int(MINO_SIZE * 1.0), 'location': (0            , 19 * MINO_SIZE)}
+    {'text': "attack_text", 'size': int(MINO_SIZE * 0.7), 'location': (0                           , 4  * MINO_SIZE)},
+    {'text': "B2B",         'size': int(MINO_SIZE * 1.0), 'location': (0                           , 7  * MINO_SIZE)},
+    {'text': "COMBO",       'size': int(MINO_SIZE * 1.0), 'location': (0                           , 9  * MINO_SIZE)},
+    {'text': "LOSES",       'size': int(MINO_SIZE * 0.8), 'location': (0                           , 14 * MINO_SIZE)},
+    {'text': "PIECES",      'size': int(MINO_SIZE * 0.8), 'location': (0                           , 16 * MINO_SIZE)},
+    {'text': "pieces_stat", 'size': int(MINO_SIZE * 1.0), 'location': (HOLD_WIDTH - 1.5 * MINO_SIZE, 16 * MINO_SIZE)},
+    {'text': "ATTACK",      'size': int(MINO_SIZE * 0.8), 'location': (0                           , 18 * MINO_SIZE)},
+    {'text': "attack_stat", 'size': int(MINO_SIZE * 1.0), 'location': (HOLD_WIDTH - 1.5 * MINO_SIZE, 18 * MINO_SIZE)}
 ]
 
 
