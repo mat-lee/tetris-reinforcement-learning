@@ -1,6 +1,7 @@
+from ai import AI
 from const import *
 from history import History
-from player import Human, AI
+from player import Human
 
 import copy
 

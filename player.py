@@ -76,21 +76,6 @@ class Player:
     def move_down(self):
         if self.can_move(y_offset=1):
             self.piece.y_0 += 1
-    
-    def rotate_piece(self, piece, final):
-        diff = (final - piece.rotation) % 4
-
-        # Clockwise rotation
-        if diff == 1:
-            return(list(zip(*piece.matrix[::-1])))
-
-        # 180 rotation
-        if diff == 2:
-            return([x[::-1] for x in piece.matrix[::-1]])
-
-        # Counter-clockwise rotation
-        if diff == 3:
-            return(list(zip(*piece.matrix))[::-1])
 
     def try_wallkick(self, dir):
         piece = self.piece
@@ -104,7 +89,7 @@ class Player:
         else:
             kicktable = wallkicks[key]
 
-        rotated_piece_matrix = self.rotate_piece(piece, f_rotation)
+        rotated_piece_matrix = piece.rotated_matrix(piece.rotation, f_rotation)
 
         for kick in kicktable:
             if not self.collision(piece.x_0 + kick[0], piece.y_0 - kick[1], rotated_piece_matrix):
@@ -339,14 +324,3 @@ class Human(Player):
     def __init__(self) -> None:
         super().__init__()
         self.draw_coords = (0, 0)
-
-class AI(Player):
-    def __init__(self) -> None:
-        super().__init__()
-        self.draw_coords = (WIDTH/2, 0)
-    
-    def create_move_list(self, board, piece):
-        pass
-
-    def make_move(self):
-        self.place_piece()

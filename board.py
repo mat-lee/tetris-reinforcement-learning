@@ -4,7 +4,7 @@ from mino import Mino
 class Board():
 
     def __init__(self):
-        self.grid = [[0]* COLS for row in range(ROWS)]
+        self.grid = [[0 for x in range(COLS)] for y in range(ROWS)]
 
         for row in range(ROWS):
             for col in range(COLS):

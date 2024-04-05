@@ -28,7 +28,7 @@ class Main:
             for player in game.players:
                 player.show_player(screen)
  
-                if len(player.queue.pieces) < 14:
+                if len(player.queue.pieces) < 5:
                     game.add_bag_to_all()
 
             for event in pygame.event.get():

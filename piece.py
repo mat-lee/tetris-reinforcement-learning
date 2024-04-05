@@ -1,5 +1,7 @@
 from const import *
 
+import copy
+
 class Piece:
     '''
     The piece matrix and the center of the piece have a location attribute
@@ -14,12 +16,36 @@ class Piece:
         self.matrix = matrix
         self.rotation = 0 # 1 is right, 2 is 180, 3 is left
 
-    def move_to_spawn(self):
+    def get_spawn_location(self):
         # Move a newly created "O" piece to the right
         displacement = (1 if self.type == "O" else 0)
 
-        self.x_0 = 3 + displacement
-        self.y_0 = 0
+        return (3 + displacement, 0)
+
+    def move_to_spawn(self):
+        self.x_0, self.y_0 = self.get_spawn_location()
+
+    def rotated_matrix(self, initial, final):
+        diff = (final - initial) % 4
+
+        if diff == 0:
+            return(self.matrix)
+
+        # Clockwise rotation
+        if diff == 1:
+            return(list(zip(*self.matrix[::-1])))
+
+        # 180 rotation
+        if diff == 2:
+            return([x[::-1] for x in self.matrix[::-1]])
+
+        # Counter-clockwise rotation
+        if diff == 3:
+            return(list(zip(*self.matrix))[::-1])
+    
+    def update_rotation(self):
+        self.matrix = copy.deepcopy(piece_dict[self.type])
+        self.matrix = self.rotated_matrix(0, self.rotation)
 
     @property
     def coords(self):
