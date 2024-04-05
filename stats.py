@@ -37,12 +37,13 @@ class Stats:
             is_b2b = False
             if rows_cleared == 4 or is_tspin == True:
                 is_b2b = True
-            else:
-                is_b2b = False
             
             if is_b2b == True:
                 self.b2b += 1
-                self.update_b2b_level()
+            else:
+                self.b2b = -1
+            
+            self.update_b2b_level()
 
             if rows_cleared == 1:
                 if is_tspin == False:
