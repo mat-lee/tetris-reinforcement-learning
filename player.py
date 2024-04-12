@@ -99,6 +99,13 @@ class Player:
                 piece.rotation = f_rotation
                 return()
 
+    def force_place_piece(self, x, y, o):
+        self.piece.x_0 = x
+        self.piece.y_0 = y
+        self.piece.rotation = o
+        self.piece.update_rotation()
+        self.place_piece()
+
     def place_piece(self):
         piece = self.piece
         grid = self.board.grid
@@ -174,6 +181,10 @@ class Player:
         if attack > 0:
             column = random.randint(0, 9)
             self.garbage_to_send.extend([column] * attack)
+
+        # Help the AI figure out which move the player made
+        location_placed = (piece.x_0, place_y, piece.rotation)
+        return location_placed
         
     def hold_piece(self):
         if self.held_piece == None:

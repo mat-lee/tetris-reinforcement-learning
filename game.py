@@ -28,15 +28,17 @@ class Game:
             player.queue.add_bag(bag)
 
     def make_move(self):
+        player_move = None
         if self.human_player.game_over == False:
-            self.human_player.place_piece()
+            player_move = self.human_player.place_piece()
             self.check_garbage(self.human_player)
             self.human_player.create_next_piece() # Create piece after garbage
 
-        if self.ai_player.game_over == False:
-            self.ai_player.make_move()
-            self.check_garbage(self.ai_player)
-            self.ai_player.create_next_piece() # Create piece after garbage
+            # Don't have the AI move if the player is dead
+            if self.ai_player.game_over == False:
+                self.ai_player.make_move(self.human_player, self.ai_player, player_move=player_move)
+                self.check_garbage(self.ai_player)
+                self.ai_player.create_next_piece() # Create piece after garbage
         
         # Add history after placing piece
         if (self.human_player.game_over == False or 

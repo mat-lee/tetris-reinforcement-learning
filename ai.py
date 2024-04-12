@@ -1,106 +1,114 @@
+from ai_utils import NodeState
 from const import *
 from player import Player
 
-import time
-
-import math
+from copy import deepcopy
+import random
+import treelib
 
 class AI(Player):
     def __init__(self) -> None:
         super().__init__()
         self.draw_coords = (WIDTH/2, 0)
-    
-    def create_move_list(self, board, _piece):
-        TIME_1 = time.time()
-        # Using a list of all possible locations the piece can reach
-        # Using a queue to determine which boards to check
-    
-        # Possible locations needs to be larger to acount for blocks with negative x and y
-        # O piece        0 to 8
-        # Any 3x3 piece -1 to 8
-        # I piece       -2 to 8
 
-        buffer = (2 if _piece.type == "I" else (0 if _piece.type == "O" else 1))
+        self.tree = None
 
-        possible_piece_locations = [[[False for x in range (4)] for x in range(COLS + buffer - 1)] for y in range(ROWS)]
-        next_location_queue = []
-        locations = []
+    def make_move(self, human_state, ai_state, player_move=None):
+        # Class for picking a move for the AI to make
+        # Initialize the search tree
+        keep_tree = False # Option for keeping the usuable part of the old tree
+        # You would also have to update all the queues in the tree
+        if keep_tree == True:
+            if self.tree == None:
+                self.tree = treelib.Tree()
+            else:
+                pass
+                # Tree = Tree[Players Move]
+        else: # Reset the tree
+            self.tree = treelib.Tree()
 
-        demo_player = Player()
-        demo_player.board = board
-        demo_player.piece = _piece
+        initial_turn = 1 # 0: human move, 1: ai move
+        max_iter = 5
 
-        piece = demo_player.piece
+        # Create the initial node
+        initial_state = NodeState(players=[deepcopy(human_state), deepcopy(ai_state)], turn=initial_turn, move=player_move)
 
-        piece.move_to_spawn()
-        x = piece.x_0
-        y = piece.y_0
-        o = piece.rotation
+        self.tree.create_node(identifier="root", data=initial_state)
 
-        piece.update_rotation()
+        iter = 0
+        while iter < max_iter:
+            iter += 1
 
-        next_location_queue.append((x, y, o))
+            # Begin at the root node
+            node = self.tree.get_node("root")
+            node_state = node.data
 
-        while len(next_location_queue) > 0:
-            piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
+            # Go down the tree using Q+U until you get to a leaf node
+            while not node.is_leaf():
+                child_ids = node.successors(self.tree.identifier)
+                max_child_score = 0
+                max_child_id = None
+                sum_n = 0
+                for child_id in child_ids:
+                    sum_n += self.tree.get_node(child_id).data.N
+                for child_id in child_ids:
+                    child_data = self.tree.get_node(child_id).data
+                    child_score = child_data.P*sum_n/(1+child_data.N)
+                    if child_score > max_child_score:
+                        max_child_score = child_score
+                        max_child_id = child_id
+                
+                node = self.tree.get_node(max_child_id)
+                node_state = node.data
+            
+            # Don't update policy, move_list, or generate new nodes if the node is done
+            if node_state.is_done == False:
 
-            piece.update_rotation()
+                policy = node_state.get_policy()
+                move_list = node_state.get_move_list()
 
-            possible_piece_locations[piece.y_0][piece.x_0 + buffer][piece.rotation] = True
+                # Place pieces and generate new leaves
+                for move in move_list:
+                    new_state = deepcopy(node.data)
 
-            for move in [[1, 0], [-1, 0], [0, 1]]:
-                x = piece.x_0 + move[0]
-                y = piece.y_0 + move[1]
-                o = piece.rotation
+                    new_state.move = move
+                    new_state.make_move(node_state.turn, move)
+                    # new_state.P = policy
+                    new_state.P = random.random()
 
-                if demo_player.can_move(x_offset=move[0], y_offset=move[1]): # Check this first to avoid index errors
-                    if (possible_piece_locations[y][x + buffer][o] == False 
-                        and (x, y, o) not in next_location_queue):
+                    new_state.turn = 1 - node_state.turn # 0 -> 1; 1 -> 0
 
-                        next_location_queue.append((x, y, o))
+                    '''identifier = (new_state.players[new_state.turn].stats.pieces, 
+                                  new_state.turn, 
+                                  move)'''
 
-            for i in range(1, 4):
-                demo_player.try_wallkick(i)
+                    self.tree.create_node(data=new_state, parent=node.identifier)
 
-                x = piece.x_0
-                y = piece.y_0
-                o = piece.rotation
+            value = node_state.get_value()
 
-                if possible_piece_locations[y][x + buffer][o] == False and (x, y, o) not in next_location_queue:
-                    next_location_queue.append((x, y, o))
+            # Go back up the tree and updates nodes
+            while not node.is_root():
+                upwards_id = node.predecessor(self.tree.identifier)
+                node = self.tree.get_node(upwards_id)
 
-                piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
+                node_state = node.data
+                node_state.N += 1
+                node_state.W += value
+                node_state.Q = node_state.W / node_state.N
 
-                piece.update_rotation()
+        # Choose a move
+        root = self.tree.get_node("root")
+        root_children_id = root.successors(self.tree.identifier)
+        max_n = 0
+        max_id = None
 
-            next_location_queue.pop(0)
+        for root_child_id in root_children_id:
+            root_child = self.tree.get_node(root_child_id)
+            root_child_n = root_child.data.N
+            if root_child_n > max_n:
+                max_n = root_child_n
+                max_id = root_child.identifier
 
-        # Remove entries that can move downwards
-        for o in range(4): # Smalleswet number of operations
-            demo_player.piece.rotation = o
-            demo_player.piece.update_rotation()
+        move = self.tree.get_node(max_id).data.move
 
-            for x in range(COLS + buffer - 1):
-                demo_player.piece.x_0 = x - buffer
-
-                for y in reversed(range(ROWS)):
-                    if possible_piece_locations[y][x][o] == True:
-                        demo_player.piece.y_0 = y
-                        if not demo_player.can_move(y_offset=1):
-                            locations.append((x - buffer, y, o))
-
-        return locations, time.time()-TIME_1
-
-    def make_move(self):
-        self.place_piece()
-
-
-if __name__ == "__main__":
-
-    from board import Board
-    from piece import Piece
-
-    test = AI()
-
-    piece_type = 'T'
-    print(test.create_move_list(Board(), Piece(piece_dict[piece_type], type=piece_type)))
+        [human_state, ai_state][initial_turn].force_place_piece(*move)
