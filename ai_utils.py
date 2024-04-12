@@ -5,7 +5,7 @@ from copy import deepcopy
 import random
 from typing import Self
 
-# Dedicated file for functions for using for AI
+# Dedicated file for functions for using for AI 
 # More specialized than the original functions
 
 class NodeState():

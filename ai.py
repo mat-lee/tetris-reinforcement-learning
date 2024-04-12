@@ -14,7 +14,7 @@ class AI(Player):
         self.tree = None
 
     def make_move(self, human_state, ai_state, player_move=None):
-        # Class for picking a move for the AI to make
+        # Class for picking a move for the AI to make 
         # Initialize the search tree
         keep_tree = False # Option for keeping the usuable part of the old tree
         # You would also have to update all the queues in the tree
