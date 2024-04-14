@@ -5,6 +5,8 @@ from copy import deepcopy
 import random
 from typing import Self
 
+import time
+
 # Dedicated file for functions for using for AI 
 # More specialized than the original functions
 
@@ -65,6 +67,8 @@ class NodeState():
             self.is_done = True
 
     def get_move_list(self):
+        START = time.time()
+
         # Using a list of all possible locations the piece can reach
         # Using a queue to determine which boards to check
     
@@ -72,6 +76,16 @@ class NodeState():
         # O piece        0 to 8
         # Any 3x3 piece -1 to 8
         # I piece       -2 to 8
+
+        def get_highest_row(grid):
+            for row in range(len(grid)):
+                for col in range(len(grid[0])):
+                    if grid[row][col].type != "empty":
+                        highest_row = row
+                        return highest_row
+            
+            # Else return the bottom row
+            return len(grid) - 1
 
         player = self.players[self.turn]
 
@@ -85,9 +99,14 @@ class NodeState():
         sim_player.board = deepcopy(player.board)
         sim_player.piece = deepcopy(player.piece)
 
+        # Start the piece at the highest point it can be placed
         piece = sim_player.piece
 
         piece.move_to_spawn()
+        highest_row = get_highest_row(sim_player.board.grid)
+        starting_row = max(highest_row - len(piece.matrix), 0)
+        piece.y_0 = starting_row
+
         x = piece.x_0
         y = piece.y_0
         o = piece.rotation
@@ -96,6 +115,7 @@ class NodeState():
 
         next_location_queue.append((x, y, o))
 
+        # Search through the queue
         while len(next_location_queue) > 0:
             piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
 
@@ -110,9 +130,11 @@ class NodeState():
 
                 if sim_player.can_move(x_offset=move[0], y_offset=move[1]): # Check this first to avoid index errors
                     if (possible_piece_locations[y][x + buffer][o] == False 
-                        and (x, y, o) not in next_location_queue):
+                        and (x, y, o) not in next_location_queue
+                        and y >= 0): # Avoid negative indexing
 
                         next_location_queue.append((x, y, o))
+
 
             for i in range(1, 4):
                 sim_player.try_wallkick(i)
@@ -121,7 +143,9 @@ class NodeState():
                 y = piece.y_0
                 o = piece.rotation
 
-                if possible_piece_locations[y][x + buffer][o] == False and (x, y, o) not in next_location_queue:
+                if (possible_piece_locations[y][x + buffer][o] == False
+                    and (x, y, o) not in next_location_queue
+                    and y >= 0): # Avoid negative indexing
                     next_location_queue.append((x, y, o))
 
                 piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
@@ -143,8 +167,14 @@ class NodeState():
                         sim_player.piece.y_0 = y
                         if not sim_player.can_move(y_offset=1):
                             locations.append((x - buffer, y, o))
+                            if y >= 22:
+                                print("a")
+                            
+        END = time.time()
+        print(END - START)
 
         return locations
+    
 
     def get_value(self):
         # Use a neural net to update self value

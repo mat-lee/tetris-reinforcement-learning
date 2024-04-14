@@ -23,7 +23,7 @@ class Player:
 
         self.draw_coords = None
 
-    # Game methods
+    # Game methods    
     def create_next_piece(self):
         if len(self.queue.pieces) > 0:
             next_piece = self.queue.pieces.pop(0)
@@ -147,6 +147,7 @@ class Player:
         # Place the pieces
         coords = Piece.get_mino_coords(piece.x_0, place_y, piece.matrix)
 
+        print("simul/place", piece.x_0, piece.y_0, piece.rotation)
         for col, row in coords:
             grid[row][col].type = piece.type
         
@@ -199,6 +200,15 @@ class Player:
     def spawn_garbage(self):
         self.board.create_garbage(self.garbage_to_receive)
         self.garbage_to_receive = []
+    
+    def reset(self):
+        self.board = Board()
+        self.queue = Queue()
+        self.stats = Stats()
+        self.piece = None
+        self.held_piece = None
+        self.garbage_to_receive = []
+        self.game_over = False
 
     # Draw methods
     def draw_piece(self, surface, x_0, y_0, piece_matrix, color):
@@ -234,15 +244,15 @@ class Player:
             self.draw_piece(surface, piece.x_0, ghost_y, piece.matrix, color_dict["ghost"])
 
     def show_grid_lines(self, surface):
-        for row in range(ROWS + 1):
+        for row in range(ROWS - GRID_ROWS, ROWS + 1):
             pygame.draw.line(surface, (32, 32, 32), 
                              (HOLD_WIDTH + E_BUFFER + self.draw_coords[0], row * MINO_SIZE + N_BUFFER + self.draw_coords[1]),
                              (HOLD_WIDTH + MINO_SIZE * COLS + E_BUFFER + self.draw_coords[0], row * MINO_SIZE + N_BUFFER + self.draw_coords[1]))
         
         for col in range(COLS + 1):
             pygame.draw.line(surface, (32, 32, 32), 
-                             (col * MINO_SIZE + HOLD_WIDTH + E_BUFFER + self.draw_coords[0], N_BUFFER + self.draw_coords[1]),
-                             (col * MINO_SIZE + HOLD_WIDTH + E_BUFFER + self.draw_coords[0], MINO_SIZE * ROWS + N_BUFFER + self.draw_coords[1]))
+                             (col * MINO_SIZE + HOLD_WIDTH + E_BUFFER + self.draw_coords[0], MINO_SIZE * (ROWS - GRID_ROWS) + N_BUFFER + self.draw_coords[1]),
+                             (col * MINO_SIZE + HOLD_WIDTH + E_BUFFER + self.draw_coords[0], MINO_SIZE * (ROWS) + N_BUFFER + self.draw_coords[1]))
 
     def show_piece(self, surface):
         if self.piece != None:
@@ -265,7 +275,7 @@ class Player:
                 piece_matrix = piece_dict[piece]
 
                 x_0 = (12 if piece == "O" else 11) - 0.5
-                y_0 = (0 if piece == "I" else 1)
+                y_0 = (0 if piece == "I" else 1) + ROWS - SPAWN_ROW
                 
                 coords = Piece.get_mino_coords(x_0, y_0 + i * 3, piece_matrix)
                 for coord in coords:
@@ -278,7 +288,7 @@ class Player:
             piece_matrix = piece_dict[held_piece]
 
             x_0 = (-4 if held_piece == "O" else -5) + 0.5
-            y_0 = 1
+            y_0 = 1 + ROWS - SPAWN_ROW
 
             coords = Piece.get_mino_coords(x_0, y_0, piece_matrix)
             for coord in coords:

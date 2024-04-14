@@ -11,6 +11,7 @@ k_rotate_180 =  pygame.K_a
 k_hold =        pygame.K_c
 k_undo =        pygame.K_1
 k_redo =        pygame.K_2
+k_restart =     pygame.K_r
 
 # graphics break when ARR = 0
 # idc
@@ -21,7 +22,10 @@ SDF = 1/10
 PREVIEWS = 5
 
 # Board Dimensions:
-ROWS = 23
+ROWS = 27
+SPAWN_ROW = 23
+GRID_ROWS = 20
+
 GRID_ROWS = 20
 COLS = 10
 

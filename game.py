@@ -94,6 +94,17 @@ class Game:
             
             self.history.index += 1
     
+    def restart(self):
+        for player in self.players:
+            player.reset()
+
+        self.add_bag_to_all()
+        
+        for player in self.players:
+            player.create_next_piece()
+        
+        self.add_history()
+
     def check_garbage(self, player):
         other_player = [x for x in self.players if x != player][0]
 

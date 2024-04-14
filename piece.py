@@ -20,7 +20,7 @@ class Piece:
         # Move a newly created "O" piece to the right
         displacement = (1 if self.type == "O" else 0)
 
-        return (3 + displacement, 0)
+        return (3 + displacement, ROWS - SPAWN_ROW)
 
     def move_to_spawn(self):
         self.x_0, self.y_0 = self.get_spawn_location()

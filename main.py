@@ -21,6 +21,7 @@ class Main:
         mover = self.mover
 
         game.setup_game()
+        game.ai_player.garbage_to_receive = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
 
         while True:
             game.show_bg(screen)
@@ -58,6 +59,8 @@ class Main:
                             game.undo()
                         elif event.key == k_redo:
                             game.redo()
+                        elif event.key == k_restart:
+                            game.restart()
 
                     # On key release
                     elif event.type == pygame.KEYUP:
