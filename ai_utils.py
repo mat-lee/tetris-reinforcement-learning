@@ -38,7 +38,7 @@ class NodeState():
             if player.game_over == True:
                 self.is_done = True
     
-    def make_move(self, turn, move):
+    def make_move(self, turn, move): # e^-5
         player = self.players[turn]
         other_player = self.players[turn - 1]
 
@@ -66,9 +66,7 @@ class NodeState():
         if len(other_player.queue.pieces) == 0:
             self.is_done = True
 
-    def get_move_list(self):
-        START = time.time()
-
+    def get_move_list(self): # e^-3
         # Using a list of all possible locations the piece can reach
         # Using a queue to determine which boards to check
     
@@ -84,14 +82,16 @@ class NodeState():
                         highest_row = row
                         return highest_row
             
-            # Else return the bottom row
-            return len(grid) - 1
+            # Else return the floor
+            return len(grid)
 
         player = self.players[self.turn]
 
+        # On the left hand side, blocks can have negative x
         buffer = (2 if player.piece.type == "I" else (0 if player.piece.type == "O" else 1))
 
-        possible_piece_locations = [[[False for o in range (4)] for x in range(COLS + buffer - 1)] for y in range(ROWS)]
+        # No piece can be placed in the bottom row; ROWS - 1
+        possible_piece_locations = [[[False for o in range (4)] for x in range(COLS + buffer - 1)] for y in range(ROWS - 1)]
         next_location_queue = []
         locations = []
 
@@ -162,16 +162,11 @@ class NodeState():
             for x in range(COLS + buffer - 1):
                 sim_player.piece.x_0 = x - buffer
 
-                for y in reversed(range(ROWS)):
+                for y in reversed(range(ROWS - 1)):
                     if possible_piece_locations[y][x][o] == True:
                         sim_player.piece.y_0 = y
                         if not sim_player.can_move(y_offset=1):
                             locations.append((x - buffer, y, o))
-                            if y >= 22:
-                                print("a")
-                            
-        END = time.time()
-        print(END - START)
 
         return locations
     
@@ -184,7 +179,8 @@ class NodeState():
         return None
 
 
-class AIPlayer():
+### Unused
+class PlayerState():
     """Class for representing player in NodeState."""
 
     def __init__(self, board, queue, stats):

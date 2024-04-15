@@ -26,7 +26,6 @@ class AI(Player):
             tree = treelib.Tree()
 
         initial_turn = 1 # 0: human move, 1: ai move
-        max_iter = 5
 
         # Create the initial node
         initial_state = NodeState(players=[deepcopy(human_state), deepcopy(ai_state)], turn=initial_turn, move=player_move)
@@ -34,7 +33,7 @@ class AI(Player):
         tree.create_node(identifier="root", data=initial_state)
 
         iter = 0
-        while iter < max_iter:
+        while iter < MAX_ITER:
             iter += 1
 
             # Begin at the root node
@@ -66,7 +65,6 @@ class AI(Player):
                 move_list = node_state.get_move_list()
 
                 # Place pieces and generate new leaves
-                print(move_list)
                 for move in move_list:
                     new_state = deepcopy(node.data)
 
@@ -105,7 +103,5 @@ class AI(Player):
                 max_id = root_child.identifier
 
         move = tree.get_node(max_id).data.move
-
-        print("final", move)
 
         self.force_place_piece(*move)

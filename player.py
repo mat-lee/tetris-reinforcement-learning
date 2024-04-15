@@ -147,7 +147,6 @@ class Player:
         # Place the pieces
         coords = Piece.get_mino_coords(piece.x_0, place_y, piece.matrix)
 
-        print("simul/place", piece.x_0, piece.y_0, piece.rotation)
         for col, row in coords:
             grid[row][col].type = piece.type
         
@@ -209,6 +208,7 @@ class Player:
         self.held_piece = None
         self.garbage_to_receive = []
         self.game_over = False
+
 
     # Draw methods
     def draw_piece(self, surface, x_0, y_0, piece_matrix, color):

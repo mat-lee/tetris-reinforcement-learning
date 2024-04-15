@@ -4,6 +4,8 @@ from history import History
 from player import Human
 
 import copy
+import cProfile
+import pstats
 
 class Game:
     """Contains all players and communicates with them."""
@@ -36,7 +38,13 @@ class Game:
 
             # Don't have the AI move if the player is dead
             if self.ai_player.game_over == False:
-                self.ai_player.make_move(self.human_player, self.ai_player, player_move=player_move)
+
+                with cProfile.Profile() as pr:
+                    self.ai_player.make_move(self.human_player, self.ai_player, player_move=player_move)
+                stats = pstats.Stats(pr)
+                stats.sort_stats(pstats.SortKey.TIME)
+                stats.print_stats()
+                
                 self.check_garbage(self.ai_player)
                 self.ai_player.create_next_piece() # Create piece after garbage
         
@@ -120,6 +128,7 @@ class Game:
         
         if len(player.garbage_to_receive) > 0:
             player.spawn_garbage()
+    
     
     # Show methods
     def show_bg(self, surface):
