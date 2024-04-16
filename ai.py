@@ -1,4 +1,4 @@
-from ai_utils import NodeState
+from ai_utils import NodeState, PlayerState
 from const import *
 from player import Player
 
@@ -10,6 +10,11 @@ class AI(Player):
     def __init__(self) -> None:
         super().__init__()
         self.draw_coords = (WIDTH/2, 0)
+
+    @staticmethod
+    def player_to_state(player):
+        # Convert board to ints
+        pass
 
     def make_move(self, human_state, ai_state, player_move=None):
         # Class for picking a move for the AI to make 
@@ -25,6 +30,8 @@ class AI(Player):
         else: # Reset the tree
             tree = treelib.Tree()
 
+        # Convert players into player states
+            
         initial_turn = 1 # 0: human move, 1: ai move
 
         # Create the initial node

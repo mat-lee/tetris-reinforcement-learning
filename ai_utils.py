@@ -1,7 +1,7 @@
 from const import *
 from player import Player
 
-from copy import deepcopy
+from copy import copy, deepcopy
 import random
 from typing import Self
 
@@ -78,7 +78,7 @@ class NodeState():
         def get_highest_row(grid):
             for row in range(len(grid)):
                 for col in range(len(grid[0])):
-                    if grid[row][col].type != "empty":
+                    if grid[row][col] != 0:
                         highest_row = row
                         return highest_row
             
@@ -178,15 +178,49 @@ class NodeState():
     def get_policy(self):
         return None
 
+    """Class for representing all necessary player info.
+    
+    Deepcopying player states was extremely slow, 
+    so this class is necessary to copy info 
+    through the tree"""
 
-### Unused
 class PlayerState():
-    """Class for representing player in NodeState."""
-
-    def __init__(self, board, queue, stats):
+    def __init__(self, 
+                 board: list, 
+                 queue: list, 
+                 pieces: int, 
+                 b2b: int, 
+                 b2b_level: int,
+                 combo: int,
+                 piece: str,
+                 held_piece: str):
+        
         self.board = board
         self.queue = queue
-        self.stats = stats
+        self.pieces = pieces
+        self.b2b = b2b
+        self.b2b_level = b2b_level
+        self.combo = combo
+        self.piece = piece
+        self.held_piece = held_piece
 
-    def place_pieces(self):
-        pass    
+    def return_copy(self):
+        return PlayerState([x[:] for x in self.board], 
+                           copy(self.queue),
+                           self.pieces,
+                           self.b2b,
+                           self.b2b_level,
+                           self.combo,
+                           self.piece,
+                           self.held_piece)
+
+# Many copies of board states is unavoidable
+# So, find what needs to be copied and represent in the simplest form
+# Use a dict; dict.copy() will be much faster than deepcopy
+# And don't have classes in the dictionary
+# For now, the neural nets will just use both board states
+
+# Also find a way to copy the NodeState
+    # Nevermind
+
+# Using deepcopy: 100 iter in 36.911s

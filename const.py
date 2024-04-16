@@ -100,9 +100,9 @@ piece_dict = {
 
 # Color values:
 color_dict = {
-    "empty":   (0,   0,   0),
-    "ghost":   (32,  32,  32),
-    "garbage": (85,  85, 85),
+    0:         (0,   0,   0),   # Empty
+    1:         (85,  85, 85),   # Garbage
+    "ghost":   (32,  32,  32),  # Ghost piece
     "Z":       (255, 1,   0),   #1
     "L":       (254, 170, 0),   #2
     "O":       (255, 254, 2),   #3

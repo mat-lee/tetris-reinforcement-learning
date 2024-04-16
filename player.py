@@ -46,7 +46,7 @@ class Player:
         for col, row in coords:
             if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
                 return True
-            elif grid[row][col].type != "empty":
+            elif grid[row][col] != 0:
                 return True
 
         return False
@@ -130,7 +130,7 @@ class Player:
                 col = corners[i][0] + piece.x_0 
                 if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
                     corner_filled[i] = True
-                elif grid[row][col].type != "empty":
+                elif grid[row][col] != 0:
                     corner_filled[i] = True
 
             if sum(corner_filled) >= 3:
@@ -148,13 +148,13 @@ class Player:
         coords = Piece.get_mino_coords(piece.x_0, place_y, piece.matrix)
 
         for col, row in coords:
-            grid[row][col].type = piece.type
+            grid[row][col] = piece.type
         
         self.piece = None
 
         # Check which rows should be cleared
         for row in rows:
-            if all(mino.type != "empty" for mino in grid[row]): # careful with ghost type
+            if all(mino != 0 for mino in grid[row]): # careful with ghost type
                 cleared_rows.append(row)
         
         rows_cleared = len(cleared_rows)
@@ -163,7 +163,7 @@ class Player:
         for cleared_row in cleared_rows:
             for row in range(cleared_row)[::-1]:
                 for col in range(COLS):
-                    grid[row + 1][col].type = grid[row][col].type
+                    grid[row + 1][col] = grid[row][col]
 
             self.board.empty_line(0)
 
@@ -171,7 +171,7 @@ class Player:
             is_all_clear = True
             for row in range(rows_cleared, ROWS): # rows_cleared num of empty lines at top
                 for col in range(COLS):
-                    if grid[row][col].type != "empty": # careful with ghost type
+                    if grid[row][col] != 0: # careful with ghost type
                         is_all_clear = False
                         break
 
@@ -264,8 +264,8 @@ class Player:
         for row in range(ROWS):
             for col in range(COLS):
                 mino = self.board.grid[row][col]
-                if mino.type != "empty":
-                    self.draw_mino(surface, mino.row, mino.col, color_dict[mino.type])
+                if mino != 0:
+                    self.draw_mino(surface, row, col, color_dict[mino])
 
     def show_queue(self, surface):
         pieces = self.queue.pieces
