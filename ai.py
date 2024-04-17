@@ -2,7 +2,6 @@ from ai_utils import NodeState, PlayerState
 from const import *
 from player import Player
 
-from copy import deepcopy
 import random
 import treelib
 
@@ -11,12 +10,7 @@ class AI(Player):
         super().__init__()
         self.draw_coords = (WIDTH/2, 0)
 
-    @staticmethod
-    def player_to_state(player):
-        # Convert board to ints
-        pass
-
-    def make_move(self, human_state, ai_state, player_move=None):
+    def make_move(self, human_player, ai_player, player_move=None):
         # Class for picking a move for the AI to make 
         # Initialize the search tree
         keep_tree = False # Option for keeping the usuable part of the old tree
@@ -31,13 +25,20 @@ class AI(Player):
             tree = treelib.Tree()
 
         # Convert players into player states
-            
+        human_state = human_player.to_state()
+        ai_state = ai_player.to_state()
+
         initial_turn = 1 # 0: human move, 1: ai move
 
         # Create the initial node
-        initial_state = NodeState(players=[deepcopy(human_state), deepcopy(ai_state)], turn=initial_turn, move=player_move)
+        initial_state = NodeState(states=[human_state, ai_state], turn=initial_turn, move=player_move)
 
         tree.create_node(identifier="root", data=initial_state)
+
+        # To follow along with the tree I'll have two players
+        # When a move is made, the player's info becomes the info of the state
+        # Then, the new states have the info of the player
+        move_players = [Player(), Player()]
 
         iter = 0
         while iter < MAX_ITER:
@@ -73,10 +74,12 @@ class AI(Player):
 
                 # Place pieces and generate new leaves
                 for move in move_list:
-                    new_state = deepcopy(node.data)
+                    # For a new state, the unchanged board can reference the parent board
+                    new_state = node.data
+                    new_state.states[node_state.turn] = new_state.states[node_state.turn].return_copy()
 
                     new_state.move = move
-                    new_state.make_move(node_state.turn, move)
+                    new_state.make_move(node_state.turn, move, move_players)
                     # new_state.P = policy
                     new_state.P = random.random()
 

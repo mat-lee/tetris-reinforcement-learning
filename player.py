@@ -1,3 +1,4 @@
+import ai_utils
 from board import Board
 from piece_queue import Queue
 from stats import Stats
@@ -208,6 +209,26 @@ class Player:
         self.held_piece = None
         self.garbage_to_receive = []
         self.game_over = False
+
+    # AI methods
+    def to_state(self):
+        grid = [x[:] for x in self.board.grid]
+        # Convert board to 0s and 1s for NN
+        for row in range(len(grid)):
+            for col in range(len(grid[0])):
+                if grid[row][col] != 0:
+                    grid[row][col] = 1
+        
+        queue = copy.copy(self.queue.pieces)
+        pieces = self.stats.pieces
+        b2b = self.stats.b2b
+        b2b_level = self.stats.b2b_level
+        combo = self.stats.combo
+        game_over = self.game_over
+        piece = self.piece.type
+        held_piece = self.held_piece
+
+        return ai_utils.PlayerState(grid, queue, pieces, b2b, b2b_level, combo, game_over, piece, held_piece)
 
 
     # Draw methods

@@ -1,9 +1,9 @@
 from const import *
-from player import Player
+from piece_queue import Queue
+import player
 
-from copy import copy, deepcopy
+import copy
 import random
-from typing import Self
 
 import time
 
@@ -15,8 +15,8 @@ class NodeState():
     
     Similar to the game class, but is more specialized for AI functions and has different variables"""
 
-    def __init__(self, players=None, turn=None, move=None) -> None:
-        self.players = players
+    def __init__(self, states=None, turn=None, move=None) -> None:
+        self.states = states
         self.turn = turn
         self.move = move # The move which resulted in this state
 
@@ -34,13 +34,16 @@ class NodeState():
         self.is_done = False
     
     def check_if_done(self):
-        for player in self.players:
-            if player.game_over == True:
+        for state in self.states:
+            if state.game_over == True:
                 self.is_done = True
     
-    def make_move(self, turn, move): # e^-5
-        player = self.players[turn]
-        other_player = self.players[turn - 1]
+    def make_move(self, turn, move, move_player): # e^-5
+        self.states[turn].load_to_player(move_player[turn])
+        self.states[turn - 1].load_to_player(move_player[turn - 1])
+
+        player = move_player[turn]
+        other_player = move_player[turn - 1]
 
         player.force_place_piece(*move)
 
@@ -59,6 +62,10 @@ class NodeState():
         
         player.create_next_piece()
 
+        # Save states
+        self.states[turn] = move_player[turn].to_state()
+        self.states[turn - 1] = move_player[turn - 1].to_state()
+
         # Check if the game is over:
         self.check_if_done()
 
@@ -75,6 +82,14 @@ class NodeState():
         # Any 3x3 piece -1 to 8
         # I piece       -2 to 8
 
+        # Load the state
+        player_state = self.states[self.turn]
+
+        sim_player = player.Player()
+        sim_player.board.grid = player_state.grid
+        sim_player.create_piece(player_state.piece)
+        piece = sim_player.piece
+
         def get_highest_row(grid):
             for row in range(len(grid)):
                 for col in range(len(grid[0])):
@@ -85,23 +100,15 @@ class NodeState():
             # Else return the floor
             return len(grid)
 
-        player = self.players[self.turn]
-
         # On the left hand side, blocks can have negative x
-        buffer = (2 if player.piece.type == "I" else (0 if player.piece.type == "O" else 1))
+        buffer = (2 if piece.type == "I" else (0 if piece.type == "O" else 1))
 
         # No piece can be placed in the bottom row; ROWS - 1
         possible_piece_locations = [[[False for o in range (4)] for x in range(COLS + buffer - 1)] for y in range(ROWS - 1)]
         next_location_queue = []
         locations = []
 
-        sim_player = Player()
-        sim_player.board = deepcopy(player.board)
-        sim_player.piece = deepcopy(player.piece)
-
         # Start the piece at the highest point it can be placed
-        piece = sim_player.piece
-
         piece.move_to_spawn()
         highest_row = get_highest_row(sim_player.board.grid)
         starting_row = max(highest_row - len(piece.matrix), 0)
@@ -186,33 +193,49 @@ class NodeState():
 
 class PlayerState():
     def __init__(self, 
-                 board: list, 
+                 grid: list, 
                  queue: list, 
                  pieces: int, 
                  b2b: int, 
                  b2b_level: int,
                  combo: int,
+                 game_over: bool,
                  piece: str,
                  held_piece: str):
         
-        self.board = board
+        self.grid = grid
         self.queue = queue
         self.pieces = pieces
         self.b2b = b2b
         self.b2b_level = b2b_level
         self.combo = combo
+        self.game_over = game_over
         self.piece = piece
         self.held_piece = held_piece
 
     def return_copy(self):
-        return PlayerState([x[:] for x in self.board], 
-                           copy(self.queue),
+        return PlayerState([x[:] for x in self.grid], 
+                           copy.copy(self.queue),
                            self.pieces,
                            self.b2b,
                            self.b2b_level,
                            self.combo,
+                           self.game_over,
                            self.piece,
                            self.held_piece)
+
+    def load_to_player(self, player):
+        player.board.grid = [x[:] for x in self.grid]
+        player.queue = Queue(pieces=self.queue)
+        player.stats.pieces = self.pieces
+        player.stats.b2b = self.b2b
+        player.stats.b2b_level = self.b2b_level
+        player.stats.combo = self.combo
+        player.game_over = self.game_over
+        player.piece = self.piece
+        player.create_piece(self.piece)
+        player.held_piece = self.held_piece
+
 
 # Many copies of board states is unavoidable
 # So, find what needs to be copied and represent in the simplest form
