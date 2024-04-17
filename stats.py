@@ -11,6 +11,18 @@ class Stats:
         self.lines_sent = 0
         self.attack_text = ''
 
+    def copy(self):
+        new_stats = Stats()
+        new_stats.pieces = self.pieces
+        new_stats.lines_cleared = self.lines_cleared
+        new_stats.b2b = self.b2b
+        new_stats.b2b_level = self.b2b_level
+        new_stats.combo = self.combo
+        new_stats.lines_sent = self.lines_sent
+        new_stats.attack_text = self.attack_text
+        
+        return new_stats
+
     def update_b2b_level(self):
         b2b_chart = [[-1, 0],
                      [1, 1],

@@ -2,7 +2,6 @@ from const import *
 from piece_queue import Queue
 import player
 
-import copy
 import random
 
 import time
@@ -70,7 +69,7 @@ class NodeState():
         self.check_if_done()
 
         # Stop searching if the other player doesn't have a piece
-        if len(other_player.queue.pieces) == 0:
+        if len(other_player.queue.pieces) == 0 and other_player.piece == None:
             self.is_done = True
 
     def get_move_list(self): # e^-3
@@ -100,6 +99,12 @@ class NodeState():
             # Else return the floor
             return len(grid)
 
+        # Load the state
+        player = self.players[self.turn]
+        sim_player = Player()
+        sim_player.board.grid = [x[:] for x in player.board.grid]
+        sim_player.create_piece(player.piece.type)
+
         # On the left hand side, blocks can have negative x
         buffer = (2 if piece.type == "I" else (0 if piece.type == "O" else 1))
 
@@ -109,7 +114,8 @@ class NodeState():
         locations = []
 
         # Start the piece at the highest point it can be placed
-        piece.move_to_spawn()
+        piece = sim_player.piece
+
         highest_row = get_highest_row(sim_player.board.grid)
         starting_row = max(highest_row - len(piece.matrix), 0)
         piece.y_0 = starting_row
@@ -175,8 +181,7 @@ class NodeState():
                         if not sim_player.can_move(y_offset=1):
                             locations.append((x - buffer, y, o))
 
-        return locations
-    
+        return locations 
 
     def get_value(self):
         # Use a neural net to update self value
@@ -191,7 +196,7 @@ class NodeState():
     so this class is necessary to copy info 
     through the tree"""
 
-class PlayerState():
+'''class PlayerState():
     def __init__(self, 
                  grid: list, 
                  queue: list, 
@@ -234,7 +239,7 @@ class PlayerState():
         player.game_over = self.game_over
         player.piece = self.piece
         player.create_piece(self.piece)
-        player.held_piece = self.held_piece
+        player.held_piece = self.held_piece'''
 
 
 # Many copies of board states is unavoidable
@@ -246,4 +251,5 @@ class PlayerState():
 # Also find a way to copy the NodeState
     # Nevermind
 
-# Using deepcopy: 100 iter in 36.911s
+# Using deepcopy:                  100 iter in 36.911 s
+# Using copy functions in classes: 100 iter in 1.658 s

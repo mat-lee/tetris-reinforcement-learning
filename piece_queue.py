@@ -9,6 +9,12 @@ class Queue:
     def add_bag(self, bag):
         self.pieces += bag
     
+    def copy(self):
+        new_queue = Queue()
+        new_queue.pieces = self.pieces[:]
+        
+        return new_queue
+
     @staticmethod
     def generate_bag():
         mino_list = list(minos)

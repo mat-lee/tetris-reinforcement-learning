@@ -3,7 +3,6 @@ from const import *
 from history import History
 from player import Human
 
-import copy
 import cProfile
 import pstats
 
@@ -62,19 +61,20 @@ class Game:
         # Add on history
         player_boards = []
         for player in self.players:
-            piece = copy.deepcopy(player.piece)
-            if piece != None:
+            if player.piece != None:
+                piece = player.piece.copy()
                 piece.move_to_spawn()
+            else: piece = None
             dictionary = {
-                'board': copy.deepcopy(player.board), 
-                'queue': copy.deepcopy(player.queue), 
-                'stats': copy.deepcopy(player.stats), 
+                'board': player.board.copy(), 
+                'queue': player.queue.copy(), 
+                'stats': player.stats.copy(), 
                 'piece': piece,
-                'held_piece': copy.deepcopy(player.held_piece),
-                'garbage_to_receive': copy.deepcopy(player.garbage_to_receive),
-                'game_over': copy.deepcopy(player.game_over)
+                'held_piece': player.held_piece,
+                'garbage_to_receive': player.garbage_to_receive[:],
+                'game_over': player.game_over
                 }
-            player_boards.append(dictionary.copy())
+            player_boards.append(dictionary)
         self.history.boards.append(player_boards)
 
         # Move history index
@@ -90,14 +90,14 @@ class Game:
 
     def undo(self):
         if len(self.history.boards) > 1 and self.history.index != 0:
-            state = self.history.copy_board_state(self.history.index - 1)
+            state = self.history.boards[self.history.index - 1].copy()
             self.update_state(state)
 
             self.history.index -= 1
                     
     def redo(self):
         if len(self.history.boards) > self.history.index + 1:
-            state = self.history.copy_board_state(self.history.index + 1)
+            state = self.history.boards[self.history.index + 1].copy()
             self.update_state(state)
             
             self.history.index += 1

@@ -1,5 +1,4 @@
 from const import *
-from mino import Mino
 
 class Board():
 
@@ -24,3 +23,8 @@ class Board():
                 if garbage_col != col:
                     self.grid[ROWS - garbage_lines + i][col] = 1
                 self.grid[ROWS - garbage_lines + i][garbage_col] = 0
+
+    def copy(self):
+        new_board = Board()
+        new_board.grid = [x[:] for x in self.grid]
+        return new_board

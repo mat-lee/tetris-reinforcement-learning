@@ -1,7 +1,7 @@
 import pygame
 
 # AI settings
-MAX_ITER = 5
+MAX_ITER = 10
 
 # Controls:
 k_move_left =   pygame.K_LEFT

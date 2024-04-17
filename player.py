@@ -6,7 +6,6 @@ from piece import Piece
 from const import *
 
 import random
-import copy
 
 class Player:
     """Parent class for both human and AI players."""
@@ -211,25 +210,21 @@ class Player:
         self.game_over = False
 
     # AI methods
-    def to_state(self):
-        grid = [x[:] for x in self.board.grid]
-        # Convert board to 0s and 1s for NN
-        for row in range(len(grid)):
-            for col in range(len(grid[0])):
-                if grid[row][col] != 0:
-                    grid[row][col] = 1
+    def copy(self):
+        new_player = Player()
         
-        queue = copy.copy(self.queue.pieces)
-        pieces = self.stats.pieces
-        b2b = self.stats.b2b
-        b2b_level = self.stats.b2b_level
-        combo = self.stats.combo
-        game_over = self.game_over
-        piece = self.piece.type
-        held_piece = self.held_piece
+        new_player.board = self.board.copy()
+        new_player.queue = self.queue.copy()
+        new_player.stats.pieces = self.stats.pieces
+        new_player.stats.b2b = self.stats.b2b
+        new_player.stats.b2b_level = self.stats.b2b_level
+        new_player.stats.combo = self.stats.combo
+        new_player.game_over = self.game_over
+        if self.piece != None:
+            new_player.piece = self.piece.copy()
+        new_player.held_piece = self.held_piece
 
-        return ai_utils.PlayerState(grid, queue, pieces, b2b, b2b_level, combo, game_over, piece, held_piece)
-
+        return new_player
 
     # Draw methods
     def draw_piece(self, surface, x_0, y_0, piece_matrix, color):
@@ -331,7 +326,7 @@ class Player:
 
     def show_stats(self, screen):
         for stat in STAT_SETTINGS:
-            text = copy.deepcopy(stat['text'])
+            text = stat['text']
             if stat['text'] == 'B2B':
                 if self.stats.b2b > 0:
                     text = f'B2B X{self.stats.b2b}'

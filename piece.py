@@ -1,7 +1,5 @@
 from const import *
 
-import copy
-
 class Piece:
     '''
     The piece matrix and the center of the piece have a location attribute
@@ -44,8 +42,16 @@ class Piece:
             return(list(zip(*self.matrix))[::-1])
     
     def update_rotation(self):
-        self.matrix = copy.deepcopy(piece_dict[self.type])
+        self.matrix = [x[:] for x in piece_dict[self.type]] # copy matrix
         self.matrix = self.rotated_matrix(0, self.rotation)
+
+    def copy(self):
+        new_piece = Piece(piece_dict[self.type], type=self.type)
+        new_piece.x_0 = self.x_0
+        new_piece.y_0 = self.y_0
+        new_piece.rotation = self.rotation
+        
+        return new_piece
 
     @property
     def coords(self):

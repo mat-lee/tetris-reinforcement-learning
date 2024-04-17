@@ -1,4 +1,4 @@
-from ai_utils import NodeState, PlayerState
+from ai_utils import NodeState
 from const import *
 from player import Player
 
@@ -31,7 +31,9 @@ class AI(Player):
         initial_turn = 1 # 0: human move, 1: ai move
 
         # Create the initial node
-        initial_state = NodeState(states=[human_state, ai_state], turn=initial_turn, move=player_move)
+        initial_state = NodeState(players=[human_state.copy(), ai_state.copy()], 
+                                  turn=initial_turn, 
+                                  move=player_move)
 
         tree.create_node(identifier="root", data=initial_state)
 
@@ -74,12 +76,14 @@ class AI(Player):
 
                 # Place pieces and generate new leaves
                 for move in move_list:
-                    # For a new state, the unchanged board can reference the parent board
-                    new_state = node.data
-                    new_state.states[node_state.turn] = new_state.states[node_state.turn].return_copy()
+                    copied_players = []
+                    for player in node_state.players:
+                        copied_players.append(player.copy())
+                    new_state = NodeState(players=copied_players, 
+                                          turn=node_state.turn,
+                                          move=move)
 
-                    new_state.move = move
-                    new_state.make_move(node_state.turn, move, move_players)
+                    new_state.make_move(node_state.turn, move)
                     # new_state.P = policy
                     new_state.P = random.random()
 
