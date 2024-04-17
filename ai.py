@@ -24,14 +24,10 @@ class AI(Player):
         else: # Reset the tree
             tree = treelib.Tree()
 
-        # Convert players into player states
-        human_state = human_player.to_state()
-        ai_state = ai_player.to_state()
-
         initial_turn = 1 # 0: human move, 1: ai move
 
         # Create the initial node
-        initial_state = NodeState(players=[human_state.copy(), ai_state.copy()], 
+        initial_state = NodeState(players=[human_player.copy(), ai_player.copy()], 
                                   turn=initial_turn, 
                                   move=player_move)
 
@@ -40,8 +36,6 @@ class AI(Player):
         # To follow along with the tree I'll have two players
         # When a move is made, the player's info becomes the info of the state
         # Then, the new states have the info of the player
-        move_players = [Player(), Player()]
-
         iter = 0
         while iter < MAX_ITER:
             iter += 1

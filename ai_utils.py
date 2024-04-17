@@ -1,10 +1,8 @@
 from const import *
 from piece_queue import Queue
-import player
+from player import Player
 
 import random
-
-import time
 
 # Dedicated file for functions for using for AI 
 # More specialized than the original functions
@@ -14,8 +12,8 @@ class NodeState():
     
     Similar to the game class, but is more specialized for AI functions and has different variables"""
 
-    def __init__(self, states=None, turn=None, move=None) -> None:
-        self.states = states
+    def __init__(self, players=None, turn=None, move=None) -> None:
+        self.players = players
         self.turn = turn
         self.move = move # The move which resulted in this state
 
@@ -33,16 +31,13 @@ class NodeState():
         self.is_done = False
     
     def check_if_done(self):
-        for state in self.states:
-            if state.game_over == True:
+        for player in self.players:
+            if player.game_over == True:
                 self.is_done = True
     
-    def make_move(self, turn, move, move_player): # e^-5
-        self.states[turn].load_to_player(move_player[turn])
-        self.states[turn - 1].load_to_player(move_player[turn - 1])
-
-        player = move_player[turn]
-        other_player = move_player[turn - 1]
+    def make_move(self, turn, move): # e^-5
+        player = self.players[turn]
+        other_player = self.players[turn - 1]
 
         player.force_place_piece(*move)
 
@@ -61,10 +56,6 @@ class NodeState():
         
         player.create_next_piece()
 
-        # Save states
-        self.states[turn] = move_player[turn].to_state()
-        self.states[turn - 1] = move_player[turn - 1].to_state()
-
         # Check if the game is over:
         self.check_if_done()
 
@@ -81,14 +72,6 @@ class NodeState():
         # Any 3x3 piece -1 to 8
         # I piece       -2 to 8
 
-        # Load the state
-        player_state = self.states[self.turn]
-
-        sim_player = player.Player()
-        sim_player.board.grid = player_state.grid
-        sim_player.create_piece(player_state.piece)
-        piece = sim_player.piece
-
         def get_highest_row(grid):
             for row in range(len(grid)):
                 for col in range(len(grid[0])):
@@ -102,8 +85,10 @@ class NodeState():
         # Load the state
         player = self.players[self.turn]
         sim_player = Player()
-        sim_player.board.grid = [x[:] for x in player.board.grid]
-        sim_player.create_piece(player.piece.type)
+        sim_player.board = player.board.copy()
+        sim_player.piece = player.piece.copy()
+
+        piece = sim_player.piece
 
         # On the left hand side, blocks can have negative x
         buffer = (2 if piece.type == "I" else (0 if piece.type == "O" else 1))
@@ -114,8 +99,6 @@ class NodeState():
         locations = []
 
         # Start the piece at the highest point it can be placed
-        piece = sim_player.piece
-
         highest_row = get_highest_row(sim_player.board.grid)
         starting_row = max(highest_row - len(piece.matrix), 0)
         piece.y_0 = starting_row
