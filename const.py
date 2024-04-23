@@ -25,7 +25,7 @@ SDF = 1/10
 PREVIEWS = 5
 
 # Board Dimensions:
-ROWS = 27
+ROWS = 25
 SPAWN_ROW = 23
 GRID_ROWS = 20
 

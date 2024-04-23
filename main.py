@@ -2,9 +2,17 @@ import pygame
 import sys
 import time
 
+from ai import MCTS
 from const import *
 from game import Game
 from mover import Mover
+
+import cProfile
+import pstats
+
+# Consider replacing mino matrix and x and y with mino coords
+# MCTS Hold
+# Address garbage randomness in MCTS
 
 class Main:
 
@@ -20,94 +28,90 @@ class Main:
         game = self.game
         mover = self.mover
 
-        game.setup_game()
+        game.setup()
 
         while True:
             game.show_bg(screen)
 
             for player in game.players:
                 player.show_player(screen)
- 
-                if len(player.queue.pieces) < 5:
-                    game.add_bag_to_all()
 
-            for event in pygame.event.get():
-                if game.human_player.piece != None:
-                    # On key down
-                    if event.type == pygame.KEYDOWN:
-                        if event.key == k_move_left:
-                            game.human_player.move_left()
-                            mover.start_left()
-                        elif event.key == k_move_right:
-                            game.human_player.move_right()
-                            mover.start_right()
-                        elif event.key == k_soft_drop:
+            # Player's move:
+            if game.turn == 0 or game.ai_player.game_over == True:
+                for event in pygame.event.get():
+                    if game.human_player.piece != None:
+                        # On key down
+                        if event.type == pygame.KEYDOWN:
+                            if event.key == k_move_left:
+                                game.human_player.move_left()
+                                mover.start_left()
+                            elif event.key == k_move_right:
+                                game.human_player.move_right()
+                                mover.start_right()
+                            elif event.key == k_soft_drop:
+                                game.human_player.move_down()
+                                mover.start_down()
+                            elif event.key == k_hard_drop:
+                                move = (game.human_player.piece.x_0,
+                                        game.human_player.piece.y_0,
+                                        game.human_player.piece.rotation)
+                                game.make_move(move)
+                            elif event.key == k_rotate_cw:
+                                game.human_player.try_wallkick(1)
+                            elif event.key == k_rotate_180:
+                                game.human_player.try_wallkick(2)
+                            elif event.key == k_rotate_ccw:
+                                game.human_player.try_wallkick(3)
+                            elif event.key == k_hold:
+                                game.human_player.hold_piece()
+                            elif event.key == k_undo:
+                                game.undo()
+                            elif event.key == k_redo:
+                                game.redo()
+                            elif event.key == k_restart:
+                                game.restart()
+
+                        # On key release
+                        elif event.type == pygame.KEYUP:
+                            # pain
+                            if event.key == k_move_left:
+                                mover.stop_left()
+                            elif event.key == k_move_right:
+                                mover.stop_right()
+                            elif event.key == k_soft_drop:
+                                mover.stop_down()
+
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        sys.exit()
+
+                # DAS, ARR, and Softdrop
+                current_time = time.time()
+
+                # This makes das limited by FPS
+                if mover.can_lr_das:
+                    if mover.lr_das_start_time != None:
+                        if current_time - mover.lr_das_start_time > mover.lr_das_counter:
+                            if mover.lr_das_direction == "L":
+                                game.human_player.move_left()
+                            elif mover.lr_das_direction == "R":
+                                game.human_player.move_right()      
+                            mover.lr_das_counter += ARR/1000
+
+                if mover.can_sd_das:
+                    if mover.sd_start_time != None:
+                        if current_time - mover.sd_start_time > mover.sd_counter:
                             game.human_player.move_down()
-                            mover.start_down()
-                        elif event.key == k_hard_drop:
-                            game.make_move()
-                        elif event.key == k_rotate_cw:
-                            game.human_player.try_wallkick(1)
-                        elif event.key == k_rotate_180:
-                            game.human_player.try_wallkick(2)
-                        elif event.key == k_rotate_ccw:
-                            game.human_player.try_wallkick(3)
-                        elif event.key == k_hold:
-                            game.human_player.hold_piece()
-                        elif event.key == k_undo:
-                            game.undo()
-                        elif event.key == k_redo:
-                            game.redo()
-                        elif event.key == k_restart:
-                            game.restart()
+                            mover.sd_counter += (1 / SDF) / 1000
 
-                    # On key release
-                    elif event.type == pygame.KEYUP:
-                        # pain
-                        if event.key == k_move_left:
-                            mover.stop_left()
-                        elif event.key == k_move_right:
-                            mover.stop_right()
-                        elif event.key == k_soft_drop:
-                            mover.stop_down()
+            elif game.turn == 1:
+                # with cProfile.Profile() as pr:
+                #     game.make_move(move=MCTS(game.ai_player, game.human_player))
+                # stats = pstats.Stats(pr)
+                # stats.sort_stats(pstats.SortKey.TIME)
+                # stats.print_stats()
+                game.make_move(move=MCTS(game.ai_player, game.human_player))
 
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    sys.exit()
-
-            # DAS, ARR, and Softdrop
-            current_time = time.time()
-
-            ### This code, while cool, does not matter
-            ### I still need to consider sliding off and corners
-            '''
-            # Stop code from running if das is into a wall  
-            if ((mover.lr_das_direction == "L" and not game.human_player.can_move_left())
-                or (mover.lr_das_direction == "R" and not game.human_player.can_move_right())):
-                mover.can_lr_das = False
-            
-            # Stop code from runing if sd is into floor
-            if (mover.sd_held == True and not game.human_player.can_move_down()):
-                mover.can_sd_das = False
-            '''
-
-            if mover.can_lr_das:
-                if mover.lr_das_start_time != None:
-                    if current_time - mover.lr_das_start_time > mover.lr_das_counter:
-                        if mover.lr_das_direction == "L":
-                            game.human_player.move_left()
-                        elif mover.lr_das_direction == "R":
-                            game.human_player.move_right()      
-                        mover.lr_das_counter += ARR/1000
-#                        print(mover.can_lr_das,mover.lr_das_direction, game.human_player.can_move_left(), current_time)
-
-            if mover.can_sd_das:
-                if mover.sd_start_time != None:
-                    if current_time - mover.sd_start_time > mover.sd_counter:
-                        game.human_player.move_down()
-                        mover.sd_counter += (1 / SDF) / 1000
-#                        print(mover.can_sd_das, game.human_player.can_move_down(),current_time)
-            
             pygame.display.update()
 
 if __name__ == "__main__":

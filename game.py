@@ -1,23 +1,20 @@
-from ai import AI
 from const import *
 from history import History
-from player import Human
-
-import cProfile
-import pstats
+from player import Human, AI
 
 class Game:
     """Contains all players and communicates with them."""
     def __init__(self):
         self.human_player = Human()
         self.ai_player = AI()
+        self.turn = 0
         
-        self.players = [self.ai_player, self.human_player]
+        self.players = [self.human_player, self.ai_player]
 
         self.history = History()
 
     # Game methods
-    def setup_game(self):
+    def setup(self):
         self.add_bag_to_all()
         for player in self.players:
             player.create_next_piece()
@@ -28,54 +25,50 @@ class Game:
         for player in self.players:
             player.queue.add_bag(bag)
 
-    def make_move(self):
-        player_move = None
-        if self.human_player.game_over == False:
-            player_move = self.human_player.place_piece()
-            self.check_garbage(self.human_player)
-            self.human_player.create_next_piece() # Create piece after garbage
+    def make_move(self, move, add_bag=True, add_history=True):
+        player = self.players[self.turn]
 
-            # Don't have the AI move if the player is dead
-            if self.ai_player.game_over == False:
+        if player.game_over == False:
+            player.force_place_piece(*move)
 
-                with cProfile.Profile() as pr:
-                    self.ai_player.make_move(self.human_player, self.ai_player, player_move=player_move)
-                stats = pstats.Stats(pr)
-                stats.sort_stats(pstats.SortKey.TIME)
-                stats.print_stats()
-                
-                self.check_garbage(self.ai_player)
-                self.ai_player.create_next_piece() # Create piece after garbage
-        
-        # Add history after placing piece
-        if (self.human_player.game_over == False or 
-            self.ai_player.game_over == False):
-            self.add_history()
+            self.check_garbage()
+            player.create_next_piece()
+
+            if (add_bag == True and len(player.queue.pieces) < 5): # In MCTS don't add pieces to the queue
+                self.add_bag_to_all()
+
+            # Add history after placing piece
+            if (add_history == True and self.human_player.game_over == False and self.turn == 1): # IN MCTS don't add history
+                self.add_history()
+
+            self.turn = 1 - self.turn # 1 to 0
 
     def add_history(self):
-        # If placing a piece after undoing, get rid if future history
+        # If placing a piece after undoing, get rid of future history
         if self.history.index != None:
-            while self.history.index + 1 < len(self.history.boards) and self.history.index >= 0:
-                self.history.boards.pop(-1)
+            while self.history.index + 1 < len(self.history.states) and self.history.index >= 0:
+                self.history.states.pop(-1)
         
         # Add on history
-        player_boards = []
+        player_states = []
         for player in self.players:
             if player.piece != None:
                 piece = player.piece.copy()
                 piece.move_to_spawn()
             else: piece = None
+            # Only need to copy certain variables
+            # Don't need to repeat history
             dictionary = {
                 'board': player.board.copy(), 
                 'queue': player.queue.copy(), 
                 'stats': player.stats.copy(), 
+                'game_over': player.game_over,
                 'piece': piece,
                 'held_piece': player.held_piece,
-                'garbage_to_receive': player.garbage_to_receive[:],
-                'game_over': player.game_over
+                'garbage_to_receive': player.garbage_to_receive[:]
                 }
-            player_boards.append(dictionary)
-        self.history.boards.append(player_boards)
+            player_states.append(dictionary)
+        self.history.states.append(player_states)
 
         # Move history index
         if self.history.index == None:
@@ -83,21 +76,38 @@ class Game:
         else: self.history.index += 1
 
     def update_state(self, state):
+        # Changes the state of both players to a given input state
         for player_idx in range(len(self.players)):
-            player_state = state[player_idx]
-            for key in player_state:
-                setattr(self.players[player_idx], key, player_state[key])
+            player_state = state[player_idx] # Make sure to copy player info
+
+            if player_state["piece"] != None:
+                piece = player_state["piece"].copy()
+                piece.move_to_spawn()
+            else: piece = None
+
+            copied_dict = {
+                'board': player_state["board"].copy(), 
+                'queue': player_state["queue"].copy(), 
+                'stats': player_state["stats"].copy(), 
+                'game_over': player_state["game_over"],
+                'piece': piece,
+                'held_piece': player_state["held_piece"],
+                'garbage_to_receive': player_state["garbage_to_receive"][:]
+            }
+
+            for key in copied_dict:
+                setattr(self.players[player_idx], key, copied_dict[key])
 
     def undo(self):
-        if len(self.history.boards) > 1 and self.history.index != 0:
-            state = self.history.boards[self.history.index - 1].copy()
+        if len(self.history.states) > 1 and self.history.index != 0:
+            state = self.history.states[self.history.index - 1]
             self.update_state(state)
 
             self.history.index -= 1
-                    
+                        
     def redo(self):
-        if len(self.history.boards) > self.history.index + 1:
-            state = self.history.boards[self.history.index + 1].copy()
+        if len(self.history.states) > self.history.index + 1:
+            state = self.history.states[self.history.index + 1]
             self.update_state(state)
             
             self.history.index += 1
@@ -113,40 +123,30 @@ class Game:
         
         self.add_history()
 
-    def check_garbage(self, player):
-        other_player = [x for x in self.players if x != player][0]
+    def check_garbage(self):
+        active_player = self.players[self.turn]
+        other_player = self.players[1 - self.turn]
 
         # Checks for sending garbage, sends garbage, and canceling
-        while len(player.garbage_to_send) > 0 and len(player.garbage_to_receive) > 0: # Cancel garbage
+        while len(active_player.garbage_to_send) > 0 and len(active_player.garbage_to_receive) > 0: # Cancel garbage
             # Remove first elements
-            player.garbage_to_send.pop(0)
-            player.garbage_to_receive.pop(0)
+            active_player.garbage_to_send.pop(0)
+            active_player.garbage_to_receive.pop(0)
         
-        if len(player.garbage_to_send) > 0:
-            other_player.garbage_to_receive += player.garbage_to_send # Send garbage
-            player.garbage_to_send = [] # Stop sending garbage
+        if len(active_player.garbage_to_send) > 0:
+            other_player.garbage_to_receive += active_player.garbage_to_send # Send garbage
+            active_player.garbage_to_send = [] # Stop sending garbage
         
-        if len(player.garbage_to_receive) > 0:
-            player.spawn_garbage()
+        if len(active_player.garbage_to_receive) > 0:
+            active_player.spawn_garbage()
     
+    @property
+    def is_terminal(self):
+        for player in self.players:
+            if player.game_over == True:
+                return True
+        return False
     
     # Show methods
     def show_bg(self, surface):
         surface.fill((0, 0, 0))
-
-        '''grey = (100, 100, 100)
-        width = 4
-
-        # Main Box
-        pygame.draw.line(surface, grey, 
-                                   (E_BUFFER + HOLD_WIDTH, N_BUFFER), 
-                                   (E_BUFFER + HOLD_WIDTH + COLS * MINO_SIZE, N_BUFFER), width=width)
-        pygame.draw.line(surface, grey, 
-                                   (E_BUFFER + HOLD_WIDTH + COLS * MINO_SIZE, N_BUFFER), 
-                                   (E_BUFFER + HOLD_WIDTH + COLS * MINO_SIZE, N_BUFFER + ROWS * MINO_SIZE), width=width)
-        pygame.draw.line(surface, grey, 
-                                   (E_BUFFER + HOLD_WIDTH + COLS * MINO_SIZE, N_BUFFER + ROWS * MINO_SIZE), 
-                                   (E_BUFFER + HOLD_WIDTH, N_BUFFER + ROWS * MINO_SIZE), width=width)
-        pygame.draw.line(surface, grey, 
-                                   (E_BUFFER + HOLD_WIDTH, N_BUFFER + ROWS * MINO_SIZE),
-                                   (E_BUFFER + HOLD_WIDTH, N_BUFFER), width=width)'''

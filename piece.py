@@ -68,5 +68,7 @@ class Piece:
                     col = x_0 + x
                     row = y_0 + y
                     coordinate_list.append([col, row])
+                    if len(coordinate_list) >= 4:
+                        return(coordinate_list)
         
         return(coordinate_list)

@@ -1,4 +1,3 @@
-import ai_utils
 from board import Board
 from piece_queue import Queue
 from stats import Stats
@@ -223,6 +222,7 @@ class Player:
         if self.piece != None:
             new_player.piece = self.piece.copy()
         new_player.held_piece = self.held_piece
+        new_player.garbage_to_receive = self.garbage_to_receive[:]
 
         return new_player
 
@@ -361,3 +361,8 @@ class Human(Player):
     def __init__(self) -> None:
         super().__init__()
         self.draw_coords = (0, 0)
+
+class AI(Player):
+    def __init__(self) -> None:
+        super().__init__()
+        self.draw_coords = (WIDTH/2, 0)
