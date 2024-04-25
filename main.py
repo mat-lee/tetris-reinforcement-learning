@@ -110,7 +110,8 @@ class Main:
                 # stats = pstats.Stats(pr)
                 # stats.sort_stats(pstats.SortKey.TIME)
                 # stats.print_stats()
-                game.make_move(move=MCTS(game.ai_player, game.human_player))
+                move, _ = MCTS(game)
+                game.make_move(move=move)
 
             pygame.display.update()
 

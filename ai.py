@@ -1,25 +1,43 @@
 from const import *
+from game import Game
 from player import Player
 
 import random
 import treelib
 
-def MCTS(active_player, other_player):
+class NodeState():
+    """Node class for storing the game in the tree.
+    
+    Similar to the game class, but is more specialized for AI functions and has different variables"""
+
+    def __init__(self, game=None, move=None) -> None:
+        self.game = game
+        self.move = move
+
+        # Search tree variables
+        # Would be stored in each edge, but this is essentially the same thing
+        self.N = 1
+        self.W = 0
+        self.Q = 0
+        self.P = 0
+
+        self.value = None
+        self.policy = None
+        self.move_list = None
+
+def MCTS(game):
     # Class for picking a move for the AI to make 
     # Initialize the search tree
     tree = treelib.Tree()
+    game_copy = game.copy()
 
-    initial_turn = 0 # 0: own move, 1: other move
-
-    game_copy = [active_player.copy(), other_player.copy()]
     # Restrict previews
-    for player in game_copy:
+    for player in game_copy.players:
         while len(player.queue.pieces) > PREVIEWS:
             player.queue.pieces.pop(-1)
 
     # Create the initial node
-    initial_state = NodeState(players=game_copy, 
-                                turn=initial_turn, move=None)
+    initial_state = NodeState(game=game_copy, move=None)
 
     tree.create_node(identifier="root", data=initial_state)
 
@@ -57,25 +75,19 @@ def MCTS(active_player, other_player):
                 MAX_DEPTH = DEPTH
                     
         # Don't update policy, move_list, or generate new nodes if the node is done
-        if node_state.is_done == False:
+        if node_state.game.is_terminal == False:
 
             value, policy = evaluate(node_state)
-            move_list = get_move_list(node_state.players[node_state.turn])
+            move_list = get_move_list(node_state.game.players[node_state.game.turn])
 
             # Place pieces and generate new leaves
             for move in move_list:
-                copied_players = []
-                for player in node_state.players:
-                    copied_players.append(player.copy())
-                new_state = NodeState(players=copied_players, 
-                                        turn=node_state.turn,
-                                        move=move)
+                game_copy = node_state.game.copy()
+                new_state = NodeState(game=game_copy, move=move)
 
-                new_state.make_move(node_state.turn, move)
+                new_state.game.make_move(move)
                 # new_state.P = policy
                 new_state.P = random.random()
-
-                new_state.turn = 1 - node_state.turn # 0 -> 1; 1 -> 0
 
                 tree.create_node(data=new_state, parent=node.identifier)
 
@@ -106,69 +118,10 @@ def MCTS(active_player, other_player):
 
     move = tree.get_node(max_id).data.move
 
-    return move
+    return move, tree
 
 def evaluate(game):
     return random.random(), 1
-
-class NodeState():
-    """Node class for storing the game in the tree.
-    
-    Similar to the game class, but is more specialized for AI functions and has different variables"""
-
-    def __init__(self, players=None, turn=None, move=None) -> None:
-        self.players = players
-        self.turn = turn
-        self.move = move
-
-        # Search tree variables
-        # Would be stored in each edge, but this is essentially the same thing
-        self.N = 1
-        self.W = 0
-        self.Q = 0
-        self.P = 0
-
-        self.value = None
-        self.policy = None
-        self.move_list = None
-
-        self.is_done = False
-
-#class GameState():
-    """Class for storing game information inside nodes."""
-    
-    def check_if_done(self):
-        for player in self.players:
-            if player.game_over == True:
-                self.is_done = True
-    
-    def make_move(self, turn, move): # e^-5
-        player = self.players[turn]
-        other_player = self.players[turn - 1]
-
-        player.force_place_piece(*move)
-
-        # Checks for sending garbage, sends garbage, and canceling
-        while len(player.garbage_to_send) > 0 and len(player.garbage_to_receive) > 0: # Cancel garbage
-            # Remove first elements
-            player.garbage_to_send.pop(0)
-            player.garbage_to_receive.pop(0)
-
-        if len(player.garbage_to_send) > 0:
-            other_player.garbage_to_receive += player.garbage_to_send # Send garbage
-            player.garbage_to_send = [] # Stop sending garbage
-        
-        elif len(player.garbage_to_receive) > 0:
-            player.spawn_garbage()
-        
-        player.create_next_piece()
-
-        # Check if the game is over:
-        self.check_if_done()
-
-        # Stop searching if the other player doesn't have a piece
-        if len(other_player.queue.pieces) == 0 and other_player.piece == None:
-            self.is_done = True
 
 def get_move_list(player): # e^-3
     # Using a list of all possible locations the piece can reach
@@ -272,6 +225,34 @@ def get_move_list(player): # e^-3
 
     return locations 
 
-# Using deepcopy:                  100 iter in 36.911 s
-# Using copy functions in classes: 100 iter in 1.658 s
-# Many small changes:              100 iter in 1.233 s
+def search_statistics(tree):
+    pass
+
+# Using deepcopy:                   100 iter in 36.911 s
+# Using copy functions in classes:  100 iter in 1.658 s
+# Many small changes:               100 iter in 1.233 s
+# MCTS uses game instead of player: 100 iter in 1.577 s
+
+##### Simulation #####
+
+# Policy: 25 x 11 x 4 x 2 = 2376
+# Rows x Columns x Rotations x Hold
+
+# Terminate games that extend too long
+
+# Having two AI's play against each other.
+# At each move, save X and y
+# X: Active board + Opponent board
+# y: MCTS search stats + Whether they won or not
+
+class Simulation():
+    def __init__(self) -> None:
+        game = Game()
+        dataset = []
+    
+    def play_game(self):
+        while True:
+            move, tree = MCTS(self.game)
+            self.game.make_move(move)
+
+            

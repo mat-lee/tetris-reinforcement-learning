@@ -145,8 +145,17 @@ class Game:
         for player in self.players:
             if player.game_over == True:
                 return True
+        if self.players[self.turn].piece == None:
+            return True
         return False
     
+    def copy(self):
+        new_game = Game()
+        new_game.players = [player.copy() for player in self.players]
+        new_game.turn = self.turn
+
+        return new_game
+
     # Show methods
     def show_bg(self, surface):
         surface.fill((0, 0, 0))
