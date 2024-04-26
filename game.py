@@ -149,6 +149,16 @@ class Game:
             return True
         return False
     
+    @property
+    def winner(self):
+        status = [player.game_over for player in self.players]
+        if status[0] == True:
+            return 1
+        elif status[1] == True:
+            return 0
+        else:
+            return -1
+
     def copy(self):
         new_game = Game()
         new_game.players = [player.copy() for player in self.players]

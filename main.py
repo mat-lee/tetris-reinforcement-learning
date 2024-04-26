@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import MCTS
+from ai import MCTS, load_best_network
 from const import *
 from game import Game
 from mover import Mover
@@ -13,6 +13,9 @@ import pstats
 # Consider replacing mino matrix and x and y with mino coords
 # MCTS Hold
 # Address garbage randomness in MCTS
+
+# Load neural network
+NN = load_best_network()
 
 class Main:
 
@@ -110,7 +113,7 @@ class Main:
                 # stats = pstats.Stats(pr)
                 # stats.sort_stats(pstats.SortKey.TIME)
                 # stats.print_stats()
-                move, _ = MCTS(game)
+                move, _ = MCTS(game, NN)
                 game.make_move(move=move)
 
             pygame.display.update()

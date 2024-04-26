@@ -1,7 +1,17 @@
 import pygame
 
+# Board Dimensions:
+ROWS = 25
+SPAWN_ROW = 23
+GRID_ROWS = 20
+
+GRID_ROWS = 20
+COLS = 10
+
 # AI settings
 MAX_ITER = 10
+MAX_MOVES = 1000
+POLICY_SIZE = ROWS * (COLS + 1) * 4 * 2
 
 # Controls:
 k_move_left =   pygame.K_LEFT
@@ -23,14 +33,6 @@ ARR = 0
 SDF = 1/10
 
 PREVIEWS = 5
-
-# Board Dimensions:
-ROWS = 25
-SPAWN_ROW = 23
-GRID_ROWS = 20
-
-GRID_ROWS = 20
-COLS = 10
 
 # Screen Dimensions:
 MINO_SIZE = 30
