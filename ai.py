@@ -364,7 +364,7 @@ def evaluate(game, network):
     X = np.array(grids)
     X = np.expand_dims(X, axis=0)
 
-    values, policies = network.predict(X)
+    values, policies = network.predict(X, verbose=0)
     policies = np.array(policies)
     policies.reshape((ROWS, COLS+1, 4, 2))
     return values, policies.tolist()
