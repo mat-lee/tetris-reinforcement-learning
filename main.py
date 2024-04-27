@@ -55,7 +55,8 @@ class Main:
                                 game.human_player.move_down()
                                 mover.start_down()
                             elif event.key == k_hard_drop:
-                                move = (game.human_player.piece.x_0,
+                                move = (0, 
+                                        game.human_player.piece.x_0,
                                         game.human_player.piece.y_0,
                                         game.human_player.piece.rotation)
                                 game.make_move(move)

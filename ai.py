@@ -10,7 +10,11 @@ import treelib
 
 import keras
 import tensorflow as tf
-# from sklearn.linear_model import LinearRegression
+
+# Areas of optimization:
+# - Finding piece locations (piece locations held and not held are related)
+# - Optimizing the search tree algorithm
+# - Optimizing piece coordinates
 
 class NodeState():
     """Node class for storing the game in the tree.
@@ -85,16 +89,16 @@ def MCTS(game, network):
         if node_state.game.is_terminal == False:
 
             value, policy = evaluate(node_state.game, network)
-            move_list = get_move_list(node_state.game.players[node_state.game.turn])
+            move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn])
+            move_list = get_move_list(move_matrix, policy)
 
             # Place pieces and generate new leaves
-            for move in move_list:
+            for policy, move in move_list:
                 game_copy = node_state.game.copy()
                 new_state = NodeState(game=game_copy, move=move)
 
                 new_state.game.make_move(move, add_bag=False, add_history=False)
-                # new_state.P = policy
-                new_state.P = random.random()
+                new_state.P = policy
 
                 tree.create_node(data=new_state, parent=node.identifier)
 
@@ -124,11 +128,10 @@ def MCTS(game, network):
             max_id = root_child.identifier
 
     move = tree.get_node(max_id).data.move
-    search_statistics(tree)
 
     return move, tree
 
-def get_move_list(player): # e^-3
+def get_move_matrix(player): # e^-3
     # Using a list of all possible locations the piece can reach
     # Using a queue to determine which boards to check
 
@@ -147,88 +150,112 @@ def get_move_list(player): # e^-3
         # Else return the floor
         return len(grid)
 
-    # Load the state
-    sim_player = Player()
-    sim_player.board = player.board.copy()
-    sim_player.piece = player.piece.copy()
-
-    piece = sim_player.piece
-
     # On the left hand side, blocks can have negative x
-    buffer = (2 if piece.type == "I" else (0 if piece.type == "O" else 1))
+    # buffer = (2 if piece.type == "I" else (0 if piece.type == "O" else 1))
+    buffer = 2
+    width = COLS + buffer - 1
 
-    # No piece can be placed in the bottom row; ROWS - 1
-    possible_piece_locations = [[[False for o in range (4)] for x in range(COLS + buffer - 1)] for y in range(ROWS - 1)]
-    next_location_queue = []
-    locations = []
+    # Repeat for held pieces
+    all_moves = np.zeros((2, ROWS, width, 4))
+    for h in range(2):
+        # Load the state
+        sim_player = player.copy()
+        if h == 1:
+            sim_player.hold_piece()
 
-    # Start the piece at the highest point it can be placed
-    highest_row = get_highest_row(sim_player.board.grid)
-    starting_row = max(highest_row - len(piece.matrix), 0)
-    piece.y_0 = starting_row
+        piece = sim_player.piece
 
-    x = piece.x_0
-    y = piece.y_0
-    o = piece.rotation
+        # No piece can be placed in the bottom row; ROWS - 1
+        # possible_piece_locations = [[[False for o in range (4)] for x in range(COLS + buffer - 1)] for y in range(ROWS - 1)]
+        possible_piece_locations = np.zeros((ROWS, width, 4))
+        next_location_queue = []
+        locations = []
 
-    piece.update_rotation()
+        # Start the piece at the highest point it can be placed
+        highest_row = get_highest_row(sim_player.board.grid)
+        starting_row = max(highest_row - len(piece.matrix), 0)
+        piece.y_0 = starting_row
 
-    next_location_queue.append((x, y, o))
-
-    # Search through the queue
-    while len(next_location_queue) > 0:
-        piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
+        x = piece.x_0
+        y = piece.y_0
+        o = piece.rotation
 
         piece.update_rotation()
 
-        possible_piece_locations[piece.y_0][piece.x_0 + buffer][piece.rotation] = True
+        next_location_queue.append((x, y, o))
 
-        for move in [[1, 0], [-1, 0], [0, 1]]:
-            x = piece.x_0 + move[0]
-            y = piece.y_0 + move[1]
-            o = piece.rotation
-
-            if sim_player.can_move(x_offset=move[0], y_offset=move[1]): # Check this first to avoid index errors
-                if (possible_piece_locations[y][x + buffer][o] == False 
-                    and (x, y, o) not in next_location_queue
-                    and y >= 0): # Avoid negative indexing
-
-                    next_location_queue.append((x, y, o))
-
-
-        for i in range(1, 4):
-            sim_player.try_wallkick(i)
-
-            x = piece.x_0
-            y = piece.y_0
-            o = piece.rotation
-
-            if (possible_piece_locations[y][x + buffer][o] == False
-                and (x, y, o) not in next_location_queue
-                and y >= 0): # Avoid negative indexing
-                next_location_queue.append((x, y, o))
-
+        # Search through the queue
+        while len(next_location_queue) > 0:
             piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
 
             piece.update_rotation()
 
-        next_location_queue.pop(0)
+            possible_piece_locations[piece.y_0][piece.x_0 + buffer][piece.rotation] = 1
 
-    # Remove entries that can move downwards
-    for o in range(4): # Smallest number of operations
-        sim_player.piece.rotation = o
-        sim_player.piece.update_rotation()
+            for move in [[1, 0], [-1, 0], [0, 1]]:
+                x = piece.x_0 + move[0]
+                y = piece.y_0 + move[1]
+                o = piece.rotation
 
-        for x in range(COLS + buffer - 1):
-            sim_player.piece.x_0 = x - buffer
+                if sim_player.can_move(x_offset=move[0], y_offset=move[1]): # Check this first to avoid index errors
+                    if (possible_piece_locations[y][x + buffer][o] == 0 
+                        and (x, y, o) not in next_location_queue
+                        and y >= 0): # Avoid negative indexing
 
-            for y in reversed(range(ROWS - 1)):
-                if possible_piece_locations[y][x][o] == True:
-                    sim_player.piece.y_0 = y
-                    if not sim_player.can_move(y_offset=1):
-                        locations.append((x - buffer, y, o))
+                        next_location_queue.append((x, y, o))
 
-    return locations 
+
+            for i in range(1, 4):
+                sim_player.try_wallkick(i)
+
+                x = piece.x_0
+                y = piece.y_0
+                o = piece.rotation
+
+                if (possible_piece_locations[y][x + buffer][o] == 0
+                    and (x, y, o) not in next_location_queue
+                    and y >= 0): # Avoid negative indexing
+                    next_location_queue.append((x, y, o))
+
+                piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
+
+                piece.update_rotation()
+
+            next_location_queue.pop(0)
+
+        # Remove entries that can move downwards
+        for o in range(4): # Smallest number of operations
+            sim_player.piece.rotation = o
+            sim_player.piece.update_rotation()
+
+            for x in range(COLS + buffer - 1):
+                sim_player.piece.x_0 = x - buffer
+
+                for y in reversed(range(ROWS - 1)):
+                    if possible_piece_locations[y][x][o] == 1:
+                        sim_player.piece.y_0 = y
+                        if not sim_player.can_move(y_offset=1):
+                            all_moves[h][y][x][o] = 1
+
+    return all_moves
+
+def get_move_list(move_matrix, policy_matrix):
+    # Returns list of possible moves sorted by policy
+    move_list = []
+
+    mask = np.multiply(move_matrix, policy_matrix)
+    for h in range(len(mask)):
+        for row in range(len(mask[0])):
+            for col in range(len(mask[0][0])):
+                for o in range(len(mask[0][0][0])):
+                    if mask[h][row][col][o] > 0:
+                        move_list.append((mask[h][row][col][o],
+                                          (h, col - 2, row, o) # Switch to x y z and remove buffer
+                                          ))
+    # Sort by policy
+    move_list = sorted(move_list, key=lambda tup: tup[0], reverse=True)
+    return move_list
+
 
 def search_statistics(tree):
     """Return a matrix of proportion of moves looked at.
@@ -237,7 +264,7 @@ def search_statistics(tree):
     and will become the target for training policy.
     # Policy: Rows x Columns x Rotations x Hold"""
     # Policy: 25 x 11 x 4 x 2
-    probability_matrix = np.zeros((ROWS, COLS + 1, 4, 2))
+    probability_matrix = np.zeros((2, ROWS, COLS + 1, 4))
 
     root = tree.get_node("root")
     root_children_id = root.successors(tree.identifier)
@@ -247,8 +274,8 @@ def search_statistics(tree):
         root_child = tree.get_node(root_child_id)
         root_child_n = root_child.data.N
         root_child_move = root_child.data.move
-        col, row, rotation = root_child_move
-        probability_matrix[row][col][rotation][0] = root_child_n
+        hold, col, row, rotation = root_child_move
+        probability_matrix[hold][row][col][rotation] = root_child_n
 
         total_n += root_child_n
     
@@ -267,7 +294,7 @@ def search_statistics(tree):
 # X: 
 #   (20 x 10 x 2) (Rows x Columns x Boards)
 # y:
-#   Policy: (25 x 11 x 4 x 2) = 2200 (Rows x Columns x Rotations x Hold)
+#   Policy: (2 x 25 x 11 x 4) = 2200 (Hold x Rows x Columns x Rotations)
 #   Value: (1)
 
 def simplify_grid(grid):
@@ -366,7 +393,7 @@ def evaluate(game, network):
 
     values, policies = network.predict(X, verbose=0)
     policies = np.array(policies)
-    policies.reshape((ROWS, COLS+1, 4, 2))
+    policies = policies.reshape((2, ROWS, COLS+1, 4))
     return values, policies.tolist()
 
 def load_best_network():
