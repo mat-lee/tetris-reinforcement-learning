@@ -8,7 +8,7 @@ import time
     data = json.load(open("data/nohold/1-1game-10depth.txt", 'r'))
     create_network(data)'''
 
-START = time.time()
-make_traning_set(load_best_network(), 1)
-END = time.time()
-print(END - START)
+# create_network()
+NN = load_best_network()
+# NN.summary()
+self_play_loop(NN)

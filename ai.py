@@ -64,15 +64,15 @@ def MCTS(game, network):
         # Go down the tree using Q+U until you get to a leaf node
         while not node.is_leaf():
             child_ids = node.successors(tree.identifier)
-            max_child_score = 0
+            max_child_score = -1
             max_child_id = None
             sum_n = 0
             for child_id in child_ids:
                 sum_n += tree.get_node(child_id).data.N
             for child_id in child_ids:
                 child_data = tree.get_node(child_id).data
-                child_score = child_data.P*sum_n/(1+child_data.N)
-                if child_score > max_child_score:
+                child_score = child_data.Q + child_data.P*sum_n/(1+child_data.N)
+                if child_score >= max_child_score:
                     max_child_score = child_score
                     max_child_id = child_id
             
@@ -82,7 +82,7 @@ def MCTS(game, network):
             DEPTH += 1
             if DEPTH > MAX_DEPTH:
                 MAX_DEPTH = DEPTH
-                    
+
         # Don't update policy, move_list, or generate new nodes if the node is done
         if node_state.game.is_terminal == False:
 
@@ -110,7 +110,7 @@ def MCTS(game, network):
             node_state.W += value
             node_state.Q = node_state.W / node_state.N
 
-    print(MAX_DEPTH)
+    #print(MAX_DEPTH)
 
     # Choose a move
     root = tree.get_node("root")
@@ -341,7 +341,7 @@ def play_game(network):
 
     return data
 
-def make_traning_set(network, num_games):
+def make_training_set(network, num_games):
     series_data = []
     for i in range(num_games):
         data = play_game(network)
@@ -351,39 +351,105 @@ def make_traning_set(network, num_games):
     with open(f"data/{num_games}.txt", 'w') as out_file:
         out_file.write(json_data)
 
+    return series_data
+
+def training_loop(network):
+    for i in range(TRAINING_LOOPS):
+        series_data = make_training_set(network, TRAINING_GAMES)
+        print("Finished set")
+        train_network(network, series_data)
+    print("Finished loop")
+
+def battle_networks(NN_1, NN_2):
+    wins = np.zeros((2))
+    for i in range(BATTLE_GAMES):
+        game = Game()
+        game.setup()
+        while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
+            if game.turn == 0:
+                move, _ = MCTS(game, NN_1)    
+            elif game.turn == 1:
+                move, _ = MCTS(game, NN_2)
+            game.make_move(move)
+        winner = game.winner
+        if winner == -1:
+            wins += 0.5
+        else: wins[winner] += 1
+
+    wins /= wins.sum()
+    return wins[0], wins[1]
+
+def self_play_loop(network):
+    old_network = network
+    iter = 0
+    while True:
+        iter += 1
+        new_network = keras.models.clone_model(old_network)
+        
+        training_loop(new_network)
+
+        new_wins, old_wins = battle_networks(new_network, old_network)
+        print("Finished battle")
+        print(new_wins, old_wins)
+        if new_wins >= 0.55:
+            old_network = new_network
+            old_network.save(f"networks/model{iter}_1.keras")
+        else:
+            break
+
 def features_targets(data):
-    boards = []
+    boards_1 = []
+    boards_2 = []
     values = []
     policies = []
     for i in range(len(data)):
-        boards.append(data[i][0])
+        boards_1.append(data[i][0][0])
+        boards_2.append(data[i][0][1])
         values.append(data[i][1][0])
         policies.append(data[i][1][1])
     
-    return boards, (values, policies)
+    return (boards_1, boards_2), (values, policies)
 
-def create_network(data):
-    grids, (values, policies) = features_targets(data)
-    grids = np.array(grids)
+def create_network():
+    input_1 = keras.Input(shape=(25, 10))
+    x_1 = keras.layers.Flatten()(input_1)
+    x_1 = keras.layers.Dense(256)(x_1)
+    x_1 = keras.layers.BatchNormalization()(x_1)
+    x_1 = keras.layers.Activation('relu')(x_1)
+
+    input_2 = keras.Input(shape=(25, 10))
+    x_2 = keras.layers.Flatten()(input_2)
+    x_2 = keras.layers.Dense(256)(x_2)
+    x_2 = keras.layers.BatchNormalization()(x_2)
+    x_2 = keras.layers.Activation('relu')(x_2)
+
+    x = keras.layers.Concatenate(axis=-1)([x_1, x_2])
+    x = keras.layers.Dense(32)(x)
+    x = keras.layers.BatchNormalization()(x)
+    x = keras.layers.Activation('relu')(x)
+
+    value_output = keras.layers.Dense(1, activation='tanh')(x)
+    policy_output = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+
+    model = keras.Model(inputs=[input_1, input_2], outputs=[value_output, policy_output])
+    model.compile(optimizer='adam', loss=["mean_squared_error", "binary_crossentropy"])
+
+    model.summary()
+
+    #model.fit(x=grids, y=[values, policies])
+
+    model.save("networks/model1.keras")
+
+def train_network(model, data):
+    (grids_1, grids_2), (values, policies) = features_targets(data)
+    grids_1 = np.array(grids_1)
+    grids_2 = np.array(grids_2)
     values = np.array(values)
     policies = np.array(policies)
     # Reshape policies
     policies = policies.reshape((-1, POLICY_SIZE))
 
-    inputs = keras.Input(shape=(2, 25, 10))
-    x = keras.layers.Flatten()(inputs)
-    x = keras.layers.Dense(16, activation="relu")(x)
-    value_output = keras.layers.Dense(1)(x)
-    policy_output = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
-
-    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
-    model.compile(optimizer='adam', loss=["mean_squared_error", "binary_crossentropy"])
-
-    model.summary()
-
-    model.fit(x=grids, y=[values, policies])
-
-    model.save("networks/model2.keras")
+    model.fit(x=[grids_1, grids_2], y=[values, policies])
 
 def evaluate(game, network):
     grids = [[], []]
@@ -395,9 +461,11 @@ def evaluate(game, network):
         grids = grids[::-1]
     
     X = np.array(grids)
-    X = np.expand_dims(X, axis=0)
+    X_1, X_2 = X
+    X_1 = np.expand_dims(X_1, axis=0)
+    X_2 = np.expand_dims(X_2, axis=0)
 
-    values, policies = network.predict(X, verbose=0)
+    values, policies = network.predict([X_1, X_2], verbose=0)
     policies = np.array(policies)
     policies = policies.reshape((2, ROWS, COLS+1, 4))
     return values, policies.tolist()

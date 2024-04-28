@@ -9,9 +9,13 @@ GRID_ROWS = 20
 COLS = 10
 
 # AI settings
-MAX_ITER = 160
+MAX_ITER = 160 # 1600
 MAX_MOVES = 1000
 POLICY_SIZE = ROWS * (COLS + 1) * 4 * 2
+
+TRAINING_GAMES = 100 # 25000
+TRAINING_LOOPS = 4 # 1000
+BATTLE_GAMES = 40 # 400
 
 # Controls:
 k_move_left =   pygame.K_LEFT
