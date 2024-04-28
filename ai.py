@@ -1,11 +1,8 @@
 from const import *
 from game import Game
-from player import Player
 
 import json
 import numpy as np
-import pickle
-import random
 import treelib
 
 import keras
@@ -15,6 +12,7 @@ import tensorflow as tf
 # - Finding piece locations (piece locations held and not held are related)
 # - Optimizing the search tree algorithm
 # - Optimizing piece coordinates
+# - Redundant piece rotations
 
 class NodeState():
     """Node class for storing the game in the tree.
@@ -304,14 +302,14 @@ def simplify_grid(grid):
                 grid[row][col] = 1
     return grid
 
-def play_game():
+def play_game(network):
     # Player data: (Boards, (Value, Policy))
     game = Game()
     game.setup()
     player_data = [[], []]
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
-        move, tree = MCTS(game)
+        move, tree = MCTS(game, network)
         # Boards from the perspective of the active player
         # Also make it 1s and 0s
         grids = [[], []]
@@ -341,8 +339,16 @@ def play_game():
     data = player_data[0]
     data.extend(player_data[1])
 
-    json_data = json.dumps(data)
-    with open("data/out.txt", 'w') as out_file:
+    return data
+
+def make_traning_set(network, num_games):
+    series_data = []
+    for i in range(num_games):
+        data = play_game(network)
+        series_data.extend(data)
+
+    json_data = json.dumps(series_data)
+    with open(f"data/{num_games}.txt", 'w') as out_file:
         out_file.write(json_data)
 
 def features_targets(data):
@@ -377,7 +383,7 @@ def create_network(data):
 
     model.fit(x=grids, y=[values, policies])
 
-    model.save("networks/model1.keras")
+    model.save("networks/model2.keras")
 
 def evaluate(game, network):
     grids = [[], []]
@@ -398,29 +404,3 @@ def evaluate(game, network):
 
 def load_best_network():
     return tf.keras.models.load_model('networks/model1.keras')
-
-if __name__ == "__main__":
-    data = json.load(open("data/1.1G.NH.txt", 'r'))
-    create_network(data)
-
-    # value_model = LinearRegression()
-    # policy_model = LinearRegression()
-    # value_model.fit(boards, value)
-    # policy_model.fit(boards, policy)
-
-    # with open('networks/value_model.pkl','wb') as f:
-    #     pickle.dump(value_model,f)
-    # with open('networks/policy_model.pkl','wb') as f:
-    #     pickle.dump(value_model,f)
-
-# I can't figure out how to install tensorflow onto my Macbook
-
-# inputs = keras.input(shape=(20, 10, 2))
-# x = keras.Dense(16, activation="relu")(inputs)
-# value_output = keras.Dense(1)(x)
-# policy_output = keras.Dense((25, 11, 4, 2))(x)
-
-# model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
-# model.compile(optimizer='adam', loss=["mean_squared_error", "binary_crossentropy"])
-
-# model.fit()

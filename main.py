@@ -10,10 +10,6 @@ from mover import Mover
 import cProfile
 import pstats
 
-# Consider replacing mino matrix and x and y with mino coords
-# MCTS Hold
-# Address garbage randomness in MCTS
-
 # Load neural network
 NN = load_best_network()
 
@@ -34,10 +30,7 @@ class Main:
         game.setup()
 
         while True:
-            game.show_bg(screen)
-
-            for player in game.players:
-                player.show_player(screen)
+            game.show(screen)
 
             # Player's move:
             if game.turn == 0 or game.ai_player.game_over == True:
@@ -109,11 +102,6 @@ class Main:
                             mover.sd_counter += (1 / SDF) / 1000
 
             elif game.turn == 1:
-                # with cProfile.Profile() as pr:
-                #     game.make_move(move=MCTS(game.ai_player, game.human_player))
-                # stats = pstats.Stats(pr)
-                # stats.sort_stats(pstats.SortKey.TIME)
-                # stats.print_stats()
                 move, _ = MCTS(game, NN)
                 game.make_move(move=move)
 

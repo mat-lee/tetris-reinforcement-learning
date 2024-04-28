@@ -241,7 +241,7 @@ class Player:
         pygame.draw.rect(surface, color, rect)
 
     # Show methods
-    def show_player(self, screen):
+    def show(self, screen):
         """Contains all player's visuals."""
         self.show_ghost(screen)
         self.show_grid_lines(screen)

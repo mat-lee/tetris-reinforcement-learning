@@ -169,5 +169,10 @@ class Game:
         return new_game
 
     # Show methods
+    def show(self, surface):
+        self.show_bg(surface)
+        for player in self.players:
+            player.show(surface)
+
     def show_bg(self, surface):
         surface.fill((0, 0, 0))
