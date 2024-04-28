@@ -355,7 +355,7 @@ class Player:
                 render_text = font.render(text, True, (255, 255, 255))
                 screen.blit(render_text, 
                             (self.draw_coords[0] + E_BUFFER + stat['location'][0], 
-                            self.draw_coords[1] + N_BUFFER + stat['location'][1]))
+                            self.draw_coords[1] + N_BUFFER + (ROWS - GRID_ROWS) * MINO_SIZE + stat['location'][1]))
 
 class Human(Player):
     def __init__(self) -> None:
