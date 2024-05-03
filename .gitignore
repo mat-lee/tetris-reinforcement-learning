@@ -1,3 +1,5 @@
 .venv/
+.data/
+.networks/
 *.pyc
 .DS_Store

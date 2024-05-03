@@ -2,13 +2,16 @@ from ai import *
 
 import time
 
-#make_traning_set(load_best_network(), 1)
+# File for running the simulation commands
 
-'''    
-    data = json.load(open("data/nohold/1-1game-10depth.txt", 'r'))
-    create_network(data)'''
+# data = json.load(open("data/1.txt", 'r'))
 
-# create_network()
+Manager = DataManager()
+# create_network(Manager)
+
 NN = load_best_network()
-# NN.summary()
+pygame.init()
 self_play_loop(NN)
+
+# play_game()
+# training_loop(Manager, NN)

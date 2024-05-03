@@ -17,7 +17,7 @@ class Main:
 
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption('Tetris')
         self.game = Game()
         self.mover = Mover()
@@ -102,6 +102,12 @@ class Main:
                             mover.sd_counter += (1 / SDF) / 1000
 
             elif game.turn == 1:
+                # with cProfile.Profile() as pr:
+                #     move, _ = MCTS(game, NN)
+                # stats = pstats.Stats(pr)
+                # stats.sort_stats(pstats.SortKey.TIME)
+                # stats.print_stats(20)
+
                 move, _ = MCTS(game, NN)
                 game.make_move(move=move)
 

@@ -147,7 +147,11 @@ class Game:
         for player in self.players:
             if player.game_over == True:
                 return True
-        if self.players[self.turn].piece == None:
+        return False
+    
+    @property
+    def no_move(self):
+        if self.players[self.turn].piece == None and self.players.hold_piece == None:
             return True
         return False
     
