@@ -151,7 +151,7 @@ class Game:
     
     @property
     def no_move(self):
-        if self.players[self.turn].piece == None and self.players.hold_piece == None:
+        if self.players[self.turn].piece == None and self.players[self.turn].held_piece == None:
             return True
         return False
     

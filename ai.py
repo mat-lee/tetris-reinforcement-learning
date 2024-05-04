@@ -368,7 +368,7 @@ def create_network(manager):
 
     #model.fit(x=grids, y=[values, policies])
 
-    model.save(f"networks/model{CURRENT_VERSION}.0.keras")
+    model.save(f"networks/{CURRENT_VERSION}.0.keras")
 
 def train_network(model, data):
     features = list(map(list, zip(*data)))
@@ -594,7 +594,7 @@ def self_play_loop(network, manager=DataManager()):
 
             next_ver = get_highest_number('networks') + 1
 
-            old_network.save(f"networks/model{CURRENT_VERSION}.{next_ver}.keras")
+            old_network.save(f"networks/{CURRENT_VERSION}.{next_ver}.keras")
         else:
             break
 

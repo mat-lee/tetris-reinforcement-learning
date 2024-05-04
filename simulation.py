@@ -7,7 +7,7 @@ import time
 # data = json.load(open("data/1.txt", 'r'))
 
 Manager = DataManager()
-# create_network(Manager)
+create_network(Manager)
 
 NN = load_best_network()
 pygame.init()

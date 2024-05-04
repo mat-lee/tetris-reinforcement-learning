@@ -192,7 +192,10 @@ class Player:
             self.create_next_piece()
         else:
             temp = self.held_piece
-            self.held_piece = self.piece.type
+            if self.piece == None:
+                self.held_piece = None
+            else:
+                self.held_piece = self.piece.type
             self.create_piece(temp)
     
     def spawn_garbage(self):
