@@ -25,7 +25,7 @@ class Game:
         for player in self.players:
             player.queue.add_bag(bag)
 
-    def make_move(self, move, add_bag=True, add_history=True):
+    def make_move(self, move, add_bag=True, add_history=True, send_garbage=True):
         player = self.players[self.turn]
 
         if player.game_over == False:
@@ -33,7 +33,8 @@ class Game:
                 player.hold_piece()
             player.force_place_piece(move[1], move[2], move[3])
 
-            self.check_garbage()
+            lines = self.check_garbage(send_garbage)
+
             player.create_next_piece()
 
             if (add_bag == True and len(player.queue.pieces) < 5): # In MCTS don't add pieces to the queue
@@ -44,6 +45,29 @@ class Game:
                 self.add_history()
 
             self.turn = 1 - self.turn # 1 to 0
+
+            return lines
+
+    def check_garbage(self, send_garbage):
+        active_player = self.players[self.turn]
+        other_player = self.players[1 - self.turn]
+
+        # Checks for sending garbage, sends garbage, and canceling
+        while len(active_player.garbage_to_send) > 0 and len(active_player.garbage_to_receive) > 0: # Cancel garbage
+            # Remove first elements
+            active_player.garbage_to_send.pop(0)
+            active_player.garbage_to_receive.pop(0)
+        
+        if len(active_player.garbage_to_send) > 0:
+            other_player.garbage_to_receive += active_player.garbage_to_send # Send garbage
+            active_player.garbage_to_send = [] # Stop sending garbage
+        
+        lines = 0
+        
+        if len(active_player.garbage_to_receive) > 0:
+            lines = active_player.spawn_garbage(send_garbage)
+
+        return lines
 
     def add_history(self):
         # If placing a piece after undoing, get rid of future history
@@ -124,23 +148,6 @@ class Game:
             player.create_next_piece()
         
         self.add_history()
-
-    def check_garbage(self):
-        active_player = self.players[self.turn]
-        other_player = self.players[1 - self.turn]
-
-        # Checks for sending garbage, sends garbage, and canceling
-        while len(active_player.garbage_to_send) > 0 and len(active_player.garbage_to_receive) > 0: # Cancel garbage
-            # Remove first elements
-            active_player.garbage_to_send.pop(0)
-            active_player.garbage_to_receive.pop(0)
-        
-        if len(active_player.garbage_to_send) > 0:
-            other_player.garbage_to_receive += active_player.garbage_to_send # Send garbage
-            active_player.garbage_to_send = [] # Stop sending garbage
-        
-        if len(active_player.garbage_to_receive) > 0:
-            active_player.spawn_garbage()
     
     @property
     def is_terminal(self):

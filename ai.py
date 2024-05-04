@@ -13,20 +13,17 @@ import tensorflow as tf
 # For naming data and models
 CURRENT_VERSION = 1.0
 
-# Issues:
-# Bug where AI can place pieces where it is not possible
-# Bug where AI can place pieces into blocks
-
 # Areas of optimization:
 # - Finding piece locations (piece locations held and not held are related)
 # - Optimizing the search tree algorithm
 # - Optimizing piece coordinates
-# - Redundant piece rotations
+# - Redundant piece rotations (Pick random one)
 
 # AI todo:
-# - Better data saving
-# - Better input state
-# - Better network (e.g. L2)
+# - Better network (e.g. L2, CNNs. more weights)
+# - Temperature
+# - Encoding garbage into the neural network
+# - Encoding some sense of turn based into the network
 
 class NodeState():
     """Node class for storing the game in the tree.
@@ -37,16 +34,17 @@ class NodeState():
         self.game = game
         self.move = move
 
+        # Save garbage statistics instead of spawning garbage
+        # Each list index corressponds to some amount of garbage
+        # spawning when placing that piece
+        self.garbage = [[0] * 7, [0] * 7]
+
         # Search tree variables
         # Would be stored in each edge, but this is essentially the same thing
         self.N = 1
         self.W = 0
         self.Q = 0
         self.P = 0
-
-        self.value = None
-        self.policy = None
-        self.move_list = None
 
 def MCTS(game, network):
     # Class for picking a move for the AI to make 
@@ -55,7 +53,7 @@ def MCTS(game, network):
     game_copy = game.copy()
 
     # Save which turn the AI is
-    self_turn = game.turn
+    init_turn = game.turn
 
     # Restrict previews
     for player in game_copy.players:
@@ -122,9 +120,9 @@ def MCTS(game, network):
         # Update weights based on winner
         else: 
             winner = node_state.game.winner
-            if winner == self_turn:
+            if winner == init_turn:
                 value = 1
-            elif winner == 1 - self_turn: # Other player
+            elif winner == 1 - init_turn: # Other player
                 value = -1
             else:
                 value = 0
@@ -326,7 +324,7 @@ def search_statistics(tree):
 #                 (ZLOSIJT)
 #   (1) x 2       (Int: B2b) Both players
 #   (1) x 2       (Int: Combo) Both Players
-#   (1)           (Bool: First move or not)
+#   (1)           (Bool: Turn, 0 for first, 1 for second) 
 #   (1)           (Int: Total pieces placed)
 # y:
 #   Policy: (2 x 25 x 11 x 4) = 2200 (Hold x Rows x Columns x Rotations)
@@ -454,10 +452,10 @@ def game_to_X(game):
     pieces = get_pieces(game)
     b2b = get_b2b(game)
     combo = get_combo(game)
-    first_move = (1 if game.turn == 0 else 0)
+    current_turn = game.turn
     pieces_placed = game.players[game.turn].stats.pieces
 
-    return grids[0], grids[1], pieces[0], pieces[1], b2b[0], b2b[1], combo[0], combo[1], first_move, pieces_placed
+    return grids[0], grids[1], pieces[0], pieces[1], b2b[0], b2b[1], combo[0], combo[1], current_turn, pieces_placed
 
 def play_game(network, NUMBER, show_game=False):
     # AI plays one game against itself
@@ -602,7 +600,6 @@ def load_best_network():
     max_ver = get_highest_number('networks')
 
     path = f'networks/{CURRENT_VERSION}.{max_ver}.keras'
-    print(path)
 
     return tf.keras.models.load_model(path)
 

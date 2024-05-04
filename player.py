@@ -198,9 +198,18 @@ class Player:
                 self.held_piece = self.piece.type
             self.create_piece(temp)
     
-    def spawn_garbage(self):
-        self.board.create_garbage(self.garbage_to_receive)
-        self.garbage_to_receive = []
+    def spawn_garbage(self, send_garbage):
+        # In MCTS, don't spawn garbage but store it in a variable
+        lines = 0
+
+        if send_garbage == True:
+            self.board.create_garbage(self.garbage_to_receive)
+            self.garbage_to_receive = []
+        else: 
+            lines = len(self.garbage_to_receive)
+            self.garbage_to_receive = []
+        
+        return lines
     
     def reset(self):
         self.board = Board()
