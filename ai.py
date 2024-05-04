@@ -11,7 +11,7 @@ import keras
 import tensorflow as tf
 
 # For naming data and models
-CURRENT_VERSION = 1.0
+CURRENT_VERSION = 1.1
 
 # Areas of optimization:
 # - Finding piece locations (piece locations held and not held are related)
@@ -335,26 +335,40 @@ def search_statistics(tree):
 class DataManager():
     def __init__(self) -> None:
         self.features_list = {
-            "shape": [(25, 10), (25, 10), (7, 7), (7, 7), (1,), (1,), (1,), (1,), (1,), (1,)]
+            "shape": [(25, 10, 1), (25, 10, 1), (7, 7), (7, 7), (1,), (1,), (1,), (1,), (1,), (1,)]
         }
     
     def create_input_layers(self):
+        # Use a CNN for grids
         inputs = []
         flattened_inputs = []
         for i, shape in enumerate(self.features_list["shape"]):
             inputs.append(keras.Input(shape=shape))
-            flattened_inputs.append(keras.layers.Flatten()(inputs[i]))
+            if shape == (25, 10, 1):
+                x = keras.layers.Conv2D(256, (3, 3), padding="same")(inputs[i])
+                x = keras.layers.BatchNormalization()(x)
+                x = keras.layers.Activation('relu')(x)
+                flattened_inputs.append(keras.layers.Flatten()(x))
+            else:
+                flattened_inputs.append(keras.layers.Flatten()(inputs[i]))
         
         return inputs, flattened_inputs
+
+    def ResidualLayer(self):
+        def inside(x):
+            x = keras.layers.Dense(256)(x)
+            x = keras.layers.BatchNormalization()(x)
+            x = keras.layers.Activation('relu')(x)
+            return x
+        return inside
     
 def create_network(manager):
     # For now, jumble everything together
-    inputs, flattened_inputs = DataManager().create_input_layers()
+    inputs, flattened_inputs = manager.create_input_layers()
 
     x = keras.layers.Concatenate(axis=-1)(flattened_inputs)
-    x = keras.layers.Dense(512)(x)
-    x = keras.layers.BatchNormalization()(x)
-    x = keras.layers.Activation('relu')(x)
+    for i in range(2):
+        x = manager.ResidualLayer()(x)
 
     value_output = keras.layers.Dense(1, activation='tanh')(x)
     policy_output = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
