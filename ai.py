@@ -52,8 +52,10 @@ def MCTS(game, network):
     tree = treelib.Tree()
     game_copy = game.copy()
 
-    # Save which turn the AI is
-    init_turn = game.turn
+    # Orient the game so that the AI is active
+    if game_copy.turn == 1:
+        game_copy.players = game_copy.players[::-1]
+        game_copy.turn = 0
 
     # Restrict previews
     for player in game_copy.players:
@@ -98,7 +100,15 @@ def MCTS(game, network):
             if DEPTH > MAX_DEPTH:
                 MAX_DEPTH = DEPTH
 
-        # Don't update policy, move_list, or generate new nodes if the node is done
+        # Expand the node if not root
+        if not node.is_root():
+            prior_node = tree.get_node(node.predecessor(tree.identifier))
+            
+            game_copy = prior_node.data.game.copy()
+            game_copy.make_move(move, add_bag=False, add_history=False)
+            node_state.game = game_copy
+
+        # Don't update policy, move_list, or generate new nodes if the node is done        
         if node_state.game.is_terminal == False:
             value, policy = evaluate(node_state.game, network)
 
@@ -108,10 +118,7 @@ def MCTS(game, network):
 
                 # Place pieces and generate new leaves
                 for policy, move in move_list:
-                    game_copy = node_state.game.copy()
-                    new_state = NodeState(game=game_copy, move=move)
-
-                    new_state.game.make_move(move, add_bag=False, add_history=False)
+                    new_state = NodeState(game=None, move=move)
                     new_state.P = policy
 
                     tree.create_node(data=new_state, parent=node.identifier)
@@ -120,9 +127,9 @@ def MCTS(game, network):
         # Update weights based on winner
         else: 
             winner = node_state.game.winner
-            if winner == init_turn:
+            if winner == 0: # AI Starts
                 value = 1
-            elif winner == 1 - init_turn: # Other player
+            elif winner == 1: # Opponent
                 value = -1
             else:
                 value = 0
@@ -138,7 +145,7 @@ def MCTS(game, network):
             upwards_id = node.predecessor(tree.identifier)
             node = tree.get_node(upwards_id)
 
-    #print(MAX_DEPTH)
+    print(MAX_DEPTH)
 
     # Choose a move
     root = tree.get_node("root")
@@ -279,7 +286,7 @@ def get_move_list(move_matrix, policy_matrix):
                                           (h, col - 2, row, o) # Switch to x y z and remove buffer
                                           ))
     # Sort by policy
-    move_list = sorted(move_list, key=lambda tup: tup[0], reverse=True)
+    # move_list = sorted(move_list, key=lambda tup: tup[0], reverse=True)
     return move_list
 
 
@@ -428,10 +435,6 @@ def game_to_X(game):
         for i, player in enumerate(game.players):
             grids[i] = [x[:] for x in player.board.grid] # Copy
             simplify_grid(grids[i])
-
-        # Orient so active player is first
-        if game.turn == 1:
-            grids = grids[::-1]
         
         return grids
      
@@ -445,31 +448,26 @@ def game_to_X(game):
                 piece_matrix[i][1][minos.index(player.held_piece)] = 1
             # Limit previews
             for j in range(min(len(player.queue.pieces), 5)): # Queue pieces: 2-6
-                piece_matrix[i][j + 2][minos.index(player.queue.pieces[j])] = 1         
-
-        if game.turn == 1: # Orient with grids
-            piece_matrix = piece_matrix[::-1]
+                piece_matrix[i][j + 2][minos.index(player.queue.pieces[j])] = 1
 
         return piece_matrix
     
     def get_b2b(game):
         b2b = [player.stats.b2b for player in game.players]
-        if game.turn == 1: b2b = b2b[::-1]
         return b2b
     
     def get_combo(game):
         combo = [player.stats.combo for player in game.players]
-        if game.turn == 1: combo = combo[::-1]
         return combo
 
     grids = get_grids(game)
     pieces = get_pieces(game)
     b2b = get_b2b(game)
     combo = get_combo(game)
-    current_turn = game.turn
+    color = game.players[game.turn].color
     pieces_placed = game.players[game.turn].stats.pieces
 
-    return grids[0], grids[1], pieces[0], pieces[1], b2b[0], b2b[1], combo[0], combo[1], current_turn, pieces_placed
+    return grids[0], grids[1], pieces[0], pieces[1], b2b[0], b2b[1], combo[0], combo[1], color, pieces_placed
 
 def play_game(network, NUMBER, show_game=False):
     # AI plays one game against itself

@@ -17,6 +17,8 @@ class Player:
         self.garbage_to_receive = [] # index 0 spawns first
         self.garbage_to_send = [] # sends and receive are in same order
 
+        self.color = None # Used for turn order
+
         self.piece = None
         self.held_piece = None
 
@@ -235,6 +237,7 @@ class Player:
             new_player.piece = self.piece.copy()
         new_player.held_piece = self.held_piece
         new_player.garbage_to_receive = self.garbage_to_receive[:]
+        new_player.color = self.color
 
         return new_player
 
@@ -373,8 +376,10 @@ class Human(Player):
     def __init__(self) -> None:
         super().__init__()
         self.draw_coords = (0, 0)
+        self.color = 0
 
 class AI(Player):
     def __init__(self) -> None:
         super().__init__()
         self.draw_coords = (WIDTH/2, 0)
+        self.color = 1
