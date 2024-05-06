@@ -9,9 +9,9 @@ import time
 Manager = DataManager()
 create_network(Manager)
 
-# NN = load_best_network()
-# pygame.init()
-# self_play_loop(NN)
+NN = load_best_network()
+pygame.init()
+self_play_loop(NN)
 
 # play_game()
 # training_loop(Manager, NN)

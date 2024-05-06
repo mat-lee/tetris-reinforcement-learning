@@ -14,7 +14,7 @@ import tensorflow as tf
 CURRENT_VERSION = 1.1
 
 # Where data and models are saved
-directory_path = '/Users/matthewlee/Documents/Code/Tetris Game'
+directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # Areas of optimization:
 # - Finding piece locations (piece locations held and not held are related)
@@ -147,7 +147,7 @@ def MCTS(game, network):
             upwards_id = node.predecessor(tree.identifier)
             node = tree.get_node(upwards_id)
 
-    print(MAX_DEPTH)
+    #print(MAX_DEPTH)
 
     # Choose a move
     root = tree.get_node("root")
@@ -389,7 +389,7 @@ def create_network(manager):
 
     #model.fit(x=grids, y=[values, policies])
 
-    model.save(f"networks/{CURRENT_VERSION}.0.keras")
+    model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
 
 def train_network(model, data):
     features = list(map(list, zip(*data)))
@@ -532,9 +532,9 @@ def make_training_set(network, num_games):
     json_data = json.dumps(series_data)
 
     # Increment set counter
-    next_set = get_highest_number('data') + 1
+    next_set = get_highest_number('.txt') + 1
 
-    with open(f"data/{CURRENT_VERSION}.{next_set}.txt", 'w') as out_file:
+    with open(f"{directory_path}/{CURRENT_VERSION}.{next_set}.txt", 'w') as out_file:
         out_file.write(json_data)
 
 def training_loop(manager, network):
@@ -546,16 +546,15 @@ def training_loop(manager, network):
 
         # Load data from the past n games
         # Find highest set number
-        max_set = get_highest_number('data')
+        max_set = get_highest_number('.txt')
         
         # Get n games
-        for filename in os.listdir('data'):
-            if filename[:3] == str(CURRENT_VERSION):
-                number = int(filename[4:-4])
-                if number > max_set - 10:
-                    # Load data
-                    set = json.load(open(f"data/{filename}", 'r'))
-                    data.extend(set)
+        for filename in get_filenames('.txt'):
+            number = int(filename[4:-4])
+            if number > max_set - 10:
+                # Load data
+                set = json.load(open(f"{directory_path}/{filename}", 'r'))
+                data.extend(set)
 
         train_network(network, data)
     print("Finished loop")
@@ -604,25 +603,33 @@ def self_play_loop(network, manager=DataManager()):
         if new_wins >= 0.55:
             old_network = new_network
 
-            next_ver = get_highest_number('networks') + 1
+            next_ver = get_highest_number('.keras') + 1
 
-            old_network.save(f"networks/{CURRENT_VERSION}.{next_ver}.keras")
+            old_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
         else:
             break
 
 def load_best_network():
-    max_ver = get_highest_number('networks')
+    max_ver = get_highest_number('.keras')
 
-    path = f'networks/{CURRENT_VERSION}.{max_ver}.keras'
+    path = f"{directory_path}/{CURRENT_VERSION}.{max_ver}.keras"
 
     return tf.keras.models.load_model(path)
 
-def get_highest_number(folder):
+def get_highest_number(extension):
     max = 0
-    for filename in os.listdir(folder):
-        if filename[:3] == str(CURRENT_VERSION):
-            filename = filename[4:]
-            number = int(filename.split('.', 1)[0])
-            if number > max:
-                max = number
+    for filename in get_filenames(extension):
+        filename = filename[4:]
+        number = int(filename.split('.', 1)[0])
+        if number > max:
+            max = number
     return max
+
+def get_filenames(extension):
+    filenames = []
+
+    for filename in os.listdir(f'{directory_path}'):
+        if filename.startswith(str(CURRENT_VERSION)) and filename.endswith(extension):
+            filenames.append(filename)
+    
+    return filenames

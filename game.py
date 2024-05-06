@@ -29,7 +29,6 @@ class Game:
         player = self.players[self.turn]
 
         if player.game_over == False:
-            print(move)
             if move[0] == 1:
                 player.hold_piece()
             player.force_place_piece(move[1], move[2], move[3])
