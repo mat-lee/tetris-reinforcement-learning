@@ -13,6 +13,9 @@ import tensorflow as tf
 # For naming data and models
 CURRENT_VERSION = 1.1
 
+# Where data and models are saved
+directory_path = '/Users/matthewlee/Documents/Code/Tetris Game'
+
 # Areas of optimization:
 # - Finding piece locations (piece locations held and not held are related)
 # - Optimizing the search tree algorithm
@@ -100,13 +103,13 @@ def MCTS(game, network):
             if DEPTH > MAX_DEPTH:
                 MAX_DEPTH = DEPTH
 
-        # Expand the node if not root
+        # Place pieces if not the root node
         if not node.is_root():
             prior_node = tree.get_node(node.predecessor(tree.identifier))
             
             game_copy = prior_node.data.game.copy()
-            game_copy.make_move(move, add_bag=False, add_history=False)
             node_state.game = game_copy
+            node_state.game.make_move(node_state.move, add_bag=False, add_history=False)
 
         # Don't update policy, move_list, or generate new nodes if the node is done        
         if node_state.game.is_terminal == False:
@@ -116,7 +119,7 @@ def MCTS(game, network):
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn])
                 move_list = get_move_list(move_matrix, policy)
 
-                # Place pieces and generate new leaves
+                # Generate new leaves
                 for policy, move in move_list:
                     new_state = NodeState(game=None, move=move)
                     new_state.P = policy
@@ -135,7 +138,6 @@ def MCTS(game, network):
                 value = 0
 
         # Go back up the tree and updates nodes
-        
         while not node.is_root():
             node_state = node.data
             node_state.N += 1
