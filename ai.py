@@ -158,7 +158,7 @@ def MCTS(game, network):
             upwards_id = node.predecessor(tree.identifier)
             node = tree.get_node(upwards_id)
 
-    # print(MAX_DEPTH)
+    #print(MAX_DEPTH)
 
     # Choose a move based on the number of visits
     root = tree.get_node("root")
@@ -378,7 +378,7 @@ class DataManager():
         for i, shape in enumerate(self.features_list["shape"]):
             inputs.append(keras.Input(shape=shape))
             if shape == self.features_list["shape"][0]:
-                x = keras.layers.Conv2D(32, (3, 3), padding="same")(inputs[i])
+                x = keras.layers.Conv2D(32, (3, 3), padding="valid", kernel_regularizer=keras.regularizers.L2(1e-4))(inputs[i])
                 x = keras.layers.BatchNormalization()(x)
                 x = keras.layers.Activation('relu')(x)
                 flattened_inputs.append(keras.layers.Flatten()(x))
@@ -389,10 +389,10 @@ class DataManager():
 
     def ResidualLayer(self):
         def inside(x):
-            y = keras.layers.Dense(32)(x)
+            y = keras.layers.Dense(32, kernel_regularizer=keras.regularizers.L2(1e-4))(x)
             y = keras.layers.BatchNormalization()(y)
             y = keras.layers.Activation('relu')(y)
-            y = keras.layers.Dense(32)(y)
+            y = keras.layers.Dense(32, kernel_regularizer=keras.regularizers.L2(1e-4))(y)
             y = keras.layers.BatchNormalization()(y)
             z = keras.layers.Add()([x, y]) # Skip connection
             z = keras.layers.Activation('relu')(z)
@@ -404,7 +404,7 @@ class DataManager():
         def inside(x):
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dense(32)(x)
+            x = keras.layers.Dense(32, kernel_regularizer=keras.regularizers.L2(1e-4))(x)
             x = keras.layers.Activation('relu')(x)
             x = keras.layers.Dense(1, activation='tanh')(x)
 
@@ -430,7 +430,7 @@ def create_network(manager):
     x = keras.layers.Concatenate(axis=-1)(flattened_inputs)
 
     # Fully connected layer
-    x = keras.layers.Dense(32)(x)
+    x = keras.layers.Dense(32, kernel_regularizer=keras.regularizers.L2(1e-4))(x)
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.Activation('relu')(x)
 
@@ -612,11 +612,11 @@ def play_game(network, NUMBER, show_game=False):
 
     return data
 
-def make_training_set(network, num_games):
+def make_training_set(network, num_games, show_game=False):
     # Creates a dataset of several AI games.
     series_data = []
     for i in range(num_games):
-        data = play_game(network, i, show_game=True)
+        data = play_game(network, i, show_game=show_game)
         series_data.extend(data)
 
     json_data = json.dumps(series_data)
@@ -627,10 +627,10 @@ def make_training_set(network, num_games):
     with open(f"{directory_path}/{CURRENT_VERSION}.{next_set}.txt", 'w') as out_file:
         out_file.write(json_data)
 
-def training_loop(manager, network):
+def training_loop(manager, network, show_games=False):
     # Play a training set and train the network on past sets.
     for i in range(TRAINING_LOOPS):
-        make_training_set(network, TRAINING_GAMES)
+        make_training_set(network, TRAINING_GAMES, show_game=True)
         print("Finished set")
 
         data = []
@@ -681,7 +681,9 @@ def battle_networks(NN_1, NN_2, show_game=False):
     wins /= wins.sum()
     return wins[0], wins[1]
 
-def self_play_loop(network, manager=DataManager()):
+def self_play_loop(network, manager=DataManager(), show_games=False):
+    if show_games == True:
+        pygame.init()
     # Given a network, generates training data, trains it, and checks if it improved.
     old_network = network
     iter = 0
@@ -689,9 +691,9 @@ def self_play_loop(network, manager=DataManager()):
         iter += 1
         new_network = keras.models.clone_model(old_network)
         
-        training_loop(manager, new_network)
+        training_loop(manager, new_network, show_games=show_games)
 
-        new_wins, old_wins = battle_networks(new_network, old_network, show_game=True)
+        new_wins, old_wins = battle_networks(new_network, old_network, show_game=show_games)
         print("Finished battle")
         if new_wins >= 0.55:
             old_network = new_network

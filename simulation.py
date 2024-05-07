@@ -10,8 +10,8 @@ Manager = DataManager()
 create_network(Manager)
 
 NN = load_best_network()
-pygame.init()
-self_play_loop(NN)
+
+self_play_loop(NN, manager=Manager, show_games=True)
 
 # play_game()
 # training_loop(Manager, NN)
