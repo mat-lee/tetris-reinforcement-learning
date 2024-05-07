@@ -11,7 +11,7 @@ import keras
 import tensorflow as tf
 
 # For naming data and models
-CURRENT_VERSION = 1.1
+CURRENT_VERSION = 1.2
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -141,7 +141,8 @@ def MCTS(game, network):
         while not node.is_root():
             node_state = node.data
             node_state.N += 1
-            node_state.W += value
+            # Revert value if the other player just went
+            node_state.W += (-value if node_state.game.turn == 0 else value)
             node_state.Q = node_state.W / node_state.N
 
             upwards_id = node.predecessor(tree.identifier)
@@ -344,7 +345,13 @@ def search_statistics(tree):
 class DataManager():
     def __init__(self) -> None:
         self.features_list = {
-            "shape": [(25, 10, 1), (25, 10, 1), (7, 7), (7, 7), (1,), (1,), (1,), (1,), (1,), (1,)]
+            "shape": [(25, 10, 1), (25, 10, 1), (7, 7), (7, 7), 
+                      (1,), (1,), # B2B
+                      (1,), (1,), # Combo
+                      (1,), (1,), # Lines cleared
+                      (1,), (1,), # Lines sent
+                      (1,),       # Color
+                      (1,)]       # Pieces placed
         }
     
     def create_input_layers(self):
@@ -438,6 +445,8 @@ def game_to_X(game):
             grids[i] = [x[:] for x in player.board.grid] # Copy
             simplify_grid(grids[i])
         
+        if game.turn == 1: grids = grids[::-1]
+        
         return grids
      
     def get_pieces(game):
@@ -452,24 +461,41 @@ def game_to_X(game):
             for j in range(min(len(player.queue.pieces), 5)): # Queue pieces: 2-6
                 piece_matrix[i][j + 2][minos.index(player.queue.pieces[j])] = 1
 
+        if game.turn == 1: piece_matrix = piece_matrix[::-1]
+
         return piece_matrix
     
     def get_b2b(game):
         b2b = [player.stats.b2b for player in game.players]
+        if game.turn == 1: b2b = b2b[::-1]
         return b2b
     
     def get_combo(game):
         combo = [player.stats.combo for player in game.players]
+        if game.turn == 1: combo = combo[::-1]
         return combo
 
+    def get_lines_cleared(game):
+        lines_cleared = [player.stats.lines_cleared for player in game.players]
+        if game.turn == 1: lines_cleared = lines_cleared[::-1]
+        return lines_cleared
+
+    def get_lines_sent(game):
+        lines_sent = [player.stats.lines_sent for player in game.players]
+        if game.turn == 1: lines_sent = lines_sent[::-1]
+        return lines_sent
+
+    # Orient all info in perspective to the current player
     grids = get_grids(game)
     pieces = get_pieces(game)
     b2b = get_b2b(game)
     combo = get_combo(game)
+    lines_cleared = get_lines_cleared(game)
+    lines_sent = get_lines_sent(game)
     color = game.players[game.turn].color
     pieces_placed = game.players[game.turn].stats.pieces
 
-    return grids[0], grids[1], pieces[0], pieces[1], b2b[0], b2b[1], combo[0], combo[1], color, pieces_placed
+    return grids[0], grids[1], pieces[0], pieces[1], b2b[0], b2b[1], combo[0], combo[1], lines_cleared[0], lines_cleared[1], lines_sent[0], lines_sent[1], color, pieces_placed
 
 def play_game(network, NUMBER, show_game=False):
     # AI plays one game against itself
