@@ -5,6 +5,7 @@ import json
 import numpy as np
 import os
 import pandas as pd
+import random
 import treelib
 
 import keras
@@ -17,13 +18,14 @@ CURRENT_VERSION = 1.2
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # Areas of optimization:
-# - Finding piece locations (piece locations held and not held are related)
+# - Finding piece locations (piece locations held and not held are probably related)
 # - Optimizing the search tree algorithm
 # - Optimizing piece coordinates
-# - Redundant piece rotations (Pick random one)
+# - Piece rotations that result in the same board (Pick random one)
 
 # AI todo:
 # - Better network (e.g. L2, CNNs. more weights)
+# - Adjust parameters
 # - Temperature
 # - Encoding garbage into the neural network
 # - Encoding some sense of turn based into the network
@@ -116,6 +118,7 @@ def MCTS(game, network):
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
             value, policy = evaluate(node_state.game, network)
+            # value, policy = random_evaluate()
 
             if node_state.game.no_move == False:
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn])
@@ -321,10 +324,12 @@ def search_statistics(tree):
     probability_matrix /= total_n
     return probability_matrix.tolist()
 
-# Using deepcopy:                   100 iter in 36.911 s
-# Using copy functions in classes:  100 iter in 1.658 s
-# Many small changes:               100 iter in 1.233 s
-# MCTS uses game instead of player: 100 iter in 1.577 s
+# Using deepcopy:                    100 iter in 36.911 s
+# Using copy functions in classes:   100 iter in 1.658 s
+# Many small changes:                100 iter in 1.233 s
+# MCTS uses game instead of player:  100 iter in 1.577 s
+# Added large NN but optimized MCTS: 100 iter in 7.939 s
+#               Without NN:          100 iter in 0.910 s
 
 ##### Neural Network #####
 
@@ -434,6 +439,10 @@ def evaluate(game, network):
     policies = np.array(policies)
     policies = policies.reshape((2, ROWS, COLS+1, 4))
     return values, policies.tolist()
+
+def random_evaluate():
+    # For testing how fast the MCTS is
+    return random.random() * 2 -1, np.ones((2, ROWS, COLS+1, 4)).tolist()
 
 ##### Simulation #####
 
