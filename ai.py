@@ -12,7 +12,7 @@ import keras
 import tensorflow as tf
 
 # For naming data and models
-CURRENT_VERSION = 1.2
+CURRENT_VERSION = 1.4
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -25,7 +25,7 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # AI todo:
 # - Better network (e.g. L2, CNNs. more weights)
-# - Adjust parameters
+# - Adjust parameters (CPuct, Dirichlet noise, )
 # - Temperature
 # - Encoding garbage into the neural network
 # - Encoding some sense of turn based into the network
@@ -84,6 +84,7 @@ def MCTS(game, network):
         DEPTH = 0
 
         # Go down the tree using formula Q+U until you get to a leaf node
+        # Looking at promising moves for both players
         while not node.is_leaf():
             child_ids = node.successors(tree.identifier)
             max_child_score = -1
@@ -93,6 +94,7 @@ def MCTS(game, network):
                 sum_n += tree.get_node(child_id).data.visit_count
             for child_id in child_ids:
                 # For each child calculate a score
+                # Upper Confidence Bound-1 (UCB-1)
                 child_data = tree.get_node(child_id).data
                 child_score = child_data.value_avg + child_data.policy*sum_n/(1+child_data.visit_count)
                 if child_score >= max_child_score:
@@ -143,17 +145,20 @@ def MCTS(game, network):
                 value = 0
 
         # Go back up the tree and updates nodes
+        # Propogate positive values for the player made the move, and negative for the other player
+        final_node_turn = node_state.game.turn
+
         while not node.is_root():
             node_state = node.data
             node_state.visit_count += 1
             # Revert value if the other player just went
-            node_state.value_sum += (-value if node_state.game.turn == 0 else value)
+            node_state.value_sum += (value if node_state.game.turn == final_node_turn else -value)
             node_state.value_avg = node_state.value_sum / node_state.visit_count
 
             upwards_id = node.predecessor(tree.identifier)
             node = tree.get_node(upwards_id)
 
-    #print(MAX_DEPTH)
+    # print(MAX_DEPTH)
 
     # Choose a move based on the number of visits
     root = tree.get_node("root")
@@ -367,13 +372,13 @@ class DataManager():
         }
     
     def create_input_layers(self):
-        # Use a CNN for grids
+        # Use a CNN in the inputs for the grids
         inputs = []
         flattened_inputs = []
         for i, shape in enumerate(self.features_list["shape"]):
             inputs.append(keras.Input(shape=shape))
             if shape == self.features_list["shape"][0]:
-                x = keras.layers.Conv2D(256, (3, 3), padding="same")(inputs[i])
+                x = keras.layers.Conv2D(32, (3, 3), padding="same")(inputs[i])
                 x = keras.layers.BatchNormalization()(x)
                 x = keras.layers.Activation('relu')(x)
                 flattened_inputs.append(keras.layers.Flatten()(x))
@@ -384,22 +389,56 @@ class DataManager():
 
     def ResidualLayer(self):
         def inside(x):
-            x = keras.layers.Dense(256)(x)
+            y = keras.layers.Dense(32)(x)
+            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Activation('relu')(y)
+            y = keras.layers.Dense(32)(y)
+            y = keras.layers.BatchNormalization()(y)
+            z = keras.layers.Add()([x, y]) # Skip connection
+            z = keras.layers.Activation('relu')(z)
+
+            return z
+        return inside
+
+    def ValueHead(self):
+        def inside(x):
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
+            x = keras.layers.Dense(32)(x)
+            x = keras.layers.Activation('relu')(x)
+            x = keras.layers.Dense(1, activation='tanh')(x)
+
             return x
         return inside
-    
+
+    def PolicyHead(self):
+        def inside(x):
+            x = keras.layers.BatchNormalization()(x)
+            x = keras.layers.Activation('relu')(x)
+            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+
+            return x
+        return inside
+
 def create_network(manager):
     # Creates a network with random weight
+    # Input layer: Applies a convolution to the grids and flattens all inputs
+    # -> Three residual layers
+    # -> Value head and policy head
     inputs, flattened_inputs = manager.create_input_layers()
 
     x = keras.layers.Concatenate(axis=-1)(flattened_inputs)
-    for i in range(2):
+
+    # Fully connected layer
+    x = keras.layers.Dense(32)(x)
+    x = keras.layers.BatchNormalization()(x)
+    x = keras.layers.Activation('relu')(x)
+
+    for _ in range(3):
         x = manager.ResidualLayer()(x)
 
-    value_output = keras.layers.Dense(1, activation='tanh')(x)
-    policy_output = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+    value_output = manager.ValueHead()(x)
+    policy_output = manager.PolicyHead()(x)
 
     model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
     model.compile(optimizer='adam', loss=["mean_squared_error", "binary_crossentropy"])
