@@ -44,13 +44,13 @@ class NodeState():
 
         # Search tree variables
         # Would be stored in each edge, but this is essentially the same thing
-        self.N = 1
-        self.W = 0
-        self.Q = 0
-        self.P = 0
+        self.visit_count = 1
+        self.value_sum = 0
+        self.value_avg = 0
+        self.policy = 0
 
 def MCTS(game, network):
-    # Class for picking a move for the AI to make 
+    # Picks a move for the AI to make 
     # Initialize the search tree
     tree = treelib.Tree()
     game_copy = game.copy()
@@ -81,21 +81,23 @@ def MCTS(game, network):
 
         DEPTH = 0
 
-        # Go down the tree using Q+U until you get to a leaf node
+        # Go down the tree using formula Q+U until you get to a leaf node
         while not node.is_leaf():
             child_ids = node.successors(tree.identifier)
             max_child_score = -1
             max_child_id = None
             sum_n = 0
             for child_id in child_ids:
-                sum_n += tree.get_node(child_id).data.N
+                sum_n += tree.get_node(child_id).data.visit_count
             for child_id in child_ids:
+                # For each child calculate a score
                 child_data = tree.get_node(child_id).data
-                child_score = child_data.Q + child_data.P*sum_n/(1+child_data.N)
+                child_score = child_data.value_avg + child_data.policy*sum_n/(1+child_data.visit_count)
                 if child_score >= max_child_score:
                     max_child_score = child_score
                     max_child_id = child_id
             
+            # Pick the node with the highest score
             node = tree.get_node(max_child_id)
             node_state = node.data
 
@@ -103,7 +105,7 @@ def MCTS(game, network):
             if DEPTH > MAX_DEPTH:
                 MAX_DEPTH = DEPTH
 
-        # Place pieces if not the root node
+        # If not the root node, place piece in node
         if not node.is_root():
             prior_node = tree.get_node(node.predecessor(tree.identifier))
             
@@ -111,7 +113,7 @@ def MCTS(game, network):
             node_state.game = game_copy
             node_state.game.make_move(node_state.move, add_bag=False, add_history=False)
 
-        # Don't update policy, move_list, or generate new nodes if the node is done        
+        # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
             value, policy = evaluate(node_state.game, network)
 
@@ -122,7 +124,7 @@ def MCTS(game, network):
                 # Generate new leaves
                 for policy, move in move_list:
                     new_state = NodeState(game=None, move=move)
-                    new_state.P = policy
+                    new_state.policy = policy
 
                     tree.create_node(data=new_state, parent=node.identifier)
         
@@ -140,17 +142,17 @@ def MCTS(game, network):
         # Go back up the tree and updates nodes
         while not node.is_root():
             node_state = node.data
-            node_state.N += 1
+            node_state.visit_count += 1
             # Revert value if the other player just went
-            node_state.W += (-value if node_state.game.turn == 0 else value)
-            node_state.Q = node_state.W / node_state.N
+            node_state.value_sum += (-value if node_state.game.turn == 0 else value)
+            node_state.value_avg = node_state.value_sum / node_state.visit_count
 
             upwards_id = node.predecessor(tree.identifier)
             node = tree.get_node(upwards_id)
 
     #print(MAX_DEPTH)
 
-    # Choose a move
+    # Choose a move based on the number of visits
     root = tree.get_node("root")
     root_children_id = root.successors(tree.identifier)
     max_n = 0
@@ -158,7 +160,7 @@ def MCTS(game, network):
 
     for root_child_id in root_children_id:
         root_child = tree.get_node(root_child_id)
-        root_child_n = root_child.data.N
+        root_child_n = root_child.data.visit_count
         if root_child_n > max_n:
             max_n = root_child_n
             max_id = root_child.identifier
@@ -168,8 +170,7 @@ def MCTS(game, network):
     return move, tree
 
 def get_move_matrix(player): # e^-3
-    # Using a list of all possible locations the piece can reach
-    # Using a queue to determine which boards to check
+    # Returns a list of all possible moves that a player can make
 
     # Possible locations needs to be larger to acount for blocks with negative x and y
     # O piece        0 to 8
@@ -204,7 +205,9 @@ def get_move_matrix(player): # e^-3
         piece = sim_player.piece
         if piece != None: # Skip if there's no piece
             # No piece can be placed under the grid >= ROWS - 1
+
             possible_piece_locations = np.zeros((ROWS, width, 4))
+            # Queue for looking through piece placements
             next_location_queue = []
 
             # Start the piece at the highest point it can be placed
@@ -276,7 +279,7 @@ def get_move_matrix(player): # e^-3
     return all_moves
 
 def get_move_list(move_matrix, policy_matrix):
-    # Returns list of possible moves sorted by policy
+    # Returns list of possible moves with their policy
     move_list = []
 
     mask = np.multiply(move_matrix, policy_matrix)
@@ -296,10 +299,10 @@ def get_move_list(move_matrix, policy_matrix):
 def search_statistics(tree):
     """Return a matrix of proportion of moves looked at.
 
-    Equal to N / Total nodes looked at for each move,
+    Equal to Times Visited / Total Nodes looked at for each move,
     and will become the target for training policy.
-    # Policy: Rows x Columns x Rotations x Hold"""
-    # Policy: 25 x 11 x 4 x 2
+    Policy: Rows x Columns x Rotations x Hold
+    Policy: 25 x 11 x 4 x 2"""
     probability_matrix = np.zeros((2, ROWS, COLS + 1, 4))
 
     root = tree.get_node("root")
@@ -308,7 +311,7 @@ def search_statistics(tree):
 
     for root_child_id in root_children_id:
         root_child = tree.get_node(root_child_id)
-        root_child_n = root_child.data.N
+        root_child_n = root_child.data.visit_count
         root_child_move = root_child.data.move
         hold, col, row, rotation = root_child_move
         probability_matrix[hold][row][col][rotation] = root_child_n
@@ -325,8 +328,8 @@ def search_statistics(tree):
 
 ##### Neural Network #####
 
-# Model Architecture 1.0:
-# Player orientation: Active player, then other player
+# Model Architecture 1.2:
+# Player orientation: Active player, other player
 # X: 
 #   (20 x 10) x 2 (Bool: Rows x Columns) Both players
 #   (7 x 7) x 2   (Active piece,  held piece, closest to furthest queue pieces)
@@ -334,24 +337,28 @@ def search_statistics(tree):
 #                 (ZLOSIJT)
 #   (1) x 2       (Int: B2b) Both players
 #   (1) x 2       (Int: Combo) Both Players
+#   (1) x 2       (Int: Lines cleared) Both Players
+#   (1) x 2       (Int: Lines sent) Both Players
 #   (1)           (Bool: Turn, 0 for first, 1 for second) 
 #   (1)           (Int: Total pieces placed)
 # y:
 #   Policy: (2 x 25 x 11 x 4) = 2200 (Hold x Rows x Columns x Rotations)
 #   Value: (1)
 #
-# 451 Total input values
+# 508 Total input values
 
 class DataManager():
+    # Handles layer sizes
     def __init__(self) -> None:
         self.features_list = {
-            "shape": [(25, 10, 1), (25, 10, 1), (7, 7), (7, 7), 
-                      (1,), (1,), # B2B
-                      (1,), (1,), # Combo
-                      (1,), (1,), # Lines cleared
-                      (1,), (1,), # Lines sent
-                      (1,),       # Color
-                      (1,)]       # Pieces placed
+            "shape": [(25, 10, 1), (25, 10, 1), 
+                      (7, 7), (7, 7), 
+                      (1,), (1,), 
+                      (1,), (1,), 
+                      (1,), (1,), 
+                      (1,), (1,), 
+                      (1,),       
+                      (1,)]       
         }
     
     def create_input_layers(self):
@@ -360,7 +367,7 @@ class DataManager():
         flattened_inputs = []
         for i, shape in enumerate(self.features_list["shape"]):
             inputs.append(keras.Input(shape=shape))
-            if shape == (25, 10, 1):
+            if shape == self.features_list["shape"][0]:
                 x = keras.layers.Conv2D(256, (3, 3), padding="same")(inputs[i])
                 x = keras.layers.BatchNormalization()(x)
                 x = keras.layers.Activation('relu')(x)
@@ -379,7 +386,7 @@ class DataManager():
         return inside
     
 def create_network(manager):
-    # For now, jumble everything together
+    # Creates a network with random weight
     inputs, flattened_inputs = manager.create_input_layers()
 
     x = keras.layers.Concatenate(axis=-1)(flattened_inputs)
@@ -399,6 +406,8 @@ def create_network(manager):
     model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
 
 def train_network(model, data):
+    # Fit the model
+    # Swap rows and columns
     features = list(map(list, zip(*data)))
 
     # Make features into np arrays
@@ -415,6 +424,7 @@ def train_network(model, data):
     model.fit(x=features, y=[values, policies])
 
 def evaluate(game, network):
+    # Use a neural network to return value and policy.
     data = game_to_X(game)
     X = []
     for feature in data:
@@ -431,6 +441,7 @@ def evaluate(game, network):
 # At each move, save X and y for NN
 
 def simplify_grid(grid):
+    # Replaces minos in a grid with 1s.
     for row in range(len(grid)):
         for col in range(len(grid[0])):
             if grid[row][col] != 0:
@@ -438,6 +449,7 @@ def simplify_grid(grid):
     return grid
 
 def game_to_X(game):
+    # Returns game information for the network.
     def get_grids(game):
         grids = [[], []]
 
@@ -498,7 +510,7 @@ def game_to_X(game):
     return grids[0], grids[1], pieces[0], pieces[1], b2b[0], b2b[1], combo[0], combo[1], lines_cleared[0], lines_cleared[1], lines_sent[0], lines_sent[1], color, pieces_placed
 
 def play_game(network, NUMBER, show_game=False):
-    # AI plays one game against itself
+    # AI plays one game against itself and generates data.
     # Returns: grids, pieces, first move, pieces placed, value, policy
     if show_game == True:
         screen = pygame.display.set_mode( (WIDTH, HEIGHT))
@@ -515,8 +527,10 @@ def play_game(network, NUMBER, show_game=False):
         move, tree = MCTS(game, network)
         probability_matrix = search_statistics(tree)
 
+        # Convert tuple to list
         move_data = [*game_to_X(game)]
-        # Convert to regular lists
+
+        # Convert np arrays to regular lists
         for i in range(len(move_data)):
             if isinstance(move_data[i], np.ndarray):
                 move_data[i] = move_data[i].tolist()
@@ -532,9 +546,10 @@ def play_game(network, NUMBER, show_game=False):
     
     # After game ends update value
     winner = game.winner
-    for i in range(len(game_data)): # 
-        if winner == -1:
+    for i in range(len(game_data)):
+        if winner == -1: # Draw
             value = 0
+        # Set values to 1 and -1
         elif winner == i:
             value = 1
         else:
@@ -550,6 +565,7 @@ def play_game(network, NUMBER, show_game=False):
     return data
 
 def make_training_set(network, num_games):
+    # Creates a dataset of several AI games.
     series_data = []
     for i in range(num_games):
         data = play_game(network, i, show_game=True)
@@ -564,6 +580,7 @@ def make_training_set(network, num_games):
         out_file.write(json_data)
 
 def training_loop(manager, network):
+    # Play a training set and train the network on past sets.
     for i in range(TRAINING_LOOPS):
         make_training_set(network, TRAINING_GAMES)
         print("Finished set")
@@ -586,6 +603,7 @@ def training_loop(manager, network):
     print("Finished loop")
 
 def battle_networks(NN_1, NN_2, show_game=False):
+    # Battle two AI's with different networks.
     wins = np.zeros((2))
     for i in range(BATTLE_GAMES):
         if show_game == True:
@@ -616,6 +634,7 @@ def battle_networks(NN_1, NN_2, show_game=False):
     return wins[0], wins[1]
 
 def self_play_loop(network, manager=DataManager()):
+    # Given a network, generates training data, trains it, and checks if it improved.
     old_network = network
     iter = 0
     while True:
