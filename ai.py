@@ -10,9 +10,10 @@ import treelib
 
 import keras
 import tensorflow as tf
+from tensorflow.python.ops import math_ops
 
 # For naming data and models
-CURRENT_VERSION = 1.4
+CURRENT_VERSION = 1.5
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -378,8 +379,8 @@ class DataManager():
         for i, shape in enumerate(self.features_list["shape"]):
             inputs.append(keras.Input(shape=shape))
             if shape == self.features_list["shape"][0]:
-                x = keras.layers.Conv2D(32, (3, 3), padding="valid", kernel_regularizer=keras.regularizers.L2(1e-4))(inputs[i])
-                x = keras.layers.BatchNormalization()(x)
+                x = keras.layers.Conv2D(32, (3, 3), padding="valid")(inputs[i])
+                # x = keras.layers.BatchNormalization()(x)
                 x = keras.layers.Activation('relu')(x)
                 flattened_inputs.append(keras.layers.Flatten()(x))
             else:
@@ -389,11 +390,11 @@ class DataManager():
 
     def ResidualLayer(self):
         def inside(x):
-            y = keras.layers.Dense(32, kernel_regularizer=keras.regularizers.L2(1e-4))(x)
-            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Dense(32)(x)
+            # y = keras.layers.BatchNormalization()(y)
             y = keras.layers.Activation('relu')(y)
-            y = keras.layers.Dense(32, kernel_regularizer=keras.regularizers.L2(1e-4))(y)
-            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Dense(32)(y)
+            # y = keras.layers.BatchNormalization()(y)
             z = keras.layers.Add()([x, y]) # Skip connection
             z = keras.layers.Activation('relu')(z)
 
@@ -402,9 +403,9 @@ class DataManager():
 
     def ValueHead(self):
         def inside(x):
-            x = keras.layers.BatchNormalization()(x)
+            # x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dense(32, kernel_regularizer=keras.regularizers.L2(1e-4))(x)
+            x = keras.layers.Dense(32)(x)
             x = keras.layers.Activation('relu')(x)
             x = keras.layers.Dense(1, activation='tanh')(x)
 
@@ -413,8 +414,9 @@ class DataManager():
 
     def PolicyHead(self):
         def inside(x):
-            x = keras.layers.BatchNormalization()(x)
+            # x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
+            # Generate probability distribution
             x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
 
             return x
@@ -425,23 +427,28 @@ def create_network(manager):
     # Input layer: Applies a convolution to the grids and flattens all inputs
     # -> Three residual layers
     # -> Value head and policy head
+
+    # , kernel_regularizer=keras.regularizers.L2(1e-4)
+
     inputs, flattened_inputs = manager.create_input_layers()
 
     x = keras.layers.Concatenate(axis=-1)(flattened_inputs)
 
     # Fully connected layer
-    x = keras.layers.Dense(32, kernel_regularizer=keras.regularizers.L2(1e-4))(x)
-    x = keras.layers.BatchNormalization()(x)
+    x = keras.layers.Dense(32)(x)
+    # x = keras.layers.BatchNormalization()(x)
     x = keras.layers.Activation('relu')(x)
 
-    for _ in range(3):
-        x = manager.ResidualLayer()(x)
+    for _ in range(5):
+        # x = manager.ResidualLayer()(x)
+        x = keras.layers.Dense(32)(x)
 
     value_output = manager.ValueHead()(x)
     policy_output = manager.PolicyHead()(x)
 
     model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
-    model.compile(optimizer='adam', loss=["mean_squared_error", "binary_crossentropy"])
+    # Loss is the sum of MSE of values and Cross entropy of policies
+    model.compile(optimizer='adam', loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=[1, 1])
 
     model.summary()
 
@@ -465,7 +472,9 @@ def train_network(model, data):
     # Reshape policies
     policies = np.array(policies).reshape((-1, POLICY_SIZE))
 
-    model.fit(x=features, y=[values, policies])
+    callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
+
+    model.fit(x=features, y=[values, policies], verbose=1, epochs=100000, callbacks=[callback])
 
 def evaluate(game, network):
     # Use a neural network to return value and policy.
