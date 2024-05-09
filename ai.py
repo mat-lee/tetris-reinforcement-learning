@@ -158,7 +158,7 @@ def MCTS(game, network):
             upwards_id = node.predecessor(tree.identifier)
             node = tree.get_node(upwards_id)
 
-    print(MAX_DEPTH)
+    #print(MAX_DEPTH)
 
     # Choose a move based on the number of visits
     root = tree.get_node("root")
@@ -179,6 +179,9 @@ def MCTS(game, network):
 
 def get_move_matrix(player): # e^-3
     # Returns a list of all possible moves that a player can make
+    # Very Important: With my coordinate system, pieces can be placed with negative x values
+    # To avoid negative indexing, the list of moves is shifted by 2
+    # It encodes moves from -2 to 8 as indeces 0 to 10
 
     # Possible locations needs to be larger to acount for blocks with negative x and y
     # O piece        0 to 8
@@ -288,6 +291,7 @@ def get_move_matrix(player): # e^-3
 
 def get_move_list(move_matrix, policy_matrix):
     # Returns list of possible moves with their policy
+    # Removes buffer
     move_list = []
 
     mask = np.multiply(move_matrix, policy_matrix)
@@ -302,32 +306,6 @@ def get_move_list(move_matrix, policy_matrix):
     # Sort by policy
     # move_list = sorted(move_list, key=lambda tup: tup[0], reverse=True)
     return move_list
-
-
-def search_statistics(tree):
-    """Return a matrix of proportion of moves looked at.
-
-    Equal to Times Visited / Total Nodes looked at for each move,
-    and will become the target for training policy.
-    Policy: Rows x Columns x Rotations x Hold
-    Policy: 25 x 11 x 4 x 2"""
-    probability_matrix = np.zeros((2, ROWS, COLS + 1, 4))
-
-    root = tree.get_node("root")
-    root_children_id = root.successors(tree.identifier)
-    total_n = 0
-
-    for root_child_id in root_children_id:
-        root_child = tree.get_node(root_child_id)
-        root_child_n = root_child.data.visit_count
-        root_child_move = root_child.data.move
-        hold, col, row, rotation = root_child_move
-        probability_matrix[hold][row][col][rotation] = root_child_n
-
-        total_n += root_child_n
-    
-    probability_matrix /= total_n
-    return probability_matrix.tolist()
 
 # Using deepcopy:                    100 iter in 36.911 s
 # Using copy functions in classes:   100 iter in 1.658 s
@@ -473,7 +451,7 @@ def train_network(model, data):
 
     # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
-    model.fit(x=features, y=[values, policies], batch_size=64, epochs=10, shuffle=True)
+    model.fit(x=features, y=[values, policies], batch_size=256, epochs=10, shuffle=True)
 
 def evaluate(game, network):
     # Use a neural network to return value and policy.
@@ -495,6 +473,34 @@ def random_evaluate():
 
 # Having two AI's play against each other to generate a self-play dataset.
 # At each move, save X and y for NN
+
+def search_statistics(tree):
+    """Return a matrix of proportion of moves looked at.
+
+    Equal to Times Visited / Total Nodes looked at for each move,
+    and will become the target for training policy.
+    Policy: Rows x Columns x Rotations x Hold
+    Policy: 25 x 11 x 4 x 2"""
+
+    # ACCOUNT FOR BUFFER
+    probability_matrix = np.zeros((2, ROWS, COLS + 1, 4))
+
+    root = tree.get_node("root")
+    root_children_id = root.successors(tree.identifier)
+    total_n = 0
+
+    for root_child_id in root_children_id:
+        root_child = tree.get_node(root_child_id)
+        root_child_n = root_child.data.visit_count
+        root_child_move = root_child.data.move
+        hold, col, row, rotation = root_child_move
+        probability_matrix[hold][row][col + 2][rotation] = root_child_n
+
+        total_n += root_child_n
+    
+    probability_matrix /= total_n
+    return probability_matrix.tolist()
+
 
 def simplify_grid(grid):
     # Replaces minos in a grid with 1s.
@@ -519,19 +525,19 @@ def game_to_X(game):
      
     def get_pieces(game):
         minos = "ZLOSIJT"
-        piece_matrix = np.zeros((2, 7, 7))
+        piece_table = np.zeros((2, 7, 7))
         for i, player in enumerate(game.players):
             if player.piece != None: # Active piece: 0
-                piece_matrix[i][0][minos.index(player.piece.type)] = 1
+                piece_table[i][0][minos.index(player.piece.type)] = 1
             if player.held_piece != None: # Held piece: 1
-                piece_matrix[i][1][minos.index(player.held_piece)] = 1
+                piece_table[i][1][minos.index(player.held_piece)] = 1
             # Limit previews
             for j in range(min(len(player.queue.pieces), 5)): # Queue pieces: 2-6
-                piece_matrix[i][j + 2][minos.index(player.queue.pieces[j])] = 1
+                piece_table[i][j + 2][minos.index(player.queue.pieces[j])] = 1
 
-        if game.turn == 1: piece_matrix = piece_matrix[::-1]
+        if game.turn == 1: piece_table = piece_table[::-1]
 
-        return piece_matrix
+        return piece_table
     
     def get_b2b(game):
         b2b = [player.stats.b2b for player in game.players]
@@ -565,6 +571,59 @@ def game_to_X(game):
 
     return grids[0], grids[1], pieces[0], pieces[1], b2b[0], b2b[1], combo[0], combo[1], lines_cleared[0], lines_cleared[1], lines_sent[0], lines_sent[1], color, pieces_placed
 
+def reflect_grid(grid):
+    # Return a grid flipped horizontally
+    return [row[::-1] for row in grid]
+
+def reflect_pieces(piece_table):
+    # Return a queue with pieces swapped with their mirror
+    # ZLOJIST
+    # O, I, and T are the same as their mirror
+    # Z -> S: 0 -> 5
+    # S -> Z: 5 -> 0
+    # L -> J: 1 -> 3
+    # J -> L: 3 -> 1
+    swap_dict = {
+        0: 5,
+        5: 0,
+        1: 3,
+        3: 1
+    }
+
+    reflected_piece_table = np.zeros((7, 7))
+
+    for i, piece_row in enumerate(piece_table):
+        piece_index = piece_row.index(1)
+        if piece_index in swap_dict:
+            # Swap piece if swappable
+            piece_index = swap_dict[piece_index]
+        reflected_piece_table[i][piece_index] = 1
+    
+    return reflected_piece_table
+
+def reflect_policy(policy_matrix, active_piece_size, hold_piece_size):
+    reflected_policy_matrix = np.zeros((2, 25, 11, 2))
+    rotation_dict = {
+        1: 3,
+        3: 1
+    }
+    for hold in range(len(reflected_policy_matrix)):
+        for row in range(len(reflected_policy_matrix[0])):
+            for col in range(len(reflected_policy_matrix[0][0])):
+                for rotation in range(len(reflected_policy_matrix[0][0][0])):
+                    value = policy_matrix[hold][row][col][rotation]
+
+                    if rotation in rotation_dict:
+                        rotation = rotation_dict[rotation]
+                    
+                    piece_size = (active_piece_size if hold == 0 else hold_piece_size)
+
+                    col = 10 - col - piece_size # 9 - col - piece_size + 1
+
+                    reflected_policy_matrix[hold][row][col][rotation] = value
+    
+    return reflected_policy_matrix
+
 def play_game(network, NUMBER, show_game=False):
     # AI plays one game against itself and generates data.
     # Returns: grids, pieces, first move, pieces placed, value, policy
@@ -585,6 +644,10 @@ def play_game(network, NUMBER, show_game=False):
 
         # Convert tuple to list
         move_data = [*game_to_X(game)]
+
+        # Reflect each player for a total of 2 * 2 = 4 times more data
+        # Reflect grid, pieces, and policy
+
 
         # Convert np arrays to regular lists
         for i in range(len(move_data)):
