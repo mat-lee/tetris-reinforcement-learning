@@ -2,9 +2,9 @@ from const import *
 from game import Game
 
 import json
+import math
 import numpy as np
 import os
-import pandas as pd
 import random
 import treelib
 
@@ -13,14 +13,13 @@ import tensorflow as tf
 from tensorflow.python.ops import math_ops
 
 # For naming data and models
-CURRENT_VERSION = 1.5
+CURRENT_VERSION = 1.6
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # Areas of optimization:
 # - Finding piece locations (piece locations held and not held are probably related)
-# - Optimizing the search tree algorithm
 # - Optimizing piece coordinates
 # - Piece rotations that result in the same board (Pick random one)
 
@@ -29,7 +28,7 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Adjust parameters (CPuct, Dirichlet noise, )
 # - Temperature
 # - Encoding garbage into the neural network
-# - Encoding some sense of turn based into the network
+# - Reflecting board states for more training data
 
 class NodeState():
     """Node class for storing the game in the tree.
@@ -90,14 +89,14 @@ def MCTS(game, network):
             child_ids = node.successors(tree.identifier)
             max_child_score = -1
             max_child_id = None
-            sum_n = 0
+            sum_visits = 0
             for child_id in child_ids:
-                sum_n += tree.get_node(child_id).data.visit_count
+                sum_visits += tree.get_node(child_id).data.visit_count
             for child_id in child_ids:
                 # For each child calculate a score
-                # Upper Confidence Bound-1 (UCB-1)
+                # Polynomial upper confidence trees (PUCT)
                 child_data = tree.get_node(child_id).data
-                child_score = child_data.value_avg + child_data.policy*sum_n/(1+child_data.visit_count)
+                child_score = child_data.value_avg + child_data.policy*math.sqrt(sum_visits)/(1+child_data.visit_count)
                 if child_score >= max_child_score:
                     max_child_score = child_score
                     max_child_id = child_id
@@ -159,7 +158,7 @@ def MCTS(game, network):
             upwards_id = node.predecessor(tree.identifier)
             node = tree.get_node(upwards_id)
 
-    #print(MAX_DEPTH)
+    print(MAX_DEPTH)
 
     # Choose a move based on the number of visits
     root = tree.get_node("root")
@@ -380,7 +379,7 @@ class DataManager():
             inputs.append(keras.Input(shape=shape))
             if shape == self.features_list["shape"][0]:
                 x = keras.layers.Conv2D(32, (3, 3), padding="valid")(inputs[i])
-                # x = keras.layers.BatchNormalization()(x)
+                x = keras.layers.BatchNormalization()(x)
                 x = keras.layers.Activation('relu')(x)
                 flattened_inputs.append(keras.layers.Flatten()(x))
             else:
@@ -391,10 +390,10 @@ class DataManager():
     def ResidualLayer(self):
         def inside(x):
             y = keras.layers.Dense(32)(x)
-            # y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.BatchNormalization()(y)
             y = keras.layers.Activation('relu')(y)
             y = keras.layers.Dense(32)(y)
-            # y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.BatchNormalization()(y)
             z = keras.layers.Add()([x, y]) # Skip connection
             z = keras.layers.Activation('relu')(z)
 
@@ -436,12 +435,12 @@ def create_network(manager):
 
     # Fully connected layer
     x = keras.layers.Dense(32)(x)
-    # x = keras.layers.BatchNormalization()(x)
+    x = keras.layers.BatchNormalization()(x)
     x = keras.layers.Activation('relu')(x)
 
-    for _ in range(5):
-        # x = manager.ResidualLayer()(x)
-        x = keras.layers.Dense(32)(x)
+    for _ in range(1):
+        x = manager.ResidualLayer()(x)
+        #x = keras.layers.Dense(32, activation='relu')(x)
 
     value_output = manager.ValueHead()(x)
     policy_output = manager.PolicyHead()(x)
@@ -472,9 +471,9 @@ def train_network(model, data):
     # Reshape policies
     policies = np.array(policies).reshape((-1, POLICY_SIZE))
 
-    callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
+    # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
-    model.fit(x=features, y=[values, policies], verbose=1, epochs=100000, callbacks=[callback])
+    model.fit(x=features, y=[values, policies], batch_size=64, epochs=10, shuffle=True)
 
 def evaluate(game, network):
     # Use a neural network to return value and policy.
