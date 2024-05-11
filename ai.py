@@ -11,9 +11,10 @@ import treelib
 import keras
 import tensorflow as tf
 from tensorflow.python.ops import math_ops
+from sklearn.model_selection import train_test_split
 
 # For naming data and models
-CURRENT_VERSION = 1.6
+CURRENT_VERSION = 1.7
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -380,7 +381,7 @@ class DataManager():
 
     def ValueHead(self):
         def inside(x):
-            # x = keras.layers.BatchNormalization()(x)
+            x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
             x = keras.layers.Dense(32)(x)
             x = keras.layers.Activation('relu')(x)
@@ -391,7 +392,7 @@ class DataManager():
 
     def PolicyHead(self):
         def inside(x):
-            # x = keras.layers.BatchNormalization()(x)
+            x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
             # Generate probability distribution
             x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
@@ -416,7 +417,7 @@ def create_network(manager):
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.Activation('relu')(x)
 
-    for _ in range(1):
+    for _ in range(3):
         x = manager.ResidualLayer()(x)
         #x = keras.layers.Dense(32, activation='relu')(x)
 
@@ -451,7 +452,7 @@ def train_network(model, data):
 
     # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
-    model.fit(x=features, y=[values, policies], batch_size=256, epochs=10, shuffle=True)
+    model.fit(x=features, y=[values, policies], batch_size=32, epochs=1, shuffle=True)
 
 def evaluate(game, network):
     # Use a neural network to return value and policy.
@@ -525,7 +526,7 @@ def game_to_X(game):
      
     def get_pieces(game):
         minos = "ZLOSIJT"
-        piece_table = np.zeros((2, 7, 7))
+        piece_table = np.zeros((2, 7, 7), dtype=int)
         for i, player in enumerate(game.players):
             if player.piece != None: # Active piece: 0
                 piece_table[i][0][minos.index(player.piece.type)] = 1
@@ -590,39 +591,47 @@ def reflect_pieces(piece_table):
         3: 1
     }
 
-    reflected_piece_table = np.zeros((7, 7))
+    reflected_piece_table = np.zeros((7, 7), dtype=int)
 
     for i, piece_row in enumerate(piece_table):
-        piece_index = piece_row.index(1)
-        if piece_index in swap_dict:
-            # Swap piece if swappable
-            piece_index = swap_dict[piece_index]
-        reflected_piece_table[i][piece_index] = 1
+        if 1 in piece_row:
+            piece_index = piece_row.tolist().index(1)
+            if piece_index in swap_dict:
+                # Swap piece if swappable
+                piece_index = swap_dict[piece_index]
+            reflected_piece_table[i][piece_index] = 1
     
     return reflected_piece_table
 
 def reflect_policy(policy_matrix, active_piece_size, hold_piece_size):
-    reflected_policy_matrix = np.zeros((2, 25, 11, 2))
+    reflected_policy_matrix = np.zeros((2, ROWS, COLS + 1, 4))
     rotation_dict = {
         1: 3,
         3: 1
     }
     for hold in range(len(reflected_policy_matrix)):
+        piece_size = (active_piece_size if hold == 0 else hold_piece_size)
+
         for row in range(len(reflected_policy_matrix[0])):
             for col in range(len(reflected_policy_matrix[0][0])):
                 for rotation in range(len(reflected_policy_matrix[0][0][0])):
                     value = policy_matrix[hold][row][col][rotation]
+                    if value > 0:
+                        if rotation in rotation_dict:
+                            rotation = rotation_dict[rotation]
 
-                    if rotation in rotation_dict:
-                        rotation = rotation_dict[rotation]
-                    
-                    piece_size = (active_piece_size if hold == 0 else hold_piece_size)
+                        # Remove buffer
+                        col += -2
 
-                    col = 10 - col - piece_size # 9 - col - piece_size + 1
+                        # Flip column
+                        col = 10 - col - piece_size # 9 - col - piece_size + 1
+                        
+                        # Add back buffer
+                        col += 2
 
-                    reflected_policy_matrix[hold][row][col][rotation] = value
+                        reflected_policy_matrix[hold][row][col][rotation] = value
     
-    return reflected_policy_matrix
+    return reflected_policy_matrix.tolist()
 
 def play_game(network, NUMBER, show_game=False):
     # AI plays one game against itself and generates data.
@@ -640,21 +649,69 @@ def play_game(network, NUMBER, show_game=False):
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         move, tree = MCTS(game, network)
-        probability_matrix = search_statistics(tree)
+        search_matrix = search_statistics(tree)
 
-        # Convert tuple to list
-        move_data = [*game_to_X(game)]
+        # Piece sizes of players are needed to find where a reflected piece ends up
+        player_piece = game.players[game.turn].piece.type
+        player_piece_size = 0
+        if player_piece != None:
+            player_piece_size = len(piece_dict[player_piece])
 
+        player_held_piece = game.players[game.turn].held_piece
+        player_held_piece_size = 0
+        if player_held_piece != None:
+            player_held_piece_size = len(piece_dict[player_held_piece])
+        # If there's no held piece the next piece is used
+        else:
+            player_held_piece_size = len(piece_dict[game.players[game.turn].queue.pieces[0]])
+
+        #reflected_search_matrix = reflect_policy(search_matrix, player_piece_size, player_held_piece_size)
+
+        # Get data
+        move_data = [*game_to_X(game)] 
+
+        '''
         # Reflect each player for a total of 2 * 2 = 4 times more data
         # Reflect grid, pieces, and policy
+        for active_player_idx in range(2):
+            for other_player_idx in range(2):
+                copied_data = []
+                for feature in move_data:
+                    if type(feature) == np.array:
+                        copied_data.append(feature.copy())
+                    elif type(feature) == list:
+                        copied_data.append([x[:] for x in feature])
+                    else:
+                        copied_data.append(feature)
 
+                # Flip boards and pieces
+                if active_player_idx == 1:
+                    copied_data[0] = reflect_grid(copied_data[0])
+                    copied_data[2] = reflect_pieces(copied_data[2])
+                
+                if other_player_idx == 1:
+                    copied_data[1] = reflect_grid(copied_data[1])
+                    copied_data[3] = reflect_pieces(copied_data[3])
+
+                # Convert np arrays to regular lists
+                for i in range(len(copied_data)):
+                    if isinstance(copied_data[i], np.ndarray):
+                        copied_data[i] = copied_data[i].tolist()
+
+                # Flip search matrix
+                if active_player_idx == 0:
+                    copied_data.append(search_matrix)
+                else:
+                    copied_data.append(reflected_search_matrix)
+
+                game_data[game.turn].append(copied_data)'''
 
         # Convert np arrays to regular lists
         for i in range(len(move_data)):
             if isinstance(move_data[i], np.ndarray):
                 move_data[i] = move_data[i].tolist()
         
-        move_data.append(probability_matrix)
+        move_data.append(search_matrix)
         game_data[game.turn].append(move_data)
 
         game.make_move(move)
@@ -717,17 +774,20 @@ def training_loop(manager, network, show_games=False):
                 # Load data
                 set = json.load(open(f"{directory_path}/{filename}", 'r'))
                 data.extend(set)
-
-        train_network(network, data)
+    
+        # Train network on roughly 1/10 of available data
+        data_batch, _ = train_test_split(data, train_size=0.1)
+        print(len(data), len(data_batch))
+        train_network(network, data_batch)
     print("Finished loop")
 
 def battle_networks(NN_1, NN_2, show_game=False):
     # Battle two AI's with different networks.
-    wins = np.zeros((2))
+    wins = np.zeros((2), dtype=int)
     for i in range(BATTLE_GAMES):
         if show_game == True:
             screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-            pygame.display.set_caption('Battle game')
+            pygame.display.set_caption(f'Battle game: {wins[0]} to {wins[1]}')
 
         game = Game()
         game.setup()
@@ -747,9 +807,9 @@ def battle_networks(NN_1, NN_2, show_game=False):
             wins += 0.5
         else: wins[winner] += 1
 
-        print(*wins)
+    print(*wins)
 
-    wins /= wins.sum()
+    wins = [win/sum(wins) for win in wins]
     return wins[0], wins[1]
 
 def self_play_loop(network, manager=DataManager(), show_games=False):
@@ -767,11 +827,10 @@ def self_play_loop(network, manager=DataManager(), show_games=False):
         new_wins, old_wins = battle_networks(new_network, old_network, show_game=show_games)
         print("Finished battle")
         if new_wins >= 0.55:
-            old_network = new_network
-
             next_ver = get_highest_number('.keras') + 1
-
-            old_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
+            new_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
+            # The new network becomes the network to beat
+            old_network = new_network
         else:
             break
 
