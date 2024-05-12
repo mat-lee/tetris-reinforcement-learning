@@ -12,7 +12,9 @@ Manager = DataManager()
 create_network(Manager)
 NN = load_best_network()
 
-self_play_loop(NN, manager=Manager, show_games=True)
+self_play_loop(NN, show_games=True)
+# pygame.init()
+# battle_networks(NN, NN, show_game=True)
 
 # play_game(NN, 0, show_game=True)
 # training_loop(Manager, NN)

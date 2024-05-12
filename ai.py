@@ -74,10 +74,7 @@ def MCTS(game, network):
     tree.create_node(identifier="root", data=initial_state)
 
     MAX_DEPTH = 0
-    iter = 0
-    while iter < MAX_ITER:
-        iter += 1
-
+    for _ in range(MAX_ITER):
         # Begin at the root node
         node = tree.get_node("root")
         node_state = node.data
@@ -144,6 +141,15 @@ def MCTS(game, network):
                 value = -1
             else:
                 value = 0
+
+        # If root node, add exploration noise to children
+        if node.is_root():
+            child_ids = node.successors(tree.identifier)
+            number_of_children = len(child_ids)
+            noise_distribution = np.random.gamma(DIRICHLET_ALPHA, 1, number_of_children)
+            for child_id, noise in zip(child_ids, noise_distribution):
+                child_data = tree.get_node(child_id).data
+                child_data.policy = child_data.policy * (1 - DIRICHLET_EXPLORATION) + noise * DIRICHLET_EXPLORATION
 
         # Go back up the tree and updates nodes
         # Propogate positive values for the player made the move, and negative for the other player
@@ -617,21 +623,39 @@ def reflect_policy(policy_matrix, active_piece_size, hold_piece_size):
                 for rotation in range(len(reflected_policy_matrix[0][0][0])):
                     value = policy_matrix[hold][row][col][rotation]
                     if value > 0:
+                        new_rotation = rotation
                         if rotation in rotation_dict:
-                            rotation = rotation_dict[rotation]
+                            new_rotation = rotation_dict[rotation]
+
+                        new_col = col
 
                         # Remove buffer
-                        col += -2
+                        new_col += -2
 
                         # Flip column
-                        col = 10 - col - piece_size # 9 - col - piece_size + 1
+                        new_col = 10 - new_col - piece_size # 9 - col - piece_size + 1
                         
                         # Add back buffer
-                        col += 2
+                        new_col += 2
 
-                        reflected_policy_matrix[hold][row][col][rotation] = value
+                        reflected_policy_matrix[hold][row][new_col][new_rotation] = value
     
     return reflected_policy_matrix.tolist()
+
+def get_piece_sizes(player):
+    active_piece_len = 0
+    if player.piece != None:
+        active_piece_len = len(piece_dict[player.piece.type])
+
+    hold_piece_len = 0
+    player_copy = player.copy()
+    player_copy.hold_piece()
+
+    if player_copy.piece != None:
+        hold_piece_len = len(piece_dict[player_copy.piece.type])
+
+    
+    return active_piece_len, hold_piece_len
 
 def play_game(network, NUMBER, show_game=False):
     # AI plays one game against itself and generates data.
@@ -652,29 +676,16 @@ def play_game(network, NUMBER, show_game=False):
         search_matrix = search_statistics(tree)
 
         # Piece sizes of players are needed to find where a reflected piece ends up
-        player_piece = game.players[game.turn].piece.type
-        player_piece_size = 0
-        if player_piece != None:
-            player_piece_size = len(piece_dict[player_piece])
-
-        player_held_piece = game.players[game.turn].held_piece
-        player_held_piece_size = 0
-        if player_held_piece != None:
-            player_held_piece_size = len(piece_dict[player_held_piece])
-        # If there's no held piece the next piece is used
-        else:
-            player_held_piece_size = len(piece_dict[game.players[game.turn].queue.pieces[0]])
-
-        #reflected_search_matrix = reflect_policy(search_matrix, player_piece_size, player_held_piece_size)
+        active_piece_size, hold_piece_size = get_piece_sizes(game.players[game.turn])
+        reflected_search_matrix = reflect_policy(search_matrix, active_piece_size, hold_piece_size)
 
         # Get data
         move_data = [*game_to_X(game)] 
 
-        '''
         # Reflect each player for a total of 2 * 2 = 4 times more data
         # Reflect grid, pieces, and policy
-        for active_player_idx in range(2):
-            for other_player_idx in range(2):
+        for active_player_idx in range(2): # Reflect or not active player
+            for other_player_idx in range(2):# Reflect or not other player
                 copied_data = []
                 for feature in move_data:
                     if type(feature) == np.array:
@@ -704,15 +715,7 @@ def play_game(network, NUMBER, show_game=False):
                 else:
                     copied_data.append(reflected_search_matrix)
 
-                game_data[game.turn].append(copied_data)'''
-
-        # Convert np arrays to regular lists
-        for i in range(len(move_data)):
-            if isinstance(move_data[i], np.ndarray):
-                move_data[i] = move_data[i].tolist()
-        
-        move_data.append(search_matrix)
-        game_data[game.turn].append(move_data)
+                game_data[game.turn].append(copied_data)
 
         game.make_move(move)
 
@@ -755,10 +758,10 @@ def make_training_set(network, num_games, show_game=False):
     with open(f"{directory_path}/{CURRENT_VERSION}.{next_set}.txt", 'w') as out_file:
         out_file.write(json_data)
 
-def training_loop(manager, network, show_games=False):
+def training_loop(network, show_games=False):
     # Play a training set and train the network on past sets.
     for i in range(TRAINING_LOOPS):
-        make_training_set(network, TRAINING_GAMES, show_game=True)
+        make_training_set(network, TRAINING_GAMES, show_game=show_games)
         print("Finished set")
 
         data = []
@@ -770,12 +773,12 @@ def training_loop(manager, network, show_games=False):
         # Get n games
         for filename in get_filenames('.txt'):
             number = int(filename[4:-4])
-            if number > max_set - 10:
+            if number > max_set - SETS_TO_TRAIN:
                 # Load data
                 set = json.load(open(f"{directory_path}/{filename}", 'r'))
                 data.extend(set)
     
-        # Train network on roughly 1/10 of available data
+        # Train network on a fraction of the available data
         data_batch, _ = train_test_split(data, train_size=0.1)
         print(len(data), len(data_batch))
         train_network(network, data_batch)
@@ -812,7 +815,7 @@ def battle_networks(NN_1, NN_2, show_game=False):
     wins = [win/sum(wins) for win in wins]
     return wins[0], wins[1]
 
-def self_play_loop(network, manager=DataManager(), show_games=False):
+def self_play_loop(network, show_games=False):
     if show_games == True:
         pygame.init()
     # Given a network, generates training data, trains it, and checks if it improved.
@@ -822,7 +825,7 @@ def self_play_loop(network, manager=DataManager(), show_games=False):
         iter += 1
         new_network = keras.models.clone_model(old_network)
         
-        training_loop(manager, new_network, show_games=show_games)
+        training_loop(new_network, show_games=show_games)
 
         new_wins, old_wins = battle_networks(new_network, old_network, show_game=show_games)
         print("Finished battle")

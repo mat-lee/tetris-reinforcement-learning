@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import MCTS, load_best_network
+from ai import MCTS, load_best_network, search_statistics, get_piece_sizes, reflect_policy
 from const import *
 from game import Game
 from mover import Mover
@@ -108,7 +108,25 @@ class Main:
                 # stats.sort_stats(pstats.SortKey.TIME)
                 # stats.print_stats(20)
 
-                move, _ = MCTS(game, NN)
+                move, tree = MCTS(game, NN)
+                search_matrix = search_statistics(tree)
+
+                active_piece_size, hold_piece_size = get_piece_sizes(game.players[game.turn])
+                reflected_search_matrix = reflect_policy(search_matrix, active_piece_size, hold_piece_size)
+
+                for hold in range(2):
+                    for row in range(25):
+                        for col in range(11):
+                            for rotation in range(4):
+                                if search_matrix[hold][row][col][rotation] == 0:
+                                    search_matrix[hold][row][col][rotation] = 0
+                                else:
+                                    search_matrix[hold][row][col][rotation] = 1
+                                if reflected_search_matrix[hold][row][col][rotation] == 0:
+                                    reflected_search_matrix[hold][row][col][rotation] = 0
+                                else:
+                                    reflected_search_matrix[hold][row][col][rotation] = 1
+
                 game.make_move(move=move)
 
             pygame.display.update()
