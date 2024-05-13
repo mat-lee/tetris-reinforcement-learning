@@ -14,7 +14,7 @@ from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
 
 # For naming data and models
-CURRENT_VERSION = 1.7
+CURRENT_VERSION = 1.9
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -52,7 +52,7 @@ class NodeState():
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(game, network):
+def MCTS(game, network, add_noise=False):
     # Picks a move for the AI to make 
     # Initialize the search tree
     tree = treelib.Tree()
@@ -143,7 +143,7 @@ def MCTS(game, network):
                 value = 0
 
         # If root node, add exploration noise to children
-        if node.is_root():
+        if (add_noise == True and node.is_root()):
             child_ids = node.successors(tree.identifier)
             number_of_children = len(child_ids)
             noise_distribution = np.random.gamma(DIRICHLET_ALPHA, 1, number_of_children)
@@ -341,6 +341,10 @@ def get_move_list(move_matrix, policy_matrix):
 #   Value: (1)
 #
 # 508 Total input values
+# 
+# Model < 1.7: In the trenches
+# Model 1.8: Added data augmentation and changed amount of training data: Performs semi rare line clears
+# Model 1.9: Fixed data augmentation pieces not being swapped correctly
 
 class DataManager():
     # Handles layer sizes
@@ -584,17 +588,17 @@ def reflect_grid(grid):
 
 def reflect_pieces(piece_table):
     # Return a queue with pieces swapped with their mirror
-    # ZLOJIST
+    # ZLOSIJT
     # O, I, and T are the same as their mirror
-    # Z -> S: 0 -> 5
-    # S -> Z: 5 -> 0
-    # L -> J: 1 -> 3
-    # J -> L: 3 -> 1
+    # Z -> S: 0 -> 3
+    # S -> Z: 3 -> 0
+    # L -> J: 1 -> 5
+    # J -> L: 5 -> 1
     swap_dict = {
-        0: 5,
-        5: 0,
-        1: 3,
-        3: 1
+        0: 3,
+        3: 0,
+        1: 5,
+        5: 1
     }
 
     reflected_piece_table = np.zeros((7, 7), dtype=int)
@@ -672,7 +676,7 @@ def play_game(network, NUMBER, show_game=False):
     game_data = [[], []]
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
-        move, tree = MCTS(game, network)
+        move, tree = MCTS(game, network, add_noise=True)
         search_matrix = search_statistics(tree)
 
         # Piece sizes of players are needed to find where a reflected piece ends up
