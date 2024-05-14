@@ -3,6 +3,7 @@ from game import Game
 
 import json
 import math
+import matplotlib.pyplot as plt
 import numpy as np
 import os
 import random
@@ -14,7 +15,7 @@ from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
 
 # For naming data and models
-CURRENT_VERSION = 1.9
+CURRENT_VERSION = 1.10
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -25,11 +26,10 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Piece rotations that result in the same board (Pick random one)
 
 # AI todo:
-# - Better network (e.g. L2, CNNs. more weights)
-# - Adjust parameters (CPuct, Dirichlet noise, )
-# - Temperature
+# - Improve network (e.g. L2, CNNs, adjust number of weights/layers, Dropout)
+# - Adjust parameters (CPuct, Dirichlet noise, Temperature)
 # - Encoding garbage into the neural network
-# - Reflecting board states for more training data
+# - Data augmentation
 
 class NodeState():
     """Node class for storing the game in the tree.
@@ -125,9 +125,12 @@ def MCTS(game, network, add_noise=False):
                 move_list = get_move_list(move_matrix, policy)
 
                 # Generate new leaves
+                # Normalize policy values
+                policy_sum = sum(list(zip(*move_list))[0])
+
                 for policy, move in move_list:
                     new_state = NodeState(game=None, move=move)
-                    new_state.policy = policy
+                    new_state.policy = policy / policy_sum
 
                     tree.create_node(data=new_state, parent=node.identifier)
         
@@ -147,9 +150,21 @@ def MCTS(game, network, add_noise=False):
             child_ids = node.successors(tree.identifier)
             number_of_children = len(child_ids)
             noise_distribution = np.random.gamma(DIRICHLET_ALPHA, 1, number_of_children)
+
+            pre_noise_policy = []
+            post_noise_policy = []
+
             for child_id, noise in zip(child_ids, noise_distribution):
                 child_data = tree.get_node(child_id).data
+                pre_noise_policy.append(child_data.policy)
+
                 child_data.policy = child_data.policy * (1 - DIRICHLET_EXPLORATION) + noise * DIRICHLET_EXPLORATION
+                post_noise_policy.append(child_data.policy)
+            
+            # fig, axs = plt.subplots(2)
+            # fig.suptitle('Policy before and after dirichlet noise')
+            # axs[0].plot(pre_noise_policy)
+            # axs[1].plot(post_noise_policy)
 
         # Go back up the tree and updates nodes
         # Propogate positive values for the player made the move, and negative for the other player
@@ -342,9 +357,15 @@ def get_move_list(move_matrix, policy_matrix):
 #
 # 508 Total input values
 # 
-# Model < 1.7: In the trenches
-# Model 1.8: Added data augmentation and changed amount of training data: Performs semi rare line clears
+# Model <1.7: In the trenches
+# 
+# Model 1.8: Added data augmentation and changed amount of training data and added dirichlet noise: 
+# Performs semi rare line clears
+# 
 # Model 1.9: Fixed data augmentation pieces not being swapped correctly
+# Back in the trenches
+#
+# Model 1.10: Normalized policy values
 
 class DataManager():
     # Handles layer sizes
@@ -361,13 +382,14 @@ class DataManager():
         }
     
     def create_input_layers(self):
-        # Use a CNN in the inputs for the grids
+        # Use a convolutional layer
         inputs = []
         flattened_inputs = []
         for i, shape in enumerate(self.features_list["shape"]):
             inputs.append(keras.Input(shape=shape))
             if shape == self.features_list["shape"][0]:
                 x = keras.layers.Conv2D(32, (3, 3), padding="valid")(inputs[i])
+                # x = keras.layers.MaxPooling2D( 
                 x = keras.layers.BatchNormalization()(x)
                 x = keras.layers.Activation('relu')(x)
                 flattened_inputs.append(keras.layers.Flatten()(x))
@@ -377,6 +399,7 @@ class DataManager():
         return inputs, flattened_inputs
 
     def ResidualLayer(self):
+        # Uses skip connections
         def inside(x):
             y = keras.layers.Dense(32)(x)
             y = keras.layers.BatchNormalization()(y)
@@ -413,6 +436,7 @@ class DataManager():
 def create_network(manager):
     # Creates a network with random weight
     # Input layer: Applies a convolution to the grids and flattens all inputs
+    # -> Fully connected layer to adjust data size
     # -> Three residual layers
     # -> Value head and policy head
 
@@ -605,7 +629,7 @@ def reflect_pieces(piece_table):
 
     for i, piece_row in enumerate(piece_table):
         if 1 in piece_row:
-            piece_index = piece_row.tolist().index(1)
+            piece_index = piece_row.tolist().index(1) # Index of the piece in ZLOSIJT
             if piece_index in swap_dict:
                 # Swap piece if swappable
                 piece_index = swap_dict[piece_index]
@@ -690,6 +714,7 @@ def play_game(network, NUMBER, show_game=False):
         # Reflect grid, pieces, and policy
         for active_player_idx in range(2): # Reflect or not active player
             for other_player_idx in range(2):# Reflect or not other player
+                # Copy move data
                 copied_data = []
                 for feature in move_data:
                     if type(feature) == np.array:
@@ -777,7 +802,7 @@ def training_loop(network, show_games=False):
         # Get n games
         for filename in get_filenames('.txt'):
             number = int(filename[4:-4])
-            if number > max_set - SETS_TO_TRAIN:
+            if number > max_set - SETS_TO_TRAIN_WITH:
                 # Load data
                 set = json.load(open(f"{directory_path}/{filename}", 'r'))
                 data.extend(set)
