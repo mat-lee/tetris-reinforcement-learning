@@ -21,8 +21,9 @@ class Game:
         self.add_history()
 
     def add_bag_to_all(self):
-        bag = self.human_player.queue.generate_bag()
+        # Randomize bags for players
         for player in self.players:
+            bag = player.queue.generate_bag()
             player.queue.add_bag(bag)
 
     def make_move(self, move, add_bag=True, add_history=True, send_garbage=True):
