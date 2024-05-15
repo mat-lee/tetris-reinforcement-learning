@@ -33,21 +33,17 @@ class Player:
     def create_piece(self, piece_type):   
         piece = Piece(piece_dict[piece_type], type=piece_type)
         piece.move_to_spawn()
-        if not self.collision(piece.x_0, piece.y_0, piece.matrix):
+        if not self.collision(piece.x_0, piece.y_0, piece.rotation, piece.type):
             self.piece = piece
         else:
             # If the block can't spawn lose
             self.game_over = True
 
-    def collision(self, x_0, y_0, matrix):
-        grid = self.board.grid
-
-        coords = Piece.get_mino_coords(x_0, y_0, matrix)
-
-        for col, row in coords:
+    def collision(self, x_0, y_0, rotation, type):
+        for col, row in Piece.get_mino_coords(x_0, y_0, rotation, type):
             if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
                 return True
-            elif grid[row][col] != 0:
+            elif self.board.grid[row][col] != 0:
                 return True
 
         return False
@@ -55,56 +51,84 @@ class Player:
     @property
     def ghost_y(self):
         ghost_y = self.piece.y_0
-        while(not self.collision(self.piece.x_0, ghost_y + 1, self.piece.matrix)):
-            ghost_y += 1
+        coordinate_list = self.piece.get_mino_coords(self.piece.x_0, 
+                                            ghost_y, 
+                                            self.piece.rotation, 
+                                            self.piece.type)
         
-        return(ghost_y)
+        collided = False
+        while collided == False:
+            ghost_y += 1
+            coordinate_list = [[col, row + 1] for col, row in coordinate_list]
 
-    def can_move(self, x_offset=0, y_offset=0):
-        if not self.collision(self.piece.x_0 + x_offset, 
-                              self.piece.y_0 + y_offset, self.piece.matrix):
-            return True
-        return False
+            for col, row in coordinate_list:
+                if row < 0 or row > ROWS - 1:
+                    collided = True
+                elif self.board.grid[row][col] != 0:
+                    collided = True
+            
+        return ghost_y - 1
+
+    def can_move(self, piece, x_offset=0, y_offset=0):
+        grid = self.board.grid
+        for col, row in piece.coordinates:
+            if (row + y_offset < 0
+             or row + y_offset > ROWS - 1
+             or col + x_offset < 0
+             or col + x_offset > COLS - 1):
+                return False
+            elif grid[row + y_offset][col + x_offset] != 0:
+                return False
+        
+        return True
 
     def move_right(self):
-        if self.can_move(x_offset=1):
-            self.piece.x_0 += 1
+        if self.can_move(self.piece, x_offset=1):
+            self.piece.move(x_offset=1)
 
     def move_left(self):
-        if self.can_move(x_offset=-1):
-            self.piece.x_0 -= 1
+        if self.can_move(self.piece, x_offset=-1):
+            self.piece.move(x_offset=-1)
 
     def move_down(self):
-        if self.can_move(y_offset=1):
-            self.piece.y_0 += 1
+        if self.can_move(self.piece, y_offset=1):
+            self.piece.move(y_offset=1)
 
     def try_wallkick(self, dir):
         piece = self.piece
-        i_rotation = piece.rotation
-        f_rotation = (i_rotation + dir) % 4
+        initial_rotation = piece.rotation
+        final_rotation = (initial_rotation + dir) % 4
 
-        key = str(i_rotation) + "-" + str(f_rotation)
+        key = str(initial_rotation) + "-" + str(final_rotation)
 
         if piece.type == "I":
             kicktable = i_wallkicks[key]
         else:
             kicktable = wallkicks[key]
 
-        rotated_piece_matrix = piece.rotated_matrix(piece.rotation, f_rotation)
-
+        rotated_piece_coordinates = piece.get_mino_coords(piece.x_0, piece.y_0, final_rotation, piece.type)
         for kick in kicktable:
-            if not self.collision(piece.x_0 + kick[0], piece.y_0 - kick[1], rotated_piece_matrix):
+            collided = False
+            for col, row in rotated_piece_coordinates:
+                if (row - kick[1] < 0
+                 or row - kick[1] > ROWS - 1
+                 or col + kick[0] < 0
+                 or col + kick[0] > COLS - 1):
+                    collided = True
+                elif self.board.grid[row - kick[1]][col + kick[0]] != 0:
+                    collided = True
+            if collided == False:
                 piece.x_0 += kick[0]
                 piece.y_0 += -kick[1]
-                piece.matrix = rotated_piece_matrix
-                piece.rotation = f_rotation
-                return()
+                piece.rotation = final_rotation
+                piece.coordinates = [[col + kick[0], row - kick[1]] for col, row in rotated_piece_coordinates]
+                return
 
     def force_place_piece(self, x, y, o):
         self.piece.x_0 = x
         self.piece.y_0 = y
         self.piece.rotation = o
-        self.piece.update_rotation()
+        self.piece.coordinates = self.piece.get_self_coords
         self.place_piece()
 
     def place_piece(self):
@@ -139,17 +163,12 @@ class Player:
             
             if not (corner_filled[piece.rotation] and corner_filled[(piece.rotation + 1) % 4]):
                 is_mini = True
-            
-        # Check the rows the minos will be placed in
-        for y in range(len(piece.matrix)):
-            if any(x != 0 for x in piece.matrix[y]):
-                rows.append(int(place_y + y))
 
-        # Place the pieces
-        coords = Piece.get_mino_coords(piece.x_0, place_y, piece.matrix)
-
-        for col, row in coords:
+        # Place the pieces and check rows that minos will be placed
+        for col, row in piece.get_mino_coords(piece.x_0, place_y, piece.rotation, piece.type):
             grid[row][col] = piece.type
+            if row not in rows:
+                rows.append(row)
         
         self.piece = None
 
@@ -242,14 +261,13 @@ class Player:
         return new_player
 
     # Draw methods
-    def draw_piece(self, surface, x_0, y_0, piece_matrix, color):
+    def draw_piece(self, surface, x_0, y_0, rotation, type, color):
         """Draw a piece matrix"""
-        coords = Piece.get_mino_coords(x_0, y_0, piece_matrix)
-        for coord in coords:
-            col, row = coord
-            self.draw_mino(surface, row, col, color)
+        coords = Piece.get_mino_coords(x_0, y_0, rotation, type)
+        for col, row in coords:
+            self.draw_mino(surface, col, row, color)
 
-    def draw_mino(self, surface, row, col, color):
+    def draw_mino(self, surface, col, row, color):
         """Draw a mino"""
         rect = (col * MINO_SIZE + HOLD_WIDTH + E_BUFFER + self.draw_coords[0], 
                     row * MINO_SIZE + N_BUFFER + self.draw_coords[1], MINO_SIZE, MINO_SIZE)
@@ -272,7 +290,7 @@ class Player:
             piece = self.piece
 
             ghost_y = self.ghost_y
-            self.draw_piece(surface, piece.x_0, ghost_y, piece.matrix, color_dict["ghost"])
+            self.draw_piece(surface, piece.x_0, ghost_y, piece.rotation, piece.type, color_dict["ghost"])
 
     def show_grid_lines(self, surface):
         for row in range(ROWS - GRID_ROWS, ROWS + 1):
@@ -289,42 +307,38 @@ class Player:
         if self.piece != None:
             piece = self.piece
 
-            self.draw_piece(surface, piece.x_0, piece.y_0, piece.matrix, color_dict[piece.type])
+            for col, row in piece.coordinates:
+                self.draw_mino(surface, col, row, color_dict[piece.type])
     
     def show_minos(self, surface):
         for row in range(ROWS):
             for col in range(COLS):
                 mino = self.board.grid[row][col]
                 if mino != 0:
-                    self.draw_mino(surface, row, col, color_dict[mino])
+                    self.draw_mino(surface, col, row, color_dict[mino])
 
     def show_queue(self, surface):
         pieces = self.queue.pieces
         for i in range(PREVIEWS):
             if len(pieces) > i:
                 piece = pieces[i]
-                piece_matrix = piece_dict[piece]
 
                 x_0 = (12 if piece == "O" else 11) - 0.5
                 y_0 = (0 if piece == "I" else 1) + ROWS - SPAWN_ROW
                 
-                coords = Piece.get_mino_coords(x_0, y_0 + i * 3, piece_matrix)
-                for coord in coords:
-                    col, row = coord
-                    self.draw_mino(surface, row, col, color_dict[piece])
+                coords = Piece.get_mino_coords(x_0, y_0 + i * 3, 0, piece)
+                for col, row in coords:
+                    self.draw_mino(surface, col, row, color_dict[piece])
                             
     def show_hold(self, surface):
         held_piece = self.held_piece
         if held_piece != None:
-            piece_matrix = piece_dict[held_piece]
-
             x_0 = (-4 if held_piece == "O" else -5) + 0.5
             y_0 = 1 + ROWS - SPAWN_ROW
 
-            coords = Piece.get_mino_coords(x_0, y_0, piece_matrix)
-            for coord in coords:
-                col, row = coord
-                self.draw_mino(surface, row, col, color_dict[held_piece])
+            coords = Piece.get_mino_coords(x_0, y_0, 0, held_piece)
+            for col, row in coords:
+                self.draw_mino(surface, col, row, color_dict[held_piece])
 
     def show_garbage(self, screen):
         # Show amount of incoming garbage
@@ -383,3 +397,15 @@ class AI(Player):
         super().__init__()
         self.draw_coords = (WIDTH/2, 0)
         self.color = 1
+
+'''dic = {}
+for piece_type in "ZLOSIJT":
+    dic[piece_type] = {}
+    for r in range(4):
+        piece = Piece(piece_dict[piece_type], type=piece_type)
+        piece.x_0 = 0
+        piece.y_0 = 0
+        piece.rotation = r
+        piece.update_rotation()
+        dic[piece_type][r] = piece.coords
+print(dic)'''

@@ -9,7 +9,7 @@ import time
 
 Manager = DataManager()
 
-create_network(Manager)
+#create_network(Manager)
 NN = load_best_network()
 
 self_play_loop(NN, show_games=True)

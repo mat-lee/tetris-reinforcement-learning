@@ -6,13 +6,13 @@ class Piece:
     The coordinates are saved and the piece is drawn on top
     '''
 
-    def __init__(self, matrix, type=None, x_0=0, y_0=0):
+    def __init__(self, x_0=0, y_0=0, type=None):
         # Coords describe the row of the top left value in the matrix
         self.x_0 = x_0
         self.y_0 = y_0
         self.type = type
-        self.matrix = matrix
         self.rotation = 0 # 1 is right, 2 is 180, 3 is left
+        self.coordinates = [[], [], [], []]
 
     def get_spawn_location(self):
         # Move a newly created "O" piece to the right
@@ -22,28 +22,12 @@ class Piece:
 
     def move_to_spawn(self):
         self.x_0, self.y_0 = self.get_spawn_location()
+        self.coordinates = self.get_self_coords
 
-    def rotated_matrix(self, initial, final):
-        diff = (final - initial) % 4
-
-        if diff == 0:
-            return(self.matrix)
-
-        # Clockwise rotation
-        if diff == 1:
-            return(list(zip(*self.matrix[::-1])))
-
-        # 180 rotation
-        if diff == 2:
-            return([x[::-1] for x in self.matrix[::-1]])
-
-        # Counter-clockwise rotation
-        if diff == 3:
-            return(list(zip(*self.matrix))[::-1])
-    
-    def update_rotation(self):
-        self.matrix = [x[:] for x in piece_dict[self.type]] # copy matrix
-        self.matrix = self.rotated_matrix(0, self.rotation)
+    def move(self, x_offset=0, y_offset=0):
+        self.x_0 += x_offset
+        self.y_0 += y_offset
+        self.coordinates = [[col + x_offset, row + y_offset] for col, row in self.coordinates]
 
     def copy(self):
         new_piece = Piece(piece_dict[self.type], type=self.type)
@@ -54,21 +38,13 @@ class Piece:
         return new_piece
 
     @property
-    def coords(self):
-        return(Piece.get_mino_coords(self.x_0, self.y_0, self.matrix))
+    def get_self_coords(self):
+        return(Piece.get_mino_coords(self.x_0, self.y_0, self.rotation, self.type))
     
     @staticmethod
-    def get_mino_coords(x_0, y_0, piece_matrix):
-        coordinate_list = []
-        cols = len(piece_matrix[0])
-        rows = len(piece_matrix)
-        for x in range(cols):
-            for y in range(rows):
-                if piece_matrix[y][x] != 0:
-                    col = x_0 + x
-                    row = y_0 + y
-                    coordinate_list.append([col, row])
-                    if len(coordinate_list) >= 4:
-                        return(coordinate_list)
+    def get_mino_coords(x_0, y_0, rotation, type):
+        coordinate_list = mino_coords_dict[type][rotation]
+        # [col, row]
+        coordinate_list = [[x_0 + col, y_0 + row] for col, row in coordinate_list]
         
         return(coordinate_list)

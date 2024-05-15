@@ -14,8 +14,11 @@ import tensorflow as tf
 from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
 
+import cProfile
+import pstats
+
 # For naming data and models
-CURRENT_VERSION = 1.10
+CURRENT_VERSION = 2.0
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -117,8 +120,8 @@ def MCTS(game, network, add_noise=False):
 
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
-            value, policy = evaluate(node_state.game, network)
-            # value, policy = random_evaluate()
+            # value, policy = evaluate(node_state.game, network)
+            value, policy = random_evaluate()
 
             if node_state.game.no_move == False:
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn])
@@ -127,6 +130,7 @@ def MCTS(game, network, add_noise=False):
                 # Generate new leaves
                 # Normalize policy values
                 policy_sum = sum(list(zip(*move_list))[0])
+                # sum(policy for policy, move in movelist)
 
                 for policy, move in move_list:
                     new_state = NodeState(game=None, move=move)
@@ -245,38 +249,33 @@ def get_move_matrix(player): # e^-3
 
             # Start the piece at the highest point it can be placed
             highest_row = get_highest_row(sim_player.board.grid)
-            starting_row = max(highest_row - len(piece.matrix), ROWS - SPAWN_ROW)
+            starting_row = max(highest_row - len(piece_dict[piece.type]), ROWS - SPAWN_ROW)
             piece.y_0 = starting_row
 
-            x = piece.x_0
-            y = piece.y_0
-            o = piece.rotation
-
-            piece.update_rotation()
-
-            next_location_queue.append((x, y, o))
+            next_location_queue.append((piece.x_0, piece.y_0, piece.rotation))
 
             # Search through the queue
             while len(next_location_queue) > 0:
                 piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
 
-                piece.update_rotation()
+                piece.coordinates = piece.get_self_coords
 
                 possible_piece_locations[piece.y_0][piece.x_0 + buffer][piece.rotation] = 1
 
+                # Check left, right, and down moves
                 for move in [[1, 0], [-1, 0], [0, 1]]:
-                    x = piece.x_0 + move[0]
-                    y = piece.y_0 + move[1]
-                    o = piece.rotation
+                    if sim_player.can_move(piece, x_offset=move[0], y_offset=move[1]): # Check this first to avoid index errors
+                        x = piece.x_0 + move[0]
+                        y = piece.y_0 + move[1]
+                        o = piece.rotation
 
-                    if sim_player.can_move(x_offset=move[0], y_offset=move[1]): # Check this first to avoid index errors
                         if (possible_piece_locations[y][x + buffer][o] == 0 
                             and (x, y, o) not in next_location_queue
                             and y >= 0): # Avoid negative indexing
 
                             next_location_queue.append((x, y, o))
 
-
+                # Check rotations 1, 2, and 3
                 for i in range(1, 4):
                     sim_player.try_wallkick(i)
 
@@ -289,16 +288,14 @@ def get_move_matrix(player): # e^-3
                         and y >= 0): # Avoid negative indexing
                         next_location_queue.append((x, y, o))
 
+                    # Reset piece locations
                     piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
-
-                    piece.update_rotation()
 
                 next_location_queue.pop(0)
 
             # Remove entries that can move downwards
             for o in range(4): # Smallest number of operations
                 sim_player.piece.rotation = o
-                sim_player.piece.update_rotation()
 
                 for x in range(COLS + buffer - 1):
                     sim_player.piece.x_0 = x - buffer
@@ -306,7 +303,8 @@ def get_move_matrix(player): # e^-3
                     for y in reversed(range(ROWS - 1)):
                         if possible_piece_locations[y][x][o] == 1:
                             sim_player.piece.y_0 = y
-                            if not sim_player.can_move(y_offset=1):
+                            piece.coordinates = piece.get_self_coords
+                            if not sim_player.can_move(piece, y_offset=1):
                                 all_moves[h][y][x][o] = 1
 
     return all_moves
@@ -317,10 +315,11 @@ def get_move_list(move_matrix, policy_matrix):
     move_list = []
 
     mask = np.multiply(move_matrix, policy_matrix)
+    # Ordered from smallest to largest
     for h in range(len(mask)):
-        for row in range(len(mask[0])):
+        for o in range(len(mask[0][0][0])):
             for col in range(len(mask[0][0])):
-                for o in range(len(mask[0][0][0])):
+                for row in range(len(mask[0])):
                     if mask[h][row][col][o] > 0:
                         move_list.append((mask[h][row][col][o],
                                           (h, col - 2, row, o) # Switch to x y z and remove buffer
@@ -329,12 +328,13 @@ def get_move_list(move_matrix, policy_matrix):
     # move_list = sorted(move_list, key=lambda tup: tup[0], reverse=True)
     return move_list
 
-# Using deepcopy:                    100 iter in 36.911 s
-# Using copy functions in classes:   100 iter in 1.658 s
-# Many small changes:                100 iter in 1.233 s
-# MCTS uses game instead of player:  100 iter in 1.577 s
-# Added large NN but optimized MCTS: 100 iter in 7.939 s
-#               Without NN:          100 iter in 0.910 s
+# Using deepcopy:                       100 iter in 36.911 s
+# Using copy functions in classes:      100 iter in 1.658 s
+# Many small changes:                   100 iter in 1.233 s
+# MCTS uses game instead of player:     100 iter in 1.577 s
+# Added large NN but optimized MCTS:    100 iter in 7.939 s
+#   Without NN:                         100 iter in 0.882 s
+#   Changed collision and added coords: 100 iter in 0.713 s
 
 ##### Neural Network #####
 
@@ -365,7 +365,7 @@ def get_move_list(move_matrix, policy_matrix):
 # Model 1.9: Fixed data augmentation pieces not being swapped correctly
 # Back in the trenches
 #
-# Model 1.10: Normalized policy values
+# Model 2.0: Normalized policy values
 
 class DataManager():
     # Handles layer sizes
@@ -643,12 +643,11 @@ def reflect_policy(policy_matrix, active_piece_size, hold_piece_size):
         1: 3,
         3: 1
     }
-    for hold in range(len(reflected_policy_matrix)):
+    for hold in range(2):
         piece_size = (active_piece_size if hold == 0 else hold_piece_size)
-
-        for row in range(len(reflected_policy_matrix[0])):
-            for col in range(len(reflected_policy_matrix[0][0])):
-                for rotation in range(len(reflected_policy_matrix[0][0][0])):
+        for rotation in range(4):
+            for col in range(COLS + 1):
+                for row in range(ROWS):
                     value = policy_matrix[hold][row][col][rotation]
                     if value > 0:
                         new_rotation = rotation
@@ -699,7 +698,9 @@ def play_game(network, NUMBER, show_game=False):
     # Each index is a player
     game_data = [[], []]
 
+    # Model 2.0 with 20 iter takes 2.579 seconds in debug mode
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
+        # with cProfile.Profile() as pr:
         move, tree = MCTS(game, network, add_noise=True)
         search_matrix = search_statistics(tree)
 
@@ -751,7 +752,11 @@ def play_game(network, NUMBER, show_game=False):
         if show_game == True:
             game.show(screen)
             pygame.display.update()
-    
+
+        # stats = pstats.Stats(pr)
+        # stats.sort_stats(pstats.SortKey.TIME)
+        # stats.print_stats(20)
+
     # After game ends update value
     winner = game.winner
     for i in range(len(game_data)):
