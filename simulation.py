@@ -4,24 +4,44 @@ import numpy as np
 import time
 
 # File for running the simulation commands
+'''Manager = DataManager()
 
-# data = json.load(open("data/1.txt", 'r'))
-
-Manager = DataManager()
-
-#create_network(Manager)
+create_network(Manager)
 NN = load_best_network()
 
-self_play_loop(NN, show_games=True)
-# pygame.init()
-# battle_networks(NN, NN, show_game=True)
-
-# play_game(NN, 0, show_game=True)
-# training_loop(Manager, NN)
+self_play_loop(NN, show_games=True)'''
 
 
 
 ### Debugging
+data = load_data(20)
+
+X = []
+
+for feature in data[0][:-2]:
+    X.append(np.expand_dims(np.array(feature), axis=0))
+
+layers = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+times = []
+
+for layer_size in layers:
+    Manager = DataManager(residual_layer_size=layer_size)
+    create_network(Manager)
+    NN = load_best_network()
+    train_network(NN, data)
+
+    START = time.time()
+    values, policies = NN(X)
+    END = time.time()
+    times.append([layer_size, END-START])
+
+fig, ax = plt.subplots()
+ax.plot(times)
+
+print(times)
+
+
+
 
 '''pygame.init()
 screen = pygame.display.set_mode( (WIDTH, HEIGHT))

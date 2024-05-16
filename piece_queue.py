@@ -1,6 +1,5 @@
 import random
-
-minos = "ZLOSIJT"
+from const import MINOS
 
 class Queue:
     def __init__(self, pieces=None):
@@ -17,6 +16,6 @@ class Queue:
 
     @staticmethod
     def generate_bag():
-        mino_list = list(minos)
+        mino_list = list(MINOS)
         random.shuffle(mino_list)
         return mino_list

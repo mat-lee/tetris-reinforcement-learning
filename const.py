@@ -1,7 +1,7 @@
 import pygame
 
 # Board Dimensions:
-ROWS = 25
+ROWS = 26
 SPAWN_ROW = 23
 GRID_ROWS = 20
 
@@ -9,14 +9,14 @@ GRID_ROWS = 20
 COLS = 10
 
 # AI settings
-MAX_ITER = 100 # 1600
+MAX_ITER = 40 # 1600
 MAX_MOVES = 512
 POLICY_SIZE = ROWS * (COLS + 1) * 4 * 2
 
 TRAINING_GAMES = 250 # 25000
 TRAINING_LOOPS = 1 # 1000
 SETS_TO_TRAIN_WITH = 20 # 20
-BATTLE_GAMES = 40 # 400
+BATTLE_GAMES = 20 # 400
 
 DIRICHLET_ALPHA = 0.15 # Roughly = 10/avg possible moves
 DIRICHLET_EXPLORATION = 0.25
@@ -68,6 +68,7 @@ STAT_SETTINGS = [
     {'text': "attack_stat", 'size': int(MINO_SIZE * 0.9 ), 'location': (HOLD_WIDTH - 1.5 * MINO_SIZE, 18 * MINO_SIZE)}
 ]
 
+MINOS = "ZLOSIJT"
 
 # Piece Matrices:
 piece_dict = {

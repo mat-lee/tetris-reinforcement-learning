@@ -120,8 +120,8 @@ def MCTS(game, network, add_noise=False):
 
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
-            # value, policy = evaluate(node_state.game, network)
-            value, policy = random_evaluate()
+            value, policy = evaluate(node_state.game, network)
+            # value, policy = random_evaluate()
 
             if node_state.game.no_move == False:
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn])
@@ -335,6 +335,7 @@ def get_move_list(move_matrix, policy_matrix):
 # Added large NN but optimized MCTS:    100 iter in 7.939 s
 #   Without NN:                         100 iter in 0.882 s
 #   Changed collision and added coords: 100 iter in 0.713 s
+# Use Model(X) instead of .predict:     100 iter in 3.506 s
 
 ##### Neural Network #####
 
@@ -365,14 +366,14 @@ def get_move_list(move_matrix, policy_matrix):
 # Model 1.9: Fixed data augmentation pieces not being swapped correctly
 # Back in the trenches
 #
-# Model 2.0: Normalized policy values
+# Model 2.0: Normalized policy values, minor performance improvement, shrunk neural network, raised iter to 20
 
 class DataManager():
     # Handles layer sizes
-    def __init__(self) -> None:
+    def __init__(self, residual_layer_size=32) -> None:
         self.features_list = {
-            "shape": [(25, 10, 1), (25, 10, 1), 
-                      (7, 7), (7, 7), 
+            "shape": [(ROWS, COLS, 1), (ROWS, COLS, 1), 
+                      (2 + PREVIEWS, len(MINOS)), (2 + PREVIEWS, len(MINOS)), 
                       (1,), (1,), 
                       (1,), (1,), 
                       (1,), (1,), 
@@ -380,6 +381,7 @@ class DataManager():
                       (1,),       
                       (1,)]       
         }
+        self.residual_layer_size = residual_layer_size
     
     def create_input_layers(self):
         # Use a convolutional layer
@@ -388,8 +390,8 @@ class DataManager():
         for i, shape in enumerate(self.features_list["shape"]):
             inputs.append(keras.Input(shape=shape))
             if shape == self.features_list["shape"][0]:
-                x = keras.layers.Conv2D(32, (3, 3), padding="valid")(inputs[i])
-                # x = keras.layers.MaxPooling2D( 
+                x = keras.layers.Conv2D(32, (3, 3), padding="same")(inputs[i])
+                x = keras.layers.MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding="valid")(x)
                 x = keras.layers.BatchNormalization()(x)
                 x = keras.layers.Activation('relu')(x)
                 flattened_inputs.append(keras.layers.Flatten()(x))
@@ -401,10 +403,10 @@ class DataManager():
     def ResidualLayer(self):
         # Uses skip connections
         def inside(x):
-            y = keras.layers.Dense(32)(x)
+            y = keras.layers.Dense(self.residual_layer_size)(x)
             y = keras.layers.BatchNormalization()(y)
             y = keras.layers.Activation('relu')(y)
-            y = keras.layers.Dense(32)(y)
+            y = keras.layers.Dense(self.residual_layer_size)(y)
             y = keras.layers.BatchNormalization()(y)
             z = keras.layers.Add()([x, y]) # Skip connection
             z = keras.layers.Activation('relu')(z)
@@ -447,13 +449,13 @@ def create_network(manager):
     x = keras.layers.Concatenate(axis=-1)(flattened_inputs)
 
     # Fully connected layer
-    x = keras.layers.Dense(32)(x)
+    x = keras.layers.Dense(manager.residual_layer_size)(x)
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.Activation('relu')(x)
 
     for _ in range(3):
         x = manager.ResidualLayer()(x)
-        #x = keras.layers.Dense(32, activation='relu')(x)
+        #x = keras.layers.Dense(16, activation='relu')(x)
 
     value_output = manager.ValueHead()(x)
     policy_output = manager.PolicyHead()(x)
@@ -462,7 +464,7 @@ def create_network(manager):
     # Loss is the sum of MSE of values and Cross entropy of policies
     model.compile(optimizer='adam', loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=[1, 1])
 
-    model.summary()
+    #model.summary()
 
     #model.fit(x=grids, y=[values, policies])
 
@@ -495,10 +497,13 @@ def evaluate(game, network):
     for feature in data:
         X.append(np.expand_dims(np.array(feature), axis=0))
 
-    values, policies = network.predict(X, verbose=0)
+    # values, policies = network.predict(X, verbose=0)
+    value, policies = network(X)
+    # Convert value from tensor to float
+    value = value.numpy()[0]
     policies = np.array(policies)
     policies = policies.reshape((2, ROWS, COLS+1, 4))
-    return values, policies.tolist()
+    return value, policies.tolist()
 
 def random_evaluate():
     # For testing how fast the MCTS is
@@ -559,16 +564,15 @@ def game_to_X(game):
         return grids
      
     def get_pieces(game):
-        minos = "ZLOSIJT"
-        piece_table = np.zeros((2, 7, 7), dtype=int)
+        piece_table = np.zeros((2, 2 + PREVIEWS, len(MINOS)), dtype=int)
         for i, player in enumerate(game.players):
             if player.piece != None: # Active piece: 0
-                piece_table[i][0][minos.index(player.piece.type)] = 1
+                piece_table[i][0][MINOS.index(player.piece.type)] = 1
             if player.held_piece != None: # Held piece: 1
-                piece_table[i][1][minos.index(player.held_piece)] = 1
+                piece_table[i][1][MINOS.index(player.held_piece)] = 1
             # Limit previews
             for j in range(min(len(player.queue.pieces), 5)): # Queue pieces: 2-6
-                piece_table[i][j + 2][minos.index(player.queue.pieces[j])] = 1
+                piece_table[i][j + 2][MINOS.index(player.queue.pieces[j])] = 1
 
         if game.turn == 1: piece_table = piece_table[::-1]
 
@@ -625,7 +629,7 @@ def reflect_pieces(piece_table):
         5: 1
     }
 
-    reflected_piece_table = np.zeros((7, 7), dtype=int)
+    reflected_piece_table = np.zeros((2 + PREVIEWS, len(MINOS)), dtype=int)
 
     for i, piece_row in enumerate(piece_table):
         if 1 in piece_row:
@@ -792,25 +796,28 @@ def make_training_set(network, num_games, show_game=False):
     with open(f"{directory_path}/{CURRENT_VERSION}.{next_set}.txt", 'w') as out_file:
         out_file.write(json_data)
 
+def load_data(last_n_sets):
+    data = []
+    # Load data from the past n games
+    # Find highest set number
+    max_set = get_highest_number('.txt')
+
+    # Get n games
+    for filename in get_filenames('.txt'):
+        number = int(filename[4:-4])
+        if number > max_set - last_n_sets:
+            # Load data
+            set = json.load(open(f"{directory_path}/{filename}", 'r'))
+            data.extend(set)
+    return data
+
 def training_loop(network, show_games=False):
     # Play a training set and train the network on past sets.
     for i in range(TRAINING_LOOPS):
         make_training_set(network, TRAINING_GAMES, show_game=show_games)
         print("Finished set")
 
-        data = []
-
-        # Load data from the past n games
-        # Find highest set number
-        max_set = get_highest_number('.txt')
-        
-        # Get n games
-        for filename in get_filenames('.txt'):
-            number = int(filename[4:-4])
-            if number > max_set - SETS_TO_TRAIN_WITH:
-                # Load data
-                set = json.load(open(f"{directory_path}/{filename}", 'r'))
-                data.extend(set)
+        data = load_data(SETS_TO_TRAIN_WITH)
     
         # Train network on a fraction of the available data
         data_batch, _ = train_test_split(data, train_size=0.1)
