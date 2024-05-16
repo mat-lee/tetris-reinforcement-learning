@@ -8,7 +8,6 @@ Manager = DataManager()
 
 # create_network(Manager)
 NN = load_best_network()
-
 self_play_loop(NN, show_games=True)
 
 # load_best_network().summary()

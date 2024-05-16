@@ -18,14 +18,13 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 2.0
+CURRENT_VERSION = 2.1
 
 # Tensorflow settings to use eager execution
 # Had the same performance
-'''
-tf.compat.v1.disable_eager_execution()
-tf.compat.v1.enable_v2_behavior ()
-'''
+# tf.compat.v1.disable_eager_execution()
+# tf.compat.v1.enable_v2_behavior()
+#tf.config.run_functions_eagerly(False)
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -376,10 +375,13 @@ def get_move_list(move_matrix, policy_matrix):
 #
 # Model 2.0: Normalized policy values, minor piece optimization improvement, major tf optimizations:
 # Increased iter, heavily enlarged network (37 million parameters)
+# Out of the trenches: some line clears
+#
+# Model 2.1: Reduced network, (grids -> cnn) + flattened inputs -> dense -> output, added continuous training
 
 class DataManager():
     # Handles layer sizes
-    def __init__(self, residual_layer_size=256) -> None:
+    def __init__(self, dense_residual_layer_size=32, conv_residual_layer_size=32) -> None:
         self.features_list = {
             "shape": [(ROWS, COLS, 1), (ROWS, COLS, 1), 
                       (2 + PREVIEWS, len(MINOS)), (2 + PREVIEWS, len(MINOS)), 
@@ -390,7 +392,8 @@ class DataManager():
                       (1,),       
                       (1,)]       
         }
-        self.residual_layer_size = residual_layer_size
+        self.dense_residual_layer_size = dense_residual_layer_size
+        self.conv_residual_layer_size = conv_residual_layer_size
     
     def create_input_layers(self):
         # Use a convolutional layer
@@ -398,24 +401,48 @@ class DataManager():
         flattened_inputs = []
         for i, shape in enumerate(self.features_list["shape"]):
             inputs.append(keras.Input(shape=shape))
+            # Grids
             if shape == self.features_list["shape"][0]:
-                x = keras.layers.Conv2D(256, (3, 3), padding="same")(inputs[i])
-                # x = keras.layers.MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding="valid")(x)
+                # Reshape grids
+                x = keras.layers.Conv2D(self.conv_residual_layer_size, (3, 3), padding="same")(inputs[i])
                 x = keras.layers.BatchNormalization()(x)
                 x = keras.layers.Activation('relu')(x)
+
+                # Residual layers
+                for _ in range(5):
+                    x = self.ResidualConvLayer()(x)
+
+                # Apply 1x1 kernel
+                x = keras.layers.Conv2D(1, (1, 1))(x)
+
                 flattened_inputs.append(keras.layers.Flatten()(x))
+            # Other inputs
             else:
                 flattened_inputs.append(keras.layers.Flatten()(inputs[i]))
         
         return inputs, flattened_inputs
 
-    def ResidualLayer(self):
-        # Uses skip connections
+    def ResidualConvLayer(self):
+        # Uses skip conections
         def inside(x):
-            y = keras.layers.Dense(self.residual_layer_size)(x)
+            y = keras.layers.Conv2D(self.conv_residual_layer_size, (3, 3), padding="same")(x)
             y = keras.layers.BatchNormalization()(y)
             y = keras.layers.Activation('relu')(y)
-            y = keras.layers.Dense(self.residual_layer_size)(y)
+            y = keras.layers.Conv2D(self.conv_residual_layer_size, (3, 3), padding="same")(y)
+            y = keras.layers.BatchNormalization()(y)
+            z = keras.layers.Add()([x, y]) # Skip connection
+            z = keras.layers.Activation('relu')(z)
+
+            return z
+        return inside
+
+    def ResidualDenseLayer(self):
+        # Uses skip connections
+        def inside(x):
+            y = keras.layers.Dense(self.dense_residual_layer_size)(x)
+            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Activation('relu')(y)
+            y = keras.layers.Dense(self.dense_residual_layer_size)(y)
             y = keras.layers.BatchNormalization()(y)
             z = keras.layers.Add()([x, y]) # Skip connection
             z = keras.layers.Activation('relu')(z)
@@ -424,10 +451,11 @@ class DataManager():
         return inside
 
     def ValueHead(self):
+        # Returns value; found at the end of the network
         def inside(x):
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dense(256)(x)
+            x = keras.layers.Dense(self.dense_residual_layer_size)(x)
             x = keras.layers.Activation('relu')(x)
             x = keras.layers.Dense(1, activation='tanh')(x)
 
@@ -435,6 +463,7 @@ class DataManager():
         return inside
 
     def PolicyHead(self):
+        # Returns policy list; found at the end of the network
         def inside(x):
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
@@ -446,9 +475,11 @@ class DataManager():
 
 def create_network(manager):
     # Creates a network with random weight
-    # Input layer: Applies a convolution to the grids and flattens all inputs
-    # -> Fully connected layer to adjust data size
-    # -> Three residual layers
+    # Inputs: Grids
+    # -> Applies a Convolution
+    # -> n residual convolutional layers
+    # -> Combine with flattened inputs into fully connected layer
+    # -> n dense residual layers
     # -> Value head and policy head
 
     # , kernel_regularizer=keras.regularizers.L2(1e-4)
@@ -457,14 +488,13 @@ def create_network(manager):
 
     x = keras.layers.Concatenate(axis=-1)(flattened_inputs)
 
-    # Fully connected layer
-    x = keras.layers.Dense(manager.residual_layer_size)(x)
+    # Fully connected layer to reshape data
+    x = keras.layers.Dense(manager.dense_residual_layer_size)(x)
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.Activation('relu')(x)
 
-    for _ in range(20):
-        x = manager.ResidualLayer()(x)
-        #x = keras.layers.Dense(16, activation='relu')(x)
+    for _ in range(1):
+        x = manager.ResidualDenseLayer()(x)
 
     value_output = manager.ValueHead()(x)
     policy_output = manager.PolicyHead()(x)
@@ -867,10 +897,10 @@ def battle_networks(NN_1, NN_2, threshold, show_game=False):
         else: wins[winner] += 1
 
         # End early if either player reaches the cutoff
-        if wins[0]/sum(wins) >= threshold:
+        if wins[0] >= threshold * BATTLE_GAMES:
             print(*wins)
             return True
-        elif wins[1]/sum(wins) > 1 - threshold:
+        elif wins[1] > (1 - threshold) * BATTLE_GAMES:
             print(*wins)
             return False
 
