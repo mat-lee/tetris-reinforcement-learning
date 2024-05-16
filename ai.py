@@ -343,6 +343,7 @@ def get_move_list(move_matrix, policy_matrix):
 #   Without NN:                         100 iter in 0.882 s
 #   Changed collision and added coords: 100 iter in 0.713 s
 # Use Model(X) instead of .predict:     100 iter in 3.506 s
+# Use Model.predict_on_batch(X):        100 iter in 1.788 s
 
 ##### Neural Network #####
 
@@ -373,11 +374,12 @@ def get_move_list(move_matrix, policy_matrix):
 # Model 1.9: Fixed data augmentation pieces not being swapped correctly
 # Back in the trenches
 #
-# Model 2.0: Normalized policy values, minor performance improvement, shrunk neural network, raised iter to 20
+# Model 2.0: Normalized policy values, minor piece optimization improvement, major tf optimizations:
+# Increased iter, heavily enlarged network (37 million parameters)
 
 class DataManager():
     # Handles layer sizes
-    def __init__(self, residual_layer_size=32) -> None:
+    def __init__(self, residual_layer_size=256) -> None:
         self.features_list = {
             "shape": [(ROWS, COLS, 1), (ROWS, COLS, 1), 
                       (2 + PREVIEWS, len(MINOS)), (2 + PREVIEWS, len(MINOS)), 
@@ -397,8 +399,8 @@ class DataManager():
         for i, shape in enumerate(self.features_list["shape"]):
             inputs.append(keras.Input(shape=shape))
             if shape == self.features_list["shape"][0]:
-                x = keras.layers.Conv2D(32, (3, 3), padding="same")(inputs[i])
-                x = keras.layers.MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding="valid")(x)
+                x = keras.layers.Conv2D(256, (3, 3), padding="same")(inputs[i])
+                # x = keras.layers.MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding="valid")(x)
                 x = keras.layers.BatchNormalization()(x)
                 x = keras.layers.Activation('relu')(x)
                 flattened_inputs.append(keras.layers.Flatten()(x))
@@ -425,7 +427,7 @@ class DataManager():
         def inside(x):
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dense(32)(x)
+            x = keras.layers.Dense(256)(x)
             x = keras.layers.Activation('relu')(x)
             x = keras.layers.Dense(1, activation='tanh')(x)
 
@@ -460,7 +462,7 @@ def create_network(manager):
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.Activation('relu')(x)
 
-    for _ in range(3):
+    for _ in range(20):
         x = manager.ResidualLayer()(x)
         #x = keras.layers.Dense(16, activation='relu')(x)
 
@@ -471,7 +473,7 @@ def create_network(manager):
     # Loss is the sum of MSE of values and Cross entropy of policies
     model.compile(optimizer='adam', loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=[1, 1])
 
-    #model.summary()
+    model.summary()
 
     #model.fit(x=grids, y=[values, policies])
 
@@ -715,7 +717,6 @@ def play_game(network, NUMBER, show_game=False):
     # Each index is a player
     game_data = [[], []]
 
-    # Model 2.0 with 20 iter takes 2.579 seconds in debug mode
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         # with cProfile.Profile() as pr:
         move, tree = MCTS(game, network, add_noise=True)
@@ -838,8 +839,9 @@ def training_loop(network, show_games=False):
         train_network(network, data_batch)
     print("Finished loop")
 
-def battle_networks(NN_1, NN_2, show_game=False):
+def battle_networks(NN_1, NN_2, threshold, show_game=False):
     # Battle two AI's with different networks.
+    # Returns true if NN_1 wins, otherwise returns false
     wins = np.zeros((2), dtype=int)
     for i in range(BATTLE_GAMES):
         if show_game == True:
@@ -864,32 +866,35 @@ def battle_networks(NN_1, NN_2, show_game=False):
             wins += 0.5
         else: wins[winner] += 1
 
-    print(*wins)
+        # End early if either player reaches the cutoff
+        if wins[0]/sum(wins) >= threshold:
+            print(*wins)
+            return True
+        elif wins[1]/sum(wins) > 1 - threshold:
+            print(*wins)
+            return False
 
-    wins = [win/sum(wins) for win in wins]
-    return wins[0], wins[1]
+    # If neither side eaches a cutoff (which shouldn't happen) return false
+    return False
 
 def self_play_loop(network, show_games=False):
     if show_games == True:
         pygame.init()
     # Given a network, generates training data, trains it, and checks if it improved.
-    old_network = network
+    best_network = network
     iter = 0
     while True:
         iter += 1
-        new_network = keras.models.clone_model(old_network)
+        challenger_network = keras.models.clone_model(best_network)
         
-        training_loop(new_network, show_games=show_games)
-
-        new_wins, old_wins = battle_networks(new_network, old_network, show_game=show_games)
-        print("Finished battle")
+        training_loop(challenger_network, show_games=show_games)
         # If new network is improved, save it and make it the default
         # Otherwise, repeat
-        if new_wins >= 0.55:
+        if battle_networks(challenger_network, best_network, 0.55, show_game=show_games):
             next_ver = get_highest_number('.keras') + 1
-            new_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
+            challenger_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
             # The new network becomes the network to beat
-            old_network = new_network
+            best_network = challenger_network
 
 def load_best_network():
     max_ver = get_highest_number('.keras')

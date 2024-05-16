@@ -6,10 +6,10 @@ import time
 # File for running the simulation commands
 Manager = DataManager()
 
-create_network(Manager)
-'''NN = load_best_network()
+# create_network(Manager)
+NN = load_best_network()
 
-self_play_loop(NN, show_games=True)'''
+self_play_loop(NN, show_games=True)
 
 # load_best_network().summary()
 
@@ -20,6 +20,10 @@ self_play_loop(NN, show_games=True)'''
 # print(tf.executing_eagerly())
 
 
+
+### The time a model takes to evaluate barely changes with number of parameters
+### Good sign: Either I can use a very large network, or I can optimzie tf (i.e. eagerly)
+
 '''data = load_data(20)
 
 X = []
@@ -27,7 +31,7 @@ X = []
 for feature in data[0][:-2]:
     X.append(np.expand_dims(np.array(feature), axis=0))
 
-layers = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+layers = [2**x for x in range(14)]
 times = []
 
 for layer_size in layers:
@@ -39,9 +43,6 @@ for layer_size in layers:
     values, policies = NN(X)
     END = time.time()
     times.append([layer_size, END-START, NN.count_params()])
-
-fig, ax = plt.subplots()
-ax.plot(times)
 
 print(times)'''
 
