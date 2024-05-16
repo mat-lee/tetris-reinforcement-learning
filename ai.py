@@ -20,6 +20,13 @@ import pstats
 # For naming data and models
 CURRENT_VERSION = 2.0
 
+# Tensorflow settings to use eager execution
+# Had the same performance
+'''
+tf.compat.v1.disable_eager_execution()
+tf.compat.v1.enable_v2_behavior ()
+'''
+
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
@@ -470,6 +477,8 @@ def create_network(manager):
 
     model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
 
+    return model
+
 def train_network(model, data):
     # Fit the model
     # Swap rows and columns
@@ -495,15 +504,19 @@ def evaluate(game, network):
     data = game_to_X(game)
     X = []
     for feature in data:
+        # expanded_feature = np.expand_dims(np.array(feature), axis=0)
+        # X.append(tf.convert_to_tensor(expanded_feature))
         X.append(np.expand_dims(np.array(feature), axis=0))
-
-    # values, policies = network.predict(X, verbose=0)
-    value, policies = network(X)
-    # Convert value from tensor to float
-    value = value.numpy()[0]
+        
+    value, policies = network.predict_on_batch(X)
     policies = np.array(policies)
     policies = policies.reshape((2, ROWS, COLS+1, 4))
     return value, policies.tolist()
+
+    # values, policies = network.predict(X, verbose=0)
+    # value, policies = network(X)
+    # Convert value from tensor to float
+    # value = value.numpy()[0]
 
 def random_evaluate():
     # For testing how fast the MCTS is
@@ -870,13 +883,13 @@ def self_play_loop(network, show_games=False):
 
         new_wins, old_wins = battle_networks(new_network, old_network, show_game=show_games)
         print("Finished battle")
+        # If new network is improved, save it and make it the default
+        # Otherwise, repeat
         if new_wins >= 0.55:
             next_ver = get_highest_number('.keras') + 1
             new_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
             # The new network becomes the network to beat
             old_network = new_network
-        else:
-            break
 
 def load_best_network():
     max_ver = get_highest_number('.keras')

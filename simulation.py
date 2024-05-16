@@ -4,17 +4,23 @@ import numpy as np
 import time
 
 # File for running the simulation commands
-'''Manager = DataManager()
+Manager = DataManager()
 
 create_network(Manager)
-NN = load_best_network()
+'''NN = load_best_network()
 
 self_play_loop(NN, show_games=True)'''
 
-
+# load_best_network().summary()
 
 ### Debugging
-data = load_data(20)
+
+
+
+# print(tf.executing_eagerly())
+
+
+'''data = load_data(20)
 
 X = []
 
@@ -26,19 +32,19 @@ times = []
 
 for layer_size in layers:
     Manager = DataManager(residual_layer_size=layer_size)
-    create_network(Manager)
-    NN = load_best_network()
+    NN = create_network(Manager)
     train_network(NN, data)
 
     START = time.time()
     values, policies = NN(X)
     END = time.time()
-    times.append([layer_size, END-START])
+    times.append([layer_size, END-START, NN.count_params()])
 
 fig, ax = plt.subplots()
 ax.plot(times)
 
-print(times)
+print(times)'''
+
 
 
 
