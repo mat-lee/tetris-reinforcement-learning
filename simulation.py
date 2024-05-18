@@ -4,9 +4,8 @@ import numpy as np
 import time
 
 # File for running the simulation commands
-Manager = DataManager()
 
-# create_network(Manager)
+create_network()
 NN = load_best_network()
 self_play_loop(NN, show_games=True)
 

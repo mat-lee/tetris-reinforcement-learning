@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import MCTS, load_best_network, search_statistics, get_piece_sizes, reflect_policy, create_network, DataManager
+from ai import MCTS, load_best_network, search_statistics, get_piece_sizes, reflect_policy, create_network
 from const import *
 from game import Game
 from mover import Mover

@@ -18,7 +18,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 2.1
+CURRENT_VERSION = 2.3
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -345,25 +345,11 @@ def get_move_list(move_matrix, policy_matrix):
 # Use Model.predict_on_batch(X):        100 iter in 1.788 s
 
 ##### Neural Network #####
-
-# Model Architecture 1.2:
+# 
 # Player orientation: Active player, other player
-# X: 
-#   (20 x 10) x 2 (Bool: Rows x Columns) Both players
-#   (7 x 7) x 2   (Active piece,  held piece, closest to furthest queue pieces)
-#                 (Bool: 1 or 0 for each piece type) Both players
-#                 (ZLOSIJT)
-#   (1) x 2       (Int: B2b) Both players
-#   (1) x 2       (Int: Combo) Both Players
-#   (1) x 2       (Int: Lines cleared) Both Players
-#   (1) x 2       (Int: Lines sent) Both Players
-#   (1)           (Bool: Turn, 0 for first, 1 for second) 
-#   (1)           (Int: Total pieces placed)
 # y:
 #   Policy: (2 x 25 x 11 x 4) = 2200 (Hold x Rows x Columns x Rotations)
 #   Value: (1)
-#
-# 508 Total input values
 # 
 # Model <1.7: In the trenches
 # 
@@ -378,91 +364,107 @@ def get_move_list(move_matrix, policy_matrix):
 # Out of the trenches: some line clears
 #
 # Model 2.1: Reduced network, (grids -> cnn) + flattened inputs -> dense -> output, added continuous training
+# Back into trenches
+#
+# Model 2.2: Completely restructured network
+# Trenches
+#
+# Model 2.3: Enlargened/lengthened network + saved image, max iter: 40 -> 80, battle games: 20 -> 40
 
-class DataManager():
-    # Handles layer sizes
-    def __init__(self, dense_residual_layer_size=32, conv_residual_layer_size=32) -> None:
-        self.features_list = {
-            "shape": [(ROWS, COLS, 1), (ROWS, COLS, 1), 
-                      (2 + PREVIEWS, len(MINOS)), (2 + PREVIEWS, len(MINOS)), 
-                      (1,), (1,), 
-                      (1,), (1,), 
-                      (1,), (1,), 
-                      (1,), (1,), 
-                      (1,),       
-                      (1,)]       
-        }
-        self.dense_residual_layer_size = dense_residual_layer_size
-        self.conv_residual_layer_size = conv_residual_layer_size
-    
-    def create_input_layers(self):
+def create_network():
+    # Creates a network with random weights
+    # 1: For each grid, apply the same neural network, and then use 1x1 kernel and concatenate
+    # 1 -> 2: For opponent grid, apply fully connected layer
+    # Concatenate active player's kernels/features with opponent's dense layer and non-player specific features
+    # Apply value head and policy head 
+
+    shapes = [(ROWS, COLS, 1), # Grid
+                (2 + PREVIEWS, len(MINOS)), # Pieces
+                (1,), # B2B
+                (1,), # Combo
+                (1,), # Lines cleared
+                (1,), # Lines sent
+                (ROWS, COLS, 1), 
+                (2 + PREVIEWS, len(MINOS)), 
+                (1,), 
+                (1,), 
+                (1,),
+                (1,),
+                (1,), # Color (Whether you had first move or not)
+                (1,)] # Total pieces placed
+
+    def create_input_layers(shapes):
         # Use a convolutional layer
         inputs = []
-        flattened_inputs = []
-        for i, shape in enumerate(self.features_list["shape"]):
-            inputs.append(keras.Input(shape=shape))
-            # Grids
-            if shape == self.features_list["shape"][0]:
-                # Reshape grids
-                x = keras.layers.Conv2D(self.conv_residual_layer_size, (3, 3), padding="same")(inputs[i])
-                x = keras.layers.BatchNormalization()(x)
-                x = keras.layers.Activation('relu')(x)
-
-                # Residual layers
-                for _ in range(5):
-                    x = self.ResidualConvLayer()(x)
-
-                # Apply 1x1 kernel
-                x = keras.layers.Conv2D(1, (1, 1))(x)
-
-                flattened_inputs.append(keras.layers.Flatten()(x))
-            # Other inputs
-            else:
-                flattened_inputs.append(keras.layers.Flatten()(inputs[i]))
+        active_grid = None
+        active_features = []
+        other_grid = None
+        other_features = []
         
-        return inputs, flattened_inputs
+        non_player_features = []
 
-    def ResidualConvLayer(self):
+        for i, shape in enumerate(shapes):
+            # Add input
+            input = keras.Input(shape=shape)
+            inputs.append(input)
+
+            num_inputs = len(shapes)
+            # Active player's features
+            if i < (num_inputs - 2) / 2: # Ignore last two inputs, and take the first half
+                if shape == shapes[0]:
+                    active_grid = input
+                else:
+                    active_features.append(keras.layers.Flatten()(input))
+            # Other player's features
+            elif i < (num_inputs - 2): # Ignore last two inputs, take remaining half
+                if shape == shapes[0]:
+                    other_grid = input
+                else:
+                    other_features.append(keras.layers.Flatten()(input))
+            # Other features
+            else:
+                non_player_features.append(keras.layers.Flatten()(input))
+        
+        return inputs, active_grid, active_features, other_grid, other_features, non_player_features
+    
+    def ResidualConvLayer(layer_size=None):
         # Uses skip conections
-        def inside(x):
-            y = keras.layers.Conv2D(self.conv_residual_layer_size, (3, 3), padding="same")(x)
-            y = keras.layers.BatchNormalization()(y)
-            y = keras.layers.Activation('relu')(y)
-            y = keras.layers.Conv2D(self.conv_residual_layer_size, (3, 3), padding="same")(y)
-            y = keras.layers.BatchNormalization()(y)
-            z = keras.layers.Add()([x, y]) # Skip connection
-            z = keras.layers.Activation('relu')(z)
+        def inside(in_1, in_2):
+            conv_1 = keras.layers.Conv2D(layer_size, (3, 3), padding="same")
+            batch_1 = keras.layers.BatchNormalization()
+            relu_1 = keras.layers.Activation('relu')
+            conv_2 = keras.layers.Conv2D(layer_size, (3, 3), padding="same")
+            batch_2 = keras.layers.BatchNormalization()
+            relu_2 = keras.layers.Activation('relu')
 
-            return z
+            out_1 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_1))))))
+            out_2 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_2))))))
+
+            out_1 = keras.layers.Add()([in_1, out_1])
+            out_2 = keras.layers.Add()([in_2, out_2])
+
+            dropout_1 = keras.layers.Dropout(0.1)
+
+            out_1 = dropout_1(out_1)
+            out_2 = dropout_1(out_2)
+
+            return out_1, out_2
         return inside
 
-    def ResidualDenseLayer(self):
-        # Uses skip connections
-        def inside(x):
-            y = keras.layers.Dense(self.dense_residual_layer_size)(x)
-            y = keras.layers.BatchNormalization()(y)
-            y = keras.layers.Activation('relu')(y)
-            y = keras.layers.Dense(self.dense_residual_layer_size)(y)
-            y = keras.layers.BatchNormalization()(y)
-            z = keras.layers.Add()([x, y]) # Skip connection
-            z = keras.layers.Activation('relu')(z)
-
-            return z
-        return inside
-
-    def ValueHead(self):
+    def ValueHead():
         # Returns value; found at the end of the network
         def inside(x):
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dense(self.dense_residual_layer_size)(x)
+            x = keras.layers.Dropout(0.25)(x) # Dropout
+            x = keras.layers.Dense(64)(x)
             x = keras.layers.Activation('relu')(x)
             x = keras.layers.Dense(1, activation='tanh')(x)
 
             return x
         return inside
 
-    def PolicyHead(self):
+    def PolicyHead():
         # Returns policy list; found at the end of the network
         def inside(x):
             x = keras.layers.BatchNormalization()(x)
@@ -473,33 +475,50 @@ class DataManager():
             return x
         return inside
 
-def create_network(manager):
-    # Creates a network with random weight
-    # Inputs: Grids
-    # -> Applies a Convolution
-    # -> n residual convolutional layers
-    # -> Combine with flattened inputs into fully connected layer
-    # -> n dense residual layers
-    # -> Value head and policy head
+    inputs, active_grid, active_features, other_grid, other_features, non_player_features = create_input_layers(shapes)
 
-    # , kernel_regularizer=keras.regularizers.L2(1e-4)
+    residual_layer_size=64
 
-    inputs, flattened_inputs = manager.create_input_layers()
+    # Start with a convolutional layer
+    # Because each grid needs the same network, use the same layers for each side
+    conv_1 = keras.layers.Conv2D(residual_layer_size, (3, 3), padding="same")
+    batch_1 = keras.layers.BatchNormalization()
+    relu_1 = keras.layers.Activation('relu')
+    
+    out_1 = relu_1(batch_1(conv_1(active_grid)))
+    out_2 = relu_1(batch_1(conv_1(other_grid)))
 
-    x = keras.layers.Concatenate(axis=-1)(flattened_inputs)
+    # Use residual blocks
+    for _ in range(10):
+        residual_layer = ResidualConvLayer(layer_size=residual_layer_size)
+        out_1, out_2 = residual_layer(out_1, out_2)
+    # Use 1x1 kernels
+    kernel_1 = keras.layers.Conv2D(4, (1, 1))
+    out_1 = kernel_1(out_1)
+    out_2 = kernel_1(out_2)
 
-    # Fully connected layer to reshape data
-    x = keras.layers.Dense(manager.dense_residual_layer_size)(x)
-    x = keras.layers.BatchNormalization()(x)
-    x = keras.layers.Activation('relu')(x)
+    # Flatten layers
+    flatten_1 = keras.layers.Flatten()
+    out_1 = flatten_1(out_1)
+    out_2 = flatten_1(out_2)
 
-    for _ in range(1):
-        x = manager.ResidualDenseLayer()(x)
+    # Concatenate with features
+    out_1 = keras.layers.Concatenate()([out_1, *active_features])
+    out_2 = keras.layers.Concatenate()([out_2, *other_features])
 
-    value_output = manager.ValueHead()(x)
-    policy_output = manager.PolicyHead()(x)
+    # Connect other player with fully connected layer
+    out_2 = keras.layers.Dense(64)(out_2)
+
+    # Concatenate with active player's layers and other features
+    out = keras.layers.Concatenate()([out_1, out_2, *non_player_features])
+
+    value_output = ValueHead()(out)
+    policy_output = PolicyHead()(out)
 
     model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+
+    keras.utils.plot_model(model, to_file=f"{directory_path}/model_{CURRENT_VERSION}_img.png", show_shapes=True)
+
     # Loss is the sum of MSE of values and Cross entropy of policies
     model.compile(optimizer='adam', loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=[1, 1])
 
@@ -653,7 +672,7 @@ def game_to_X(game):
     color = game.players[game.turn].color
     pieces_placed = game.players[game.turn].stats.pieces
 
-    return grids[0], grids[1], pieces[0], pieces[1], b2b[0], b2b[1], combo[0], combo[1], lines_cleared[0], lines_cleared[1], lines_sent[0], lines_sent[1], color, pieces_placed
+    return grids[0], pieces[0], b2b[0], combo[0], lines_cleared[0], lines_sent[0], grids[1], pieces[1], b2b[1], combo[1], lines_cleared[1], lines_sent[1], color, pieces_placed
 
 def reflect_grid(grid):
     # Return a grid flipped horizontally
@@ -776,11 +795,11 @@ def play_game(network, NUMBER, show_game=False):
                 # Flip boards and pieces
                 if active_player_idx == 1:
                     copied_data[0] = reflect_grid(copied_data[0])
-                    copied_data[2] = reflect_pieces(copied_data[2])
+                    copied_data[1] = reflect_pieces(copied_data[1])
                 
                 if other_player_idx == 1:
-                    copied_data[1] = reflect_grid(copied_data[1])
-                    copied_data[3] = reflect_pieces(copied_data[3])
+                    copied_data[6] = reflect_grid(copied_data[6])
+                    copied_data[7] = reflect_pieces(copied_data[7])
 
                 # Convert np arrays to regular lists
                 for i in range(len(copied_data)):
@@ -913,6 +932,9 @@ def self_play_loop(network, show_games=False):
     # Given a network, generates training data, trains it, and checks if it improved.
     best_network = network
     iter = 0
+
+    # If there's no better network and data exists, train and try a battle immediately
+
     while True:
         iter += 1
         challenger_network = keras.models.clone_model(best_network)
@@ -930,6 +952,8 @@ def load_best_network():
     max_ver = get_highest_number('.keras')
 
     path = f"{directory_path}/{CURRENT_VERSION}.{max_ver}.keras"
+
+    print(path)
 
     return tf.keras.models.load_model(path)
 
