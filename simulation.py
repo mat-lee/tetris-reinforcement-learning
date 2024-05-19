@@ -3,13 +3,23 @@ from ai import *
 import numpy as np
 import time
 
-# File for running the simulation commands
+### File for running the simulation commands
 
-create_network()
+
+skip_first_self_play = False
+# Create a network if none exist already
+if highest_model_ver() == -1:
+    create_network(plot_model=False)
+
 NN = load_best_network()
 self_play_loop(NN, show_games=True)
 
+
+
 # load_best_network().summary()
+
+
+
 
 ### Debugging
 
