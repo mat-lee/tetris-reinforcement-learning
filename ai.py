@@ -18,7 +18,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 2.4
+CURRENT_VERSION = 2.5
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -371,6 +371,11 @@ def get_move_list(move_matrix, policy_matrix):
 #
 # Model 2.3: Enlargened/lengthened network + saved image, max iter: 40 -> 80, battle games: 20 -> 40
 # Some line clears
+# 
+# Model 2.4: Model only uses data from the current best network
+# Awful
+#
+# Model 2.5: Adjusted dropout to 0.5
 
 def create_network(plot_model=False):
     # Creates a network with random weights
@@ -444,7 +449,7 @@ def create_network(plot_model=False):
             out_1 = keras.layers.Add()([in_1, out_1])
             out_2 = keras.layers.Add()([in_2, out_2])
 
-            dropout_1 = keras.layers.Dropout(0.1)
+            dropout_1 = keras.layers.Dropout(0.5)
 
             out_1 = dropout_1(out_1)
             out_2 = dropout_1(out_2)
@@ -457,9 +462,10 @@ def create_network(plot_model=False):
         def inside(x):
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dropout(0.25)(x) # Dropout
             x = keras.layers.Dense(64)(x)
+            x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
+            x = keras.layers.Dropout(0.5)(x) # Dropout
             x = keras.layers.Dense(1, activation='tanh')(x)
 
             return x
@@ -485,9 +491,10 @@ def create_network(plot_model=False):
     conv_1 = keras.layers.Conv2D(residual_layer_size, (3, 3), padding="same")
     batch_1 = keras.layers.BatchNormalization()
     relu_1 = keras.layers.Activation('relu')
+    dropout_1 = keras.layers.Dropout(0.5)
     
-    out_1 = relu_1(batch_1(conv_1(active_grid)))
-    out_2 = relu_1(batch_1(conv_1(other_grid)))
+    out_1 = dropout_1(relu_1(batch_1(conv_1(active_grid))))
+    out_2 = dropout_1(relu_1(batch_1(conv_1(other_grid))))
 
     # Use residual blocks
     for _ in range(10):
