@@ -9,7 +9,7 @@ GRID_ROWS = 20
 COLS = 10
 
 # AI settings
-MAX_ITER = 40 # 1600
+MAX_ITER = 100 # 1600
 MAX_MOVES = 1000
 POLICY_SIZE = ROWS * (COLS + 1) * 4 * 2
 

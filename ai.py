@@ -35,7 +35,7 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Piece rotations that result in the same board (Pick random one)
 
 # AI todo:
-# - Improve network (e.g. L2, CNNs, adjust number of weights/layers, Dropout)
+# - Improve network (L2 or Dropout, adjust number of weights/layers, find a better structure)
 # - Adjust parameters (CPuct, Dirichlet noise, Temperature)
 # - Encoding garbage into the neural network
 # - Data augmentation
@@ -375,7 +375,7 @@ def get_move_list(move_matrix, policy_matrix):
 # Model 2.4: Model only uses data from the current best network
 # Awful
 #
-# Model 2.5: Adjusted dropout to 0.5
+# Model 2.5: Adjusted dropout from 0.1 and 0.25 to 0.5
 
 def create_network(plot_model=False):
     # Creates a network with random weights
@@ -568,7 +568,7 @@ def evaluate(game, network):
         # X.append(tf.convert_to_tensor(expanded_feature))
         X.append(np.expand_dims(np.array(feature), axis=0))
         
-    value, policies = network.predict_on_batch(X)
+    value, policies = network(x=tf.constant(X))[0]
     policies = np.array(policies)
     policies = policies.reshape((2, ROWS, COLS+1, 4))
     return value, policies.tolist()

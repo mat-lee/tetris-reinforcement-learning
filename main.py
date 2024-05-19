@@ -14,6 +14,20 @@ import pstats
 NN = load_best_network()
 # NN = create_network(DataManager())
 
+
+import tensorflow as tf
+from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
+
+full_model = tf.function(lambda x: NN(x))
+full_model = full_model.get_concrete_function(
+    x=tf.TensorSpec(NN.inputs[0].shape, NN.inputs[0].dtype))
+
+# Get frozen ConcreteFunction
+frozen_func = convert_variables_to_constants_v2(full_model)
+frozen_func.graph.as_graph_def()
+
+
+
 class Main:
 
     def __init__(self):
@@ -104,7 +118,7 @@ class Main:
 
             elif game.turn == 1:
                 with cProfile.Profile() as pr:
-                    move, _ = MCTS(game, NN)
+                    move, _ = MCTS(game, frozen_func)
                 stats = pstats.Stats(pr)
                 stats.sort_stats(pstats.SortKey.TIME)
                 stats.print_stats(20)
