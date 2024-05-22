@@ -18,7 +18,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 2.5
+CURRENT_VERSION = 2.6
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -135,8 +135,7 @@ def MCTS(game, network, add_noise=False):
 
                 # Generate new leaves
                 # Normalize policy values
-                policy_sum = sum(list(zip(*move_list))[0])
-                # sum(policy for policy, move in movelist)
+                policy_sum = sum(policy for policy, move in move_list)
 
                 for policy, move in move_list:
                     new_state = NodeState(game=None, move=move)
@@ -175,6 +174,7 @@ def MCTS(game, network, add_noise=False):
             # fig.suptitle('Policy before and after dirichlet noise')
             # axs[0].plot(pre_noise_policy)
             # axs[1].plot(post_noise_policy)
+            # plt.savefig(f"{directory_path}/policy_2")
 
         # Go back up the tree and updates nodes
         # Propogate positive values for the player made the move, and negative for the other player
@@ -376,8 +376,26 @@ def get_move_list(move_matrix, policy_matrix):
 # Awful
 #
 # Model 2.5: Adjusted dropout to 0.5
+# Awful
 
-def create_network(plot_model=False):
+class Config():
+    def __init__(self, 
+                 dropout, 
+                 filters, 
+                 single_filters, 
+                 first_neurons, 
+                 head_neurons, 
+                 layers, 
+                 learning_rate):
+        self.dropout = dropout
+        self.filters = filters
+        self.single_filters = single_filters
+        self.first_neurons = first_neurons
+        self.head_neurons = head_neurons
+        self.layers = layers
+        self.learning_rate = learning_rate
+
+def create_network(config: Config, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights
     # 1: For each grid, apply the same neural network, and then use 1x1 kernel and concatenate
     # 1 -> 2: For opponent grid, apply fully connected layer
@@ -433,13 +451,13 @@ def create_network(plot_model=False):
         
         return inputs, active_grid, active_features, other_grid, other_features, non_player_features
     
-    def ResidualConvLayer(layer_size=None):
+    def ResidualConvLayer():
         # Uses skip conections
         def inside(in_1, in_2):
-            conv_1 = keras.layers.Conv2D(layer_size, (3, 3), padding="same")
+            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
             batch_1 = keras.layers.BatchNormalization()
             relu_1 = keras.layers.Activation('relu')
-            conv_2 = keras.layers.Conv2D(layer_size, (3, 3), padding="same")
+            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
             batch_2 = keras.layers.BatchNormalization()
             relu_2 = keras.layers.Activation('relu')
 
@@ -449,7 +467,7 @@ def create_network(plot_model=False):
             out_1 = keras.layers.Add()([in_1, out_1])
             out_2 = keras.layers.Add()([in_2, out_2])
 
-            dropout_1 = keras.layers.Dropout(0.5)
+            dropout_1 = keras.layers.Dropout(config.dropout)
 
             out_1 = dropout_1(out_1)
             out_2 = dropout_1(out_2)
@@ -462,10 +480,10 @@ def create_network(plot_model=False):
         def inside(x):
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dense(64)(x)
+            x = keras.layers.Dense(config.head_neurons)(x)
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dropout(0.5)(x) # Dropout
+            x = keras.layers.Dropout(config.dropout)(x) # Dropout
             x = keras.layers.Dense(1, activation='tanh')(x)
 
             return x
@@ -484,24 +502,22 @@ def create_network(plot_model=False):
 
     inputs, active_grid, active_features, other_grid, other_features, non_player_features = create_input_layers(shapes)
 
-    residual_layer_size=64
-
     # Start with a convolutional layer
     # Because each grid needs the same network, use the same layers for each side
-    conv_1 = keras.layers.Conv2D(residual_layer_size, (3, 3), padding="same")
+    conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
     batch_1 = keras.layers.BatchNormalization()
     relu_1 = keras.layers.Activation('relu')
-    dropout_1 = keras.layers.Dropout(0.5)
+    dropout_1 = keras.layers.Dropout(config.dropout)
     
     out_1 = dropout_1(relu_1(batch_1(conv_1(active_grid))))
     out_2 = dropout_1(relu_1(batch_1(conv_1(other_grid))))
 
     # Use residual blocks
-    for _ in range(10):
-        residual_layer = ResidualConvLayer(layer_size=residual_layer_size)
+    for _ in range(config.layers):
+        residual_layer = ResidualConvLayer()
         out_1, out_2 = residual_layer(out_1, out_2)
     # Use 1x1 kernels
-    kernel_1 = keras.layers.Conv2D(4, (1, 1))
+    kernel_1 = keras.layers.Conv2D(config.single_filters, (1, 1))
     out_1 = kernel_1(out_1)
     out_2 = kernel_1(out_2)
 
@@ -515,7 +531,7 @@ def create_network(plot_model=False):
     out_2 = keras.layers.Concatenate()([out_2, *other_features])
 
     # Connect other player with fully connected layer
-    out_2 = keras.layers.Dense(64)(out_2)
+    out_2 = keras.layers.Dense(config.first_neurons)(out_2)
 
     # Concatenate with active player's layers and other features
     out = keras.layers.Concatenate()([out_1, out_2, *non_player_features])
@@ -529,13 +545,13 @@ def create_network(plot_model=False):
         keras.utils.plot_model(model, to_file=f"{directory_path}/model_{CURRENT_VERSION}_img.png", show_shapes=True)
 
     # Loss is the sum of MSE of values and Cross entropy of policies
-    model.compile(optimizer='adam', loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=[1, 1])
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=[1, 1])
 
-    model.summary()
+    if show_summary: model.summary()
 
     #model.fit(x=grids, y=[values, policies])
 
-    model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
+    if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
 
     return model
 
@@ -762,8 +778,8 @@ def get_piece_sizes(player):
     return active_piece_len, hold_piece_len
 
 def play_game(network, NUMBER, show_game=False):
-    # AI plays one game against itself and generates data.
-    # Returns: grids, pieces, first move, pieces placed, value, policy
+    # AI plays one game against itself
+    # Returns the game data
     if show_game == True:
         screen = pygame.display.set_mode( (WIDTH, HEIGHT))
         pygame.display.set_caption(f'Training game {NUMBER}')
@@ -772,15 +788,15 @@ def play_game(network, NUMBER, show_game=False):
     game.setup()
 
     # Initialize data storage
-    # Each index is a player
+    # Each player's move data will be stored in their respective list
     game_data = [[], []]
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         # with cProfile.Profile() as pr:
         move, tree = MCTS(game, network, add_noise=True)
-        search_matrix = search_statistics(tree)
+        search_matrix = search_statistics(tree) # Moves that the network looked at
 
-        # Piece sizes of players are needed to find where a reflected piece ends up
+        # Piece sizes are needed to know where a reflected piece ends up
         active_piece_size, hold_piece_size = get_piece_sizes(game.players[game.turn])
         reflected_search_matrix = reflect_policy(search_matrix, active_piece_size, hold_piece_size)
 
@@ -788,9 +804,10 @@ def play_game(network, NUMBER, show_game=False):
         move_data = [*game_to_X(game)] 
 
         # Reflect each player for a total of 2 * 2 = 4 times more data
-        # Reflect grid, pieces, and policy
-        for active_player_idx in range(2): # Reflect or not active player
-            for other_player_idx in range(2):# Reflect or not other player
+        # When the other player is reflected, it shouldn't impact the piece of the active player
+        # When the active player is reflected, need to alter search stats
+        for active_player_idx in range(2): # 0: not reflected, 1: reflected
+            for other_player_idx in range(2):
                 # Copy move data
                 copied_data = []
                 for feature in move_data:
@@ -885,14 +902,14 @@ def load_data(model_version_to_load, last_n_sets):
             data.extend(set)
     return data
 
-def battle_networks(NN_1, NN_2, threshold, show_game=False):
+def battle_networks(NN_1, NN_2, threshold, network_1_title='Network 1', network_2_title='Network 2', show_game=False):
     # Battle two AI's with different networks.
     # Returns true if NN_1 wins, otherwise returns false
     wins = np.zeros((2), dtype=int)
     for i in range(BATTLE_GAMES):
         if show_game == True:
             screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-            pygame.display.set_caption(f'Battle game: {wins[0]} to {wins[1]}')
+            pygame.display.set_caption(f'{network_1_title} {wins[0]} vs {wins[1]} {network_2_title}')
 
         game = Game()
         game.setup()
@@ -922,6 +939,35 @@ def battle_networks(NN_1, NN_2, threshold, show_game=False):
 
     # If neither side eaches a cutoff (which shouldn't happen) return false
     return False
+
+def battle_networks_win_loss(NN_1, NN_2, network_1_title='Network 1', network_2_title='Network 2', show_game=False):
+    # Battle two AI's with different networks, and returns the wins and losses for each network
+    wins = np.zeros((2), dtype=int)
+    for i in range(BATTLE_GAMES):
+        if show_game == True:
+            screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+            pygame.display.set_caption(f'{network_1_title} {wins[0]} vs {wins[1]} {network_2_title}')
+
+        game = Game()
+        game.setup()
+        while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
+            if game.turn == 0:
+                move, _ = MCTS(game, NN_1)    
+            elif game.turn == 1:
+                move, _ = MCTS(game, NN_2)
+            game.make_move(move)
+
+            if show_game == True:
+                game.show(screen)
+                pygame.display.update()
+
+        winner = game.winner
+        if winner == -1:
+            wins += 0.5
+        else: wins[winner] += 1
+
+    print(network_1_title, wins, network_2_title)
+    return wins
 
 def self_play_loop(network, show_games=False):
     if show_games == True:
