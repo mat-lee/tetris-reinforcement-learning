@@ -49,7 +49,7 @@ class Main:
                                 game.human_player.move_down()
                                 mover.start_down()
                             elif event.key == k_hard_drop:
-                                move = (0, 
+                                move = (game.human_player.piece.type, 
                                         game.human_player.piece.x_0,
                                         game.human_player.piece.y_0,
                                         game.human_player.piece.rotation)
@@ -103,13 +103,13 @@ class Main:
                             mover.sd_counter += (1 / SDF) / 1000
 
             elif game.turn == 1:
-                with cProfile.Profile() as pr:
-                    move, _ = MCTS(game, NN)
-                stats = pstats.Stats(pr)
-                stats.sort_stats(pstats.SortKey.TIME)
-                stats.print_stats(20)
+                # with cProfile.Profile() as pr:
+                #     move, _ = MCTS(game, NN)
+                # stats = pstats.Stats(pr)
+                # stats.sort_stats(pstats.SortKey.TIME)
+                # stats.print_stats(20)
 
-                # move, _ = MCTS(game, NN)
+                move, _ = MCTS(game, NN)
                 game.make_move(move=move)
 
             pygame.display.update()

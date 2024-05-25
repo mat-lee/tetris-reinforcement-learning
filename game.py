@@ -30,7 +30,8 @@ class Game:
         player = self.players[self.turn]
 
         if player.game_over == False:
-            if move[0] == 1:
+            # If the piece it wants to place is not the same as the active piece, hold
+            if move[0] != player.piece.type:
                 player.hold_piece()
             player.force_place_piece(move[1], move[2], move[3])
 

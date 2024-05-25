@@ -257,6 +257,7 @@ class Player:
         new_player.held_piece = self.held_piece
         new_player.garbage_to_receive = self.garbage_to_receive[:]
         new_player.color = self.color
+        new_player.draw_coords = self.draw_coords
 
         return new_player
 
