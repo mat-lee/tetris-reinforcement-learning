@@ -18,7 +18,6 @@ if highest_model_ver() == -1:
 self_play_loop(show_games=True)
 
 
-
 # load_best_network().summary()
 
 
@@ -30,7 +29,7 @@ self_play_loop(show_games=True)
 
 
 
-data = load_data(0, 10)
+#data = load_data(0, 10)
 # print(len(data))
 
 ## Grid search battling different parameters

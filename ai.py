@@ -19,7 +19,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 3.1
+CURRENT_VERSION = 3.3
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -157,14 +157,15 @@ def MCTS(game, network, add_noise=False):
         
         # Node is terminal
         # Update weights based on winner
+        # Range values from 0 to 1 so that value avg will be 0.5
         else: 
             winner = node_state.game.winner
             if winner == 0: # AI Starts
                 value = 1
             elif winner == 1: # Opponent
-                value = -1
-            else:
                 value = 0
+            else: # Draw
+                value = 0.5
 
         # If root node, add exploration noise to children
         if (add_noise == True and node.is_root()):
@@ -186,7 +187,7 @@ def MCTS(game, network, add_noise=False):
             # fig.suptitle('Policy before and after dirichlet noise')
             # axs[0].plot(pre_noise_policy)
             # axs[1].plot(post_noise_policy)
-            # plt.savefig(f"{directory_path}/policy_3_1_2")
+            # plt.savefig(f"{directory_path}/policy_3_3_1")
             # print("saved")
 
         # Go back up the tree and updates nodes
@@ -197,13 +198,13 @@ def MCTS(game, network, add_noise=False):
             node_state = node.data
             node_state.visit_count += 1
             # Revert value if the other player just went
-            node_state.value_sum += (value if node_state.game.turn == final_node_turn else -value)
+            node_state.value_sum += (value if node_state.game.turn == final_node_turn else 1-value)
             node_state.value_avg = node_state.value_sum / node_state.visit_count
 
             upwards_id = node.predecessor(tree.identifier)
             node = tree.get_node(upwards_id)
 
-    # print(MAX_DEPTH, total_branch//number_branch)
+    #print(MAX_DEPTH, total_branch//number_branch)
 
     # Choose a move based on the number of visits
     root = tree.get_node("root")
@@ -225,7 +226,7 @@ def MCTS(game, network, add_noise=False):
     fig.suptitle('N Compared to policy')
     axs[0].plot(post_noise_policy)
     axs[1].plot(root_child_n_list)
-    plt.savefig(f"{directory_path}/root_n_{MAX_ITER}_depth_3_1_2")
+    plt.savefig(f"{directory_path}/root_n_{MAX_ITER}_depth_3_3_1")
     print("saved")
 
     move = tree.get_node(max_id).data.move
@@ -268,7 +269,8 @@ def get_move_matrix(player):
 
     for h in range(2): # Look through current piece and held piece
         if h == 0:
-            piece_1 = sim_player.piece.type
+            if sim_player.piece != None:
+                piece_1 = sim_player.piece.type
         if h == 1:
             sim_player.hold_piece()
             if sim_player.piece != None:
@@ -831,6 +833,9 @@ def play_game(network, NUMBER, show_game=False):
         screen = pygame.display.set_mode( (WIDTH, HEIGHT))
         pygame.display.set_caption(f'Training game {NUMBER}')
 
+        for event in pygame.event.get():
+            pass
+
     game = Game()
     game.setup()
 
@@ -910,12 +915,12 @@ def play_game(network, NUMBER, show_game=False):
     winner = game.winner
     for i in range(len(game_data)):
         if winner == -1: # Draw
-            value = 0
+            value = 0.5
         # Set values to 1 and -1
         elif winner == i:
             value = 1
         else:
-            value = -1
+            value = 0
         # Insert value before policy
         for j in range(len(game_data[i])):
             game_data[i][j].insert(-1, value)
@@ -929,7 +934,7 @@ def play_game(network, NUMBER, show_game=False):
 def make_training_set(network, model_version_to_load, num_games, show_game=False):
     # Creates a dataset of several AI games.
     series_data = []
-    for i in range(num_games):
+    for i in range(1, num_games + 1):
         data = play_game(network, i, show_game=show_game)
         series_data.extend(data)
 
@@ -1064,6 +1069,8 @@ def self_play_loop(show_games=False):
             # Challenger network becomes next highest version
             next_ver = highest_model_ver() + 1
             challenger_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
+            # The new network becomes the network to beat
+            best_network = challenger_network
 
 def load_best_network():
     max_ver = highest_model_ver()
@@ -1122,28 +1129,32 @@ def get_filenames(extension):
     return filenames
 
 # Debug Functions
-'''
+
 if __name__ == "__main__":
     def visualize_piece_placements(game, moves):
         pygame.init()
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption('Tetris')
+        # Need to iterate through pygame events to initialize screen
+        for event in pygame.event.get():
+            pass
+
         for policy, move in moves:
             game_copy = game.copy()
             game_copy.make_move(move)
 
-            while True:
-                game_copy.show(screen)
-                pygame.display.update()
-            # time.sleep(1)
+            game_copy.show(screen)
+            pygame.display.update()
+
+            time.sleep(0.3)
 
     game = Game()
     game.setup()
     moves = get_move_list(get_move_matrix(game.players[game.turn]), np.ones(shape=POLICY_SHAPE))
     visualize_piece_placements(game, moves)
 
-for player in game.players:
-    pass'''
+    for player in game.players:
+        pass
 # pygame.init()
 # loaded_model = load_best_network()
 # clone_model = keras.models.clone_model(loaded_model)
