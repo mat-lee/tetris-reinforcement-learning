@@ -555,7 +555,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
             x = keras.layers.Dropout(config.dropout)(x) # Dropout
-            x = keras.layers.Dense(1, activation='tanh')(x)
+            x = keras.layers.Dense(1, activation='sigmoid')(x)
 
             return x
         return inside
@@ -566,7 +566,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
             # Generate probability distribution
-            x = keras.layers.Dense(POLICY_SIZE, activation="sigmoid")(x)
+            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
 
             return x
         return inside
