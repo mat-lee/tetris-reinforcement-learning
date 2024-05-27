@@ -19,7 +19,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 3.3
+CURRENT_VERSION = 3.5
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -88,8 +88,11 @@ def MCTS(game, network, add_noise=False):
     tree.create_node(identifier="root", data=initial_state)
 
     MAX_DEPTH = 0
+    iter = 0
 
-    for _ in range(MAX_ITER):
+    while iter < MAX_ITER:
+        iter += 1
+
         # Begin at the root node
         node = tree.get_node("root")
         node_state = node.data
@@ -102,23 +105,37 @@ def MCTS(game, network, add_noise=False):
             child_ids = node.successors(tree.identifier)
             max_child_score = -1
             max_child_id = None
-            sum_visits = 0
+            parent_visits = node.data.visit_count
 
             number_branch += 1
+            
+            Qs = []
+            Us = []
 
             for child_id in child_ids:
-
+                
                 total_branch += 1
 
-                sum_visits += tree.get_node(child_id).data.visit_count
-            for child_id in child_ids:
                 # For each child calculate a score
                 # Polynomial upper confidence trees (PUCT)
                 child_data = tree.get_node(child_id).data
-                child_score = child_data.value_avg + child_data.policy*math.sqrt(sum_visits)/(1+child_data.visit_count)
+                child_score = child_data.value_avg + CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
+
+                Qs.append(child_data.value_avg)
+                Us.append(child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count))
+
                 if child_score >= max_child_score:
                     max_child_score = child_score
                     max_child_id = child_id
+            
+            # if iter == 40:
+            #     fig, axs = plt.subplots(3)
+            #     fig.suptitle('Q (value) vs U (policy) vs Q+U')
+            #     axs[0].plot(Qs)
+            #     axs[1].plot(Us)
+            #     axs[2].plot(np.array(Qs)+np.array(Us))
+            #     plt.savefig(f"{directory_path}/UCB_{iter}_depth_3_4_2")
+            #     print("saved")
             
             # Pick the node with the highest score
             node = tree.get_node(max_child_id)
@@ -187,7 +204,7 @@ def MCTS(game, network, add_noise=False):
             # fig.suptitle('Policy before and after dirichlet noise')
             # axs[0].plot(pre_noise_policy)
             # axs[1].plot(post_noise_policy)
-            # plt.savefig(f"{directory_path}/policy_3_3_1")
+            # plt.savefig(f"{directory_path}/policy_4_2_1")
             # print("saved")
 
         # Go back up the tree and updates nodes
@@ -203,6 +220,12 @@ def MCTS(game, network, add_noise=False):
 
             upwards_id = node.predecessor(tree.identifier)
             node = tree.get_node(upwards_id)
+
+        # Repeat for root node
+        node_state = node.data
+        node_state.visit_count += 1
+        node_state.value_sum += (value if node_state.game.turn == final_node_turn else 1-value)
+        node_state.value_avg = node_state.value_sum / node_state.visit_count
 
     #print(MAX_DEPTH, total_branch//number_branch)
 
@@ -222,12 +245,12 @@ def MCTS(game, network, add_noise=False):
             max_n = root_child_n
             max_id = root_child.identifier
 
-    fig, axs = plt.subplots(2)
-    fig.suptitle('N Compared to policy')
-    axs[0].plot(post_noise_policy)
-    axs[1].plot(root_child_n_list)
-    plt.savefig(f"{directory_path}/root_n_{MAX_ITER}_depth_3_3_1")
-    print("saved")
+    # fig, axs = plt.subplots(2)
+    # fig.suptitle('N Compared to policy')
+    # axs[0].plot(post_noise_policy)
+    # axs[1].plot(root_child_n_list)
+    # plt.savefig(f"{directory_path}/root_n_{MAX_ITER}_depth_3_4_2")
+    # print("saved")
 
     move = tree.get_node(max_id).data.move
 
@@ -633,9 +656,10 @@ def evaluate(game, network):
         X.append(np.expand_dims(np.array(feature), axis=0))
         
     value, policies = network.predict_on_batch(X)
+    # Both value and policies are returned as arrays
     policies = np.array(policies)
     policies = policies.reshape(POLICY_SHAPE)
-    return value, policies.tolist()
+    return value[0][0], policies.tolist()
 
     # values, policies = network.predict(X, verbose=0)
     # value, policies = network(X)
