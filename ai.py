@@ -128,14 +128,14 @@ def MCTS(game, network, add_noise=False):
                     max_child_score = child_score
                     max_child_id = child_id
             
-            if iter == 80:
-                fig, axs = plt.subplots(3)
-                fig.suptitle('Q (value) vs U (policy) vs Q+U')
-                axs[0].plot(Qs)
-                axs[1].plot(Us)
-                axs[2].plot(np.array(Qs)+np.array(Us))
-                plt.savefig(f"{directory_path}/UCB_{iter}_depth_3_5_0")
-                print("saved")
+            # if iter == 80:
+            #     fig, axs = plt.subplots(3)
+            #     fig.suptitle('Q (value) vs U (policy) vs Q+U')
+            #     axs[0].plot(Qs)
+            #     axs[1].plot(Us)
+            #     axs[2].plot(np.array(Qs)+np.array(Us))
+            #     plt.savefig(f"{directory_path}/UCB_{iter}_depth_3_5_0")
+            #     print("saved")
             
             # Pick the node with the highest score
             node = tree.get_node(max_child_id)
@@ -566,7 +566,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
             # Generate probability distribution
-            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+            x = keras.layers.Dense(POLICY_SIZE, activation="sigmoid")(x)
 
             return x
         return inside
