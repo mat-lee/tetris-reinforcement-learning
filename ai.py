@@ -19,7 +19,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 3.5
+CURRENT_VERSION = 3.6
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -128,14 +128,14 @@ def MCTS(game, network, add_noise=False):
                     max_child_score = child_score
                     max_child_id = child_id
             
-            # if iter == 40:
-            #     fig, axs = plt.subplots(3)
-            #     fig.suptitle('Q (value) vs U (policy) vs Q+U')
-            #     axs[0].plot(Qs)
-            #     axs[1].plot(Us)
-            #     axs[2].plot(np.array(Qs)+np.array(Us))
-            #     plt.savefig(f"{directory_path}/UCB_{iter}_depth_3_4_2")
-            #     print("saved")
+            if iter == 80:
+                fig, axs = plt.subplots(3)
+                fig.suptitle('Q (value) vs U (policy) vs Q+U')
+                axs[0].plot(Qs)
+                axs[1].plot(Us)
+                axs[2].plot(np.array(Qs)+np.array(Us))
+                plt.savefig(f"{directory_path}/UCB_{iter}_depth_3_5_0")
+                print("saved")
             
             # Pick the node with the highest score
             node = tree.get_node(max_child_id)
