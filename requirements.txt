@@ -1,1 +1,8 @@
-
+keras==3.3.2
+matplotlib==3.8.2
+matplotlib==3.8.4
+numpy==1.24.2
+pygame==2.5.2
+scikit_learn==1.4.2
+tensorflow==2.16.1
+treelib==1.7.0
