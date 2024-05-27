@@ -1033,6 +1033,9 @@ def battle_networks_win_loss(NN_1, NN_2, network_1_title='Network 1', network_2_
             screen = pygame.display.set_mode( (WIDTH, HEIGHT))
             pygame.display.set_caption(f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}')
 
+            for event in pygame.event.get():
+                pass
+
         game = Game()
         game.setup()
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
