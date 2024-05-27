@@ -179,6 +179,10 @@ class Player:
         
         rows_cleared = len(cleared_rows)
 
+        # If there are any rows cleared, sort the list so they don't overlap
+        if len(cleared_rows) > 0:
+            cleared_rows.sort()
+
         # Move rows down one and make a empty line at the top
         for cleared_row in cleared_rows:
             for row in range(cleared_row)[::-1]:
@@ -257,6 +261,7 @@ class Player:
         new_player.held_piece = self.held_piece
         new_player.garbage_to_receive = self.garbage_to_receive[:]
         new_player.color = self.color
+        new_player.draw_coords = self.draw_coords
 
         return new_player
 

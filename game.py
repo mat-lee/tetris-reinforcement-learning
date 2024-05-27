@@ -30,7 +30,12 @@ class Game:
         player = self.players[self.turn]
 
         if player.game_over == False:
-            if move[0] == 1:
+            # If the player doesn't have an active piece, the ai wants it to hold
+            if player.piece == None:
+                player.hold_piece()
+
+            # If the piece it wants to place is not the same as the active piece, hold
+            elif move[0] != player.piece.type:
                 player.hold_piece()
             player.force_place_piece(move[1], move[2], move[3])
 

@@ -34,6 +34,7 @@ class Piece:
         new_piece.x_0 = self.x_0
         new_piece.y_0 = self.y_0
         new_piece.rotation = self.rotation
+        new_piece.coordinates = self.coordinates
         
         return new_piece
 

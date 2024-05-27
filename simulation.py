@@ -15,9 +15,7 @@ DefaultConfig = Config(0.5, 16, 4, 16, 16, 10, 0.001)
 if highest_model_ver() == -1:
     create_network(DefaultConfig, save_network=True, plot_model=False)
 
-NN = load_best_network()
-self_play_loop(NN, show_games=True)
-
+self_play_loop(show_games=True)
 
 
 # load_best_network().summary()
@@ -31,7 +29,7 @@ self_play_loop(NN, show_games=True)
 
 
 
-data = load_data(0, 10)
+#data = load_data(0, 10)
 # print(len(data))
 
 ## Grid search battling different parameters

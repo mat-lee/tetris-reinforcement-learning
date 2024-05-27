@@ -1,4 +1,5 @@
 import pygame
+from numpy import prod
 
 # Board Dimensions:
 ROWS = 26
@@ -9,17 +10,17 @@ GRID_ROWS = 20
 COLS = 10
 
 # AI settings
-MAX_ITER = 160 # 1600
+MAX_ITER = 80 # 1600
 MAX_MOVES = 1000
-POLICY_SIZE = ROWS * (COLS + 1) * 4 * 2
 
 TRAINING_GAMES = 100 # 25000
 TRAINING_LOOPS = 1 # 1000
 SETS_TO_TRAIN_WITH = 20 # 20
 BATTLE_GAMES = 40 # 400
 
-DIRICHLET_ALPHA = 0.15 # Roughly = 10/avg possible moves
+DIRICHLET_ALPHA = 0.2 # Roughly = 10/avg possible moves
 DIRICHLET_EXPLORATION = 0.25
+CPUCT = 2
 
 # Controls:
 k_move_left =   pygame.K_LEFT
@@ -71,6 +72,52 @@ STAT_SETTINGS = [
 MINOS = "ZLOSIJT"
 
 # Piece Matrices:
+# For encoding AI information
+policy_pieces = {
+    "O": [0],
+    "Z": [0, 1],
+    "S": [0, 1],
+    "I": [0, 1],
+    "L": [0, 1, 2, 3],
+    "J": [0, 1, 2, 3],
+    "T": [0, 1, 2, 3]
+}
+
+policy_index_to_piece = {
+    0: ["O", 0],
+    1: ["Z", 0],
+    2: ["Z", 1],
+    3: ["S", 0],
+    4: ["S", 1],
+    5: ["I", 0],
+    6: ["I", 1],
+    7: ["L", 0],
+    8: ["L", 1],
+    9: ["L", 2],
+    10: ["L", 3],
+    11: ["J", 0],
+    12: ["J", 1],
+    13: ["J", 2],
+    14: ["J", 3],
+    15: ["T", 0],
+    16: ["T", 1],
+    17: ["T", 2],
+    18: ["T", 3],
+}
+
+POLICY_SHAPE = (len(policy_index_to_piece), ROWS - 1, COLS + 1)
+POLICY_SIZE = prod(POLICY_SHAPE)
+
+policy_piece_to_index = {
+    "O": {0: 0},
+    "Z": {0: 1, 1: 2},
+    "S": {0: 3, 1: 4},
+    "I": {0: 5, 1: 6},
+    "L": {0: 7, 1: 8, 2: 9, 3: 10},
+    "J": {0: 11, 1: 12, 2: 13, 3: 14},
+    "T": {0: 15, 1: 16, 2: 17, 3: 18},
+}
+
 piece_dict = {
     "Z": [
         [1, 1, 0],
@@ -109,6 +156,7 @@ piece_dict = {
     ]
 }
 
+# Returns the coordinates of each piece/rotation at (0, 0)
 mino_coords_dict = {
     "Z": {
         0: [[0, 0], [1, 0], [1, 1], [2, 1]],
