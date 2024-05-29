@@ -20,7 +20,7 @@ BATTLE_GAMES = 40 # 400
 
 DIRICHLET_ALPHA = 0.2 # Roughly = 10/avg possible moves
 DIRICHLET_EXPLORATION = 0.25
-CPUCT = 2
+CPUCT = 3
 
 # Controls:
 k_move_left =   pygame.K_LEFT

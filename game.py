@@ -29,6 +29,8 @@ class Game:
     def make_move(self, move, add_bag=True, add_history=True, send_garbage=True):
         player = self.players[self.turn]
 
+
+        # Move: (Piece type, col, row, rotation)
         if player.game_over == False:
             # If the player doesn't have an active piece, the ai wants it to hold
             if player.piece == None:

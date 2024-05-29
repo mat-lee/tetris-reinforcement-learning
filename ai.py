@@ -19,7 +19,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 3.6
+CURRENT_VERSION = 3.7
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -128,13 +128,13 @@ def MCTS(game, network, add_noise=False):
                     max_child_score = child_score
                     max_child_id = child_id
             
-            # if iter == 80:
+            # if iter == 10:
             #     fig, axs = plt.subplots(3)
             #     fig.suptitle('Q (value) vs U (policy) vs Q+U')
             #     axs[0].plot(Qs)
             #     axs[1].plot(Us)
             #     axs[2].plot(np.array(Qs)+np.array(Us))
-            #     plt.savefig(f"{directory_path}/UCB_{iter}_depth_3_5_0")
+            #     plt.savefig(f"{directory_path}/UCB_model_3_6_4_depth_{iter}")
             #     print("saved")
             
             # Pick the node with the highest score
@@ -712,54 +712,56 @@ def simplify_grid(grid):
                 grid[row][col] = 1
     return grid
 
+# Methods for getting game data
+# All of them orient the info in the perspective of the active player
+def get_grids(game):
+    grids = [[], []]
+
+    for i, player in enumerate(game.players):
+        grids[i] = [x[:] for x in player.board.grid] # Copy
+        simplify_grid(grids[i])
+    
+    if game.turn == 1: grids = grids[::-1]
+    
+    return grids
+    
+def get_pieces(game):
+    piece_table = np.zeros((2, 2 + PREVIEWS, len(MINOS)), dtype=int)
+    for i, player in enumerate(game.players):
+        if player.piece != None: # Active piece: 0
+            piece_table[i][0][MINOS.index(player.piece.type)] = 1
+        if player.held_piece != None: # Held piece: 1
+            piece_table[i][1][MINOS.index(player.held_piece)] = 1
+        # Limit previews
+        for j in range(min(len(player.queue.pieces), 5)): # Queue pieces: 2-6
+            piece_table[i][j + 2][MINOS.index(player.queue.pieces[j])] = 1
+
+    if game.turn == 1: piece_table = piece_table[::-1]
+
+    return piece_table
+
+def get_b2b(game):
+    b2b = [player.stats.b2b for player in game.players]
+    if game.turn == 1: b2b = b2b[::-1]
+    return b2b
+
+def get_combo(game):
+    combo = [player.stats.combo for player in game.players]
+    if game.turn == 1: combo = combo[::-1]
+    return combo
+
+def get_lines_cleared(game):
+    lines_cleared = [player.stats.lines_cleared for player in game.players]
+    if game.turn == 1: lines_cleared = lines_cleared[::-1]
+    return lines_cleared
+
+def get_lines_sent(game):
+    lines_sent = [player.stats.lines_sent for player in game.players]
+    if game.turn == 1: lines_sent = lines_sent[::-1]
+    return lines_sent
+
 def game_to_X(game):
     # Returns game information for the network.
-    def get_grids(game):
-        grids = [[], []]
-
-        for i, player in enumerate(game.players):
-            grids[i] = [x[:] for x in player.board.grid] # Copy
-            simplify_grid(grids[i])
-        
-        if game.turn == 1: grids = grids[::-1]
-        
-        return grids
-     
-    def get_pieces(game):
-        piece_table = np.zeros((2, 2 + PREVIEWS, len(MINOS)), dtype=int)
-        for i, player in enumerate(game.players):
-            if player.piece != None: # Active piece: 0
-                piece_table[i][0][MINOS.index(player.piece.type)] = 1
-            if player.held_piece != None: # Held piece: 1
-                piece_table[i][1][MINOS.index(player.held_piece)] = 1
-            # Limit previews
-            for j in range(min(len(player.queue.pieces), 5)): # Queue pieces: 2-6
-                piece_table[i][j + 2][MINOS.index(player.queue.pieces[j])] = 1
-
-        if game.turn == 1: piece_table = piece_table[::-1]
-
-        return piece_table
-    
-    def get_b2b(game):
-        b2b = [player.stats.b2b for player in game.players]
-        if game.turn == 1: b2b = b2b[::-1]
-        return b2b
-    
-    def get_combo(game):
-        combo = [player.stats.combo for player in game.players]
-        if game.turn == 1: combo = combo[::-1]
-        return combo
-
-    def get_lines_cleared(game):
-        lines_cleared = [player.stats.lines_cleared for player in game.players]
-        if game.turn == 1: lines_cleared = lines_cleared[::-1]
-        return lines_cleared
-
-    def get_lines_sent(game):
-        lines_sent = [player.stats.lines_sent for player in game.players]
-        if game.turn == 1: lines_sent = lines_sent[::-1]
-        return lines_sent
-
     # Orient all info in perspective to the current player
     grids = get_grids(game)
     pieces = get_pieces(game)
@@ -784,7 +786,7 @@ def reflect_pieces(piece_table):
     # S -> Z: 3 -> 0
     # L -> J: 1 -> 5
     # J -> L: 5 -> 1
-    swap_dict = {
+    piece_swap_dict = {
         0: 3,
         3: 0,
         1: 5,
@@ -796,14 +798,14 @@ def reflect_pieces(piece_table):
     for i, piece_row in enumerate(piece_table):
         if 1 in piece_row:
             piece_index = piece_row.tolist().index(1) # Index of the piece in ZLOSIJT
-            if piece_index in swap_dict:
+            if piece_index in piece_swap_dict:
                 # Swap piece if swappable
-                piece_index = swap_dict[piece_index]
+                piece_index = piece_swap_dict[piece_index]
             reflected_piece_table[i][piece_index] = 1
     
     return reflected_piece_table
 
-def reflect_policy(policy_matrix, active_piece_size, hold_piece_size):
+def reflect_policy_OLD(policy_matrix, active_piece_size, hold_piece_size):
     reflected_policy_matrix = np.zeros((2, ROWS, COLS + 1, 4))
     rotation_dict = {
         1: 3,
@@ -832,6 +834,68 @@ def reflect_policy(policy_matrix, active_piece_size, hold_piece_size):
                         new_col += 2
 
                         reflected_policy_matrix[hold][row][new_col][new_rotation] = value
+    
+    return reflected_policy_matrix.tolist()
+
+def reflect_policy(policy_matrix):
+    reflected_policy_matrix = np.zeros(POLICY_SHAPE)
+    rotation_dict = {
+        1: 3,
+        3: 1
+    }
+
+    piece_swap_dict = {
+        "Z": "S",
+        "S": "Z",
+        "L": "J",
+        "J": "L"
+    }
+
+    for policy_index in range(POLICY_SHAPE[0]):
+        piece, rotation = policy_index_to_piece[policy_index]
+
+        # Save the piece size
+        piece_size = len(piece_dict[piece])
+
+        # Swap pieces that aren't the same as their mirrors
+        new_piece = piece
+        if new_piece in piece_swap_dict:
+            new_piece = piece_swap_dict[new_piece]
+
+        # Swap rotations that aren't the same as their mirrors
+        new_rotation = rotation
+        if new_rotation in rotation_dict:
+            new_rotation = rotation_dict[new_rotation]
+        
+        # If the new rotation is a redunant shape, adjust where the piece goes
+        post_col_adjustment = 0
+        if new_piece in ["Z", "S", "I"]:
+            # If the new rotation is 3, it needs to be shifted back after being flipped
+            if new_rotation == 3:
+                post_col_adjustment = -1
+                new_rotation -= 2
+
+        new_policy_index = policy_piece_to_index[new_piece][new_rotation]
+        for col in range(POLICY_SHAPE[2]):
+            for row in range(POLICY_SHAPE[1]):
+                value = policy_matrix[policy_index][row][col]
+                if value > 0:
+                    new_row = row
+                    new_col = col
+
+                    # Remove buffer
+                    new_col += -2
+
+                    # Flip column
+                    new_col = 10 - new_col - piece_size # 9 - col - piece_size + 1
+                    
+                    # Add back buffer
+                    new_col += 2
+
+                    # Add column adjustment if needed
+                    new_col += post_col_adjustment
+
+                    reflected_policy_matrix[new_policy_index][new_row][new_col] = value
     
     return reflected_policy_matrix.tolist()
 
@@ -871,10 +935,9 @@ def play_game(network, NUMBER, show_game=False):
         # with cProfile.Profile() as pr:
         move, tree = MCTS(game, network, add_noise=True)
         search_matrix = search_statistics(tree) # Moves that the network looked at
-        '''
+        
         # Piece sizes are needed to know where a reflected piece ends up
-        active_piece_size, hold_piece_size = get_piece_sizes(game.players[game.turn])
-        reflected_search_matrix = reflect_policy(search_matrix, active_piece_size, hold_piece_size)
+        reflected_search_matrix = reflect_policy(search_matrix)
 
         # Get data
         move_data = [*game_to_X(game)] 
@@ -914,16 +977,16 @@ def play_game(network, NUMBER, show_game=False):
                 else:
                     copied_data.append(reflected_search_matrix)
 
-                game_data[game.turn].append(copied_data)    '''
+                game_data[game.turn].append(copied_data)
 
-        move_data = [*game_to_X(game)]
-        # Convert to regular lists
-        for i in range(len(move_data)):
-            if isinstance(move_data[i], np.ndarray):
-                move_data[i] = move_data[i].tolist()
+        # move_data = [*game_to_X(game)]
+        # # Convert to regular lists
+        # for i in range(len(move_data)):
+        #     if isinstance(move_data[i], np.ndarray):
+        #         move_data[i] = move_data[i].tolist()
         
-        move_data.append(search_matrix)
-        game_data[game.turn].append(move_data)
+        # move_data.append(search_matrix)
+        # game_data[game.turn].append(move_data)
 
         game.make_move(move)
 
@@ -1177,11 +1240,40 @@ if __name__ == "__main__":
 
     game = Game()
     game.setup()
-    moves = get_move_list(get_move_matrix(game.players[game.turn]), np.ones(shape=POLICY_SHAPE))
+
+    # Place a piece to make it more interesting
+    for i in range(10):
+        piece = game.players[game.turn].piece
+        game.make_move((piece.type, piece.x_0, game.players[game.turn].ghost_y, 0))
+
+    move_matrix = get_move_matrix(game.players[game.turn])
+    moves = get_move_list(move_matrix, np.ones(shape=POLICY_SHAPE))
+
     visualize_piece_placements(game, moves)
 
-    for player in game.players:
-        pass
+    # Now, get the reflected moves
+    player = game.players[game.turn]
+    # Reflect board
+    player.board.grid = reflect_grid(player.board.grid)
+
+    # Reflect pieces
+    piece_table = get_pieces(game)[0]
+    reflected_piece_table = reflect_pieces(piece_table)
+    for idx, piece_row in enumerate(reflected_piece_table):
+        if idx == 0:
+            player.piece.type = MINOS[piece_row.tolist().index(1)]
+        elif idx == 1:
+            if player.held_piece != None: # Active piece: 0
+                player.held_piece.type = MINOS[piece_row.tolist().index(1)]
+        else:
+            player.queue.pieces[idx - 2] = MINOS[piece_row.tolist().index(1)]
+    
+    # Reflect the policy and see if it matches
+    reflected_move_matrix = reflect_policy(move_matrix)
+    reflected_moves = get_move_list(reflected_move_matrix, np.ones(shape=POLICY_SHAPE))
+
+    visualize_piece_placements(game, reflected_moves)
+
 # pygame.init()
 # loaded_model = load_best_network()
 # clone_model = keras.models.clone_model(loaded_model)
