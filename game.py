@@ -156,6 +156,8 @@ class Game:
             player.create_next_piece()
         
         self.add_history()
+
+        self.players[1].hold_piece()
     
     @property
     def is_terminal(self):

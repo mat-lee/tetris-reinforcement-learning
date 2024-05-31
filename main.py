@@ -109,8 +109,9 @@ class Main:
                 # stats.sort_stats(pstats.SortKey.TIME)
                 # stats.print_stats(20)
 
-                move, _ = MCTS(game, NN)
-                game.make_move(move=move)
+                if game.players[0].game_over == False:
+                    move, _ = MCTS(game, NN)
+                    game.make_move(move=move)
 
             pygame.display.update()
 

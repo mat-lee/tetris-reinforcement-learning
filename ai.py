@@ -19,7 +19,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 3.7
+CURRENT_VERSION = 3.8
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -204,7 +204,7 @@ def MCTS(game, network, add_noise=False):
             # fig.suptitle('Policy before and after dirichlet noise')
             # axs[0].plot(pre_noise_policy)
             # axs[1].plot(post_noise_policy)
-            # plt.savefig(f"{directory_path}/policy_4_2_1")
+            # plt.savefig(f"{directory_path}/policy_3_7_1")
             # print("saved")
 
         # Go back up the tree and updates nodes
@@ -683,7 +683,6 @@ def search_statistics(tree):
     Policy: Rows x Columns x Rotations x Hold
     Policy: 25 x 11 x 4 x 2"""
 
-    # ACCOUNT FOR BUFFER
     probability_matrix = np.zeros(POLICY_SHAPE)
 
     root = tree.get_node("root")
@@ -696,6 +695,7 @@ def search_statistics(tree):
         root_child_move = root_child.data.move
         piece, col, row, rotation = root_child_move
         policy_index = policy_piece_to_index[piece][rotation]
+        # ACCOUNT FOR BUFFER
         probability_matrix[policy_index][row][col + 2] = root_child_n
 
         total_n += root_child_n
@@ -804,38 +804,6 @@ def reflect_pieces(piece_table):
             reflected_piece_table[i][piece_index] = 1
     
     return reflected_piece_table
-
-def reflect_policy_OLD(policy_matrix, active_piece_size, hold_piece_size):
-    reflected_policy_matrix = np.zeros((2, ROWS, COLS + 1, 4))
-    rotation_dict = {
-        1: 3,
-        3: 1
-    }
-    for hold in range(2):
-        piece_size = (active_piece_size if hold == 0 else hold_piece_size)
-        for rotation in range(4):
-            for col in range(COLS + 1):
-                for row in range(ROWS):
-                    value = policy_matrix[hold][row][col][rotation]
-                    if value > 0:
-                        new_rotation = rotation
-                        if rotation in rotation_dict:
-                            new_rotation = rotation_dict[rotation]
-
-                        new_col = col
-
-                        # Remove buffer
-                        new_col += -2
-
-                        # Flip column
-                        new_col = 10 - new_col - piece_size # 9 - col - piece_size + 1
-                        
-                        # Add back buffer
-                        new_col += 2
-
-                        reflected_policy_matrix[hold][row][new_col][new_rotation] = value
-    
-    return reflected_policy_matrix.tolist()
 
 def reflect_policy(policy_matrix):
     reflected_policy_matrix = np.zeros(POLICY_SHAPE)
@@ -1000,19 +968,19 @@ def play_game(network, NUMBER, show_game=False):
 
     # After game ends update value
     winner = game.winner
-    for i in range(len(game_data)):
+    for player_idx in range(len(game_data)):
         if winner == -1: # Draw
             value = 0.5
         # Set values to 1 and -1
-        elif winner == i:
+        elif winner == player_idx:
             value = 1
         else:
             value = 0
-        # Insert value before policy
-        for j in range(len(game_data[i])):
-            game_data[i][j].insert(-1, value)
+        # Insert value before policy for each move of that player
+        for move_idx in range(len(game_data[player_idx])):
+            game_data[player_idx][move_idx].insert(-1, value)
 
-    # Reformat data
+    # Reformat data to stack moves into one list
     data = game_data[0]
     data.extend(game_data[1])
 
@@ -1058,6 +1026,9 @@ def battle_networks(NN_1, NN_2, threshold, network_1_title='Network 1', network_
         if show_game == True:
             screen = pygame.display.set_mode( (WIDTH, HEIGHT))
             pygame.display.set_caption(f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}')
+
+            for event in pygame.event.get():
+                pass
 
         game = Game()
         game.setup()
@@ -1106,6 +1077,7 @@ def battle_networks_win_loss(NN_1, NN_2, network_1_title='Network 1', network_2_
                 move, _ = MCTS(game, NN_1)    
             elif game.turn == 1:
                 move, _ = MCTS(game, NN_2)
+                
             game.make_move(move)
 
             if show_game == True:
