@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import MCTS, load_best_network, search_statistics, get_piece_sizes, reflect_policy, create_network
+from ai import MCTS, load_best_network, reflect_policy, create_network
 from const import *
 from game import Game
 from mover import Mover
@@ -12,7 +12,6 @@ import pstats
 
 # Load neural network
 NN = load_best_network()
-# NN = create_network(DataManager())
 
 class Main:
 
@@ -103,14 +102,14 @@ class Main:
                             mover.sd_counter += (1 / SDF) / 1000
 
             elif game.turn == 1:
-                # with cProfile.Profile() as pr:
-                #     move, _ = MCTS(game, NN)
-                # stats = pstats.Stats(pr)
-                # stats.sort_stats(pstats.SortKey.TIME)
-                # stats.print_stats(20)
-
                 if game.players[0].game_over == False:
-                    move, _ = MCTS(game, NN)
+                    with cProfile.Profile() as pr:
+                        move, _ = MCTS(game, NN)
+                    stats = pstats.Stats(pr)
+                    stats.sort_stats(pstats.SortKey.TIME)
+                    stats.print_stats(20)
+
+                    # move, _ = MCTS(game, NN)
                     game.make_move(move=move)
 
             pygame.display.update()

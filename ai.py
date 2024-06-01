@@ -620,8 +620,6 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
 
     if show_summary: model.summary()
 
-    #model.fit(x=grids, y=[values, policies])
-
     if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
 
     return model
@@ -866,21 +864,6 @@ def reflect_policy(policy_matrix):
                     reflected_policy_matrix[new_policy_index][new_row][new_col] = value
     
     return reflected_policy_matrix.tolist()
-
-def get_piece_sizes(player):
-    active_piece_len = 0
-    if player.piece != None:
-        active_piece_len = len(piece_dict[player.piece.type])
-
-    hold_piece_len = 0
-    player_copy = player.copy()
-    player_copy.hold_piece()
-
-    if player_copy.piece != None:
-        hold_piece_len = len(piece_dict[player_copy.piece.type])
-
-    
-    return active_piece_len, hold_piece_len
 
 def play_game(network, NUMBER, show_game=False):
     # AI plays one game against itself
