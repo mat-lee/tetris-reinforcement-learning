@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import MCTS, load_best_network, search_statistics, get_piece_sizes, reflect_policy, create_network
+from ai import MCTS, load_best_network, search_statistics, reflect_policy, create_network
 from const import *
 from game import Game
 from mover import Mover
@@ -103,11 +103,11 @@ class Main:
                             mover.sd_counter += (1 / SDF) / 1000
 
             elif game.turn == 1:
-                # with cProfile.Profile() as pr:
-                #     move, _ = MCTS(game, NN)
-                # stats = pstats.Stats(pr)
-                # stats.sort_stats(pstats.SortKey.TIME)
-                # stats.print_stats(20)
+                with cProfile.Profile() as pr:
+                    move, _ = MCTS(game, NN)
+                stats = pstats.Stats(pr)
+                stats.sort_stats(pstats.SortKey.TIME)
+                stats.print_stats(20)
 
                 if game.players[0].game_over == False:
                     move, _ = MCTS(game, NN)

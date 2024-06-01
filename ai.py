@@ -19,7 +19,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 3.8
+CURRENT_VERSION = 3.9
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -457,7 +457,8 @@ class Config():
                  first_neurons, 
                  head_neurons, 
                  layers, 
-                 learning_rate):
+                 learning_rate, 
+                 loss_weights):
         self.dropout = dropout
         self.filters = filters
         self.single_filters = single_filters
@@ -465,6 +466,7 @@ class Config():
         self.head_neurons = head_neurons
         self.layers = layers
         self.learning_rate = learning_rate
+        self.loss_weights = loss_weights
 
 def create_network(config: Config, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights
@@ -524,26 +526,17 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     
     def ResidualConvLayer():
         # Uses skip conections
-        def inside(in_1, in_2):
-            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
-            batch_1 = keras.layers.BatchNormalization()
-            relu_1 = keras.layers.Activation('relu')
-            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
-            batch_2 = keras.layers.BatchNormalization()
-            relu_2 = keras.layers.Activation('relu')
+        def inside(x):
+            y = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(x)
+            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Activation('relu')(y)
+            y = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(y)
+            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Activation('relu')(y)
+            z = keras.layers.Add()([x, y]) # Skip connection
+            z = keras.layers.Dropout(config.dropout)(z)
 
-            out_1 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_1))))))
-            out_2 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_2))))))
-
-            out_1 = keras.layers.Add()([in_1, out_1])
-            out_2 = keras.layers.Add()([in_2, out_2])
-
-            dropout_1 = keras.layers.Dropout(config.dropout)
-
-            out_1 = dropout_1(out_1)
-            out_2 = dropout_1(out_2)
-
-            return out_1, out_2
+            return z
         return inside
 
     def ValueHead():
@@ -573,42 +566,25 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
 
     inputs, active_grid, active_features, other_grid, other_features, non_player_features = create_input_layers(shapes)
 
-    # Start with a convolutional layer
-    # Because each grid needs the same network, use the same layers for each side
-    conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
-    batch_1 = keras.layers.BatchNormalization()
-    relu_1 = keras.layers.Activation('relu')
-    dropout_1 = keras.layers.Dropout(config.dropout)
-    
-    out_1 = dropout_1(relu_1(batch_1(conv_1(active_grid))))
-    out_2 = dropout_1(relu_1(batch_1(conv_1(other_grid))))
+    x = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(active_grid)
+    x = keras.layers.BatchNormalization()(x)
+    x = keras.layers.Activation('relu')(x)
+    x = keras.layers.Dropout(config.dropout)(x)
 
-    # Use residual blocks
     for _ in range(config.layers):
-        residual_layer = ResidualConvLayer()
-        out_1, out_2 = residual_layer(out_1, out_2)
-    # Use 1x1 kernels
-    kernel_1 = keras.layers.Conv2D(config.single_filters, (1, 1))
-    out_1 = kernel_1(out_1)
-    out_2 = kernel_1(out_2)
+        x = ResidualConvLayer()(x)
+    
+    x = keras.layers.Conv2D(config.single_filters, (1, 1))(x)
+    x = keras.layers.Flatten()(x)
 
-    # Flatten layers
-    flatten_1 = keras.layers.Flatten()
-    out_1 = flatten_1(out_1)
-    out_2 = flatten_1(out_2)
+    y = keras.layers.Flatten()(other_grid)
+    y = keras.layers.Concatenate()([y, *other_features])
+    y = keras.layers.Dense(config.first_neurons)(y)
 
-    # Concatenate with features
-    out_1 = keras.layers.Concatenate()([out_1, *active_features])
-    out_2 = keras.layers.Concatenate()([out_2, *other_features])
+    z = keras.layers.Concatenate()([x, *active_features, y, *non_player_features])
 
-    # Connect other player with fully connected layer
-    out_2 = keras.layers.Dense(config.first_neurons)(out_2)
-
-    # Concatenate with active player's layers and other features
-    out = keras.layers.Concatenate()([out_1, out_2, *non_player_features])
-
-    value_output = ValueHead()(out)
-    policy_output = PolicyHead()(out)
+    value_output = ValueHead()(z)
+    policy_output = PolicyHead()(z)
 
     model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
 
@@ -616,11 +592,11 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
         keras.utils.plot_model(model, to_file=f"{directory_path}/model_{CURRENT_VERSION}_img.png", show_shapes=True)
 
     # Loss is the sum of MSE of values and Cross entropy of policies
-    model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=[1, 1])
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), 
+                  loss=["mean_squared_error", "categorical_crossentropy"], 
+                  loss_weights=config.loss_weights)
 
     if show_summary: model.summary()
-
-    #model.fit(x=grids, y=[values, policies])
 
     if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
 
@@ -866,21 +842,6 @@ def reflect_policy(policy_matrix):
                     reflected_policy_matrix[new_policy_index][new_row][new_col] = value
     
     return reflected_policy_matrix.tolist()
-
-def get_piece_sizes(player):
-    active_piece_len = 0
-    if player.piece != None:
-        active_piece_len = len(piece_dict[player.piece.type])
-
-    hold_piece_len = 0
-    player_copy = player.copy()
-    player_copy.hold_piece()
-
-    if player_copy.piece != None:
-        hold_piece_len = len(piece_dict[player_copy.piece.type])
-
-    
-    return active_piece_len, hold_piece_len
 
 def play_game(network, NUMBER, show_game=False):
     # AI plays one game against itself

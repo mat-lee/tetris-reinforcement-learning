@@ -9,13 +9,13 @@ import time
 
 
 # Create a network if none exist already
+'''
+DefaultConfig = Config(0.5, 16, 1, 16, 16, 10, 0.001)
 
-# DefaultConfig = Config(0.5, 16, 1, 16, 16, 10, 0.001)
+if highest_model_ver() == -1:
+    create_network(DefaultConfig, save_network=True, plot_model=False)
 
-# if highest_model_ver() == -1:
-#     create_network(DefaultConfig, save_network=True, plot_model=False)
-
-# self_play_loop(show_games=True)
+self_play_loop(show_games=True)'''
 
 
 # load_best_network().summary()
@@ -27,39 +27,59 @@ import time
 
 
 
+# data = load_data(0, 1)[-10:-1]
+# print("loaded")
 
 
-#data = load_data(0, 10)
-# print(len(data))
+
+
+data = load_data(0, 10)
+print(len(data))
 
 ## Grid search battling different parameters
 ## 0.5 dropout was best
 ## 16 neurons was best
 
+config = Config(0.5, 16, 1, 16, 16, 10, 0.001, [1, 1])
+network_1 = create_network(config, show_summary=False, save_network=False, plot_model=False)
+network_2 = create_network(config, show_summary=False, save_network=False, plot_model=False)
+
+train_network(network_1, data)
+train_network(network_2, data)
+
+pygame.init()
+
+print(battle_networks_win_loss(network_1, network_2,
+                            show_game=True))
+
+print(battle_networks_win_loss(network_2, network_1,
+                            show_game=True))
+
 '''
-learning_rates = [0.001, 0.01, 0.1]
+loss_weights = [[1, 1], [1, 0.5], [1, 0.25]]
+var_to_change = loss_weights
 # configs = [Config(0.5, 16, 4, 16, 16, 10, lr) for lr in learning_rates]
-configs = [Config(0.5, 16, 4, 16, 16, 10, lr) for lr in learning_rates]
+configs = [Config(0.5, 16, 1, 16, 16, 10, 0.001, lw) for lw in loss_weights]
 networks = [create_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
 for network in networks:
     train_network(network, data)
 
-scores={title: {} for title in learning_rates}
+scores={str(title): {} for title in var_to_change}
 
 pygame.init()
 
-for i in range(len(learning_rates)):
+for i in range(len(var_to_change)):
     first_network = networks[i]
     for j in range(i):
         if i != j:
             second_network = networks[j]
             score_1, score_2 = battle_networks_win_loss(first_network, second_network, 
-                            network_1_title=learning_rates[i], 
-                            network_2_title=learning_rates[j], 
+                            network_1_title=var_to_change[i], 
+                            network_2_title=var_to_change[j], 
                             show_game=True)
             
-            scores[learning_rates[i]][learning_rates[j]] = f"{score_1}-{score_2}"
-            scores[learning_rates[j]][learning_rates[i]] = f"{score_2}-{score_1}"
+            scores[str(var_to_change[i])][str(var_to_change[j])] = f"{score_1}-{score_2}"
+            scores[str(var_to_change[j])][str(var_to_change[i])] = f"{score_2}-{score_1}"
 
 
 print(scores)'''
