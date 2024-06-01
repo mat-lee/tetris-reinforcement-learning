@@ -19,7 +19,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 3.8
+CURRENT_VERSION = 3.9
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -653,6 +653,7 @@ def evaluate(game, network):
         # X.append(tf.convert_to_tensor(expanded_feature))
         X.append(np.expand_dims(np.array(feature), axis=0))
         
+
     value, policies = network.predict_on_batch(X)
     # Both value and policies are returned as arrays
     policies = np.array(policies)
@@ -1124,7 +1125,9 @@ def load_best_network():
 
     print(path)
 
-    return tf.keras.models.load_model(path)
+    model = tf.keras.models.load_model(path)
+
+    return model
 
 def highest_model_ver():
     max = -1
