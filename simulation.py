@@ -12,10 +12,10 @@ import time
 
 DefaultConfig = Config(0.5, 16, 1, 16, 16, 10, 0.001)
 
-if highest_model_ver() == -1:
-    create_network(DefaultConfig, save_network=True, plot_model=False)
+# if highest_model_ver() == -1:
+create_network(DefaultConfig, save_network=True, plot_model=False)
 
-self_play_loop(show_games=True)
+# self_play_loop(show_games=True)
 
 
 # load_best_network().summary()

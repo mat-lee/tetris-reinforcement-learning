@@ -10,7 +10,7 @@ import random
 import time
 import treelib
 
-import keras
+from tensorflow import keras
 import tensorflow as tf
 from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
@@ -19,7 +19,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 3.9
+CURRENT_VERSION = 4.0
 
 # Tensorflow settings to use eager execution
 # Had the same performance
@@ -155,7 +155,8 @@ def MCTS(game, network, add_noise=False):
 
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
-            value, policy = evaluate(node_state.game, network)
+            # value, policy = evaluate(node_state.game, network)
+            value, policy = evaluate_from_tflite(node_state.game, network)
             # value, policy = random_evaluate()
 
             if node_state.game.no_move == False:
@@ -500,7 +501,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
 
         for i, shape in enumerate(shapes):
             # Add input
-            input = keras.Input(shape=shape)
+            input = keras.Input(shape=shape, name=str(i))
             inputs.append(input)
 
             num_inputs = len(shapes)
@@ -521,41 +522,11 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
                 non_player_features.append(keras.layers.Flatten()(input))
         
         return inputs, active_grid, active_features, other_grid, other_features, non_player_features
-    
-    def ResidualConvLayer():
-        # Uses skip conections
-        def inside(in_1, in_2):
-            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
-            batch_1 = keras.layers.BatchNormalization()
-            relu_1 = keras.layers.Activation('relu')
-            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
-            batch_2 = keras.layers.BatchNormalization()
-            relu_2 = keras.layers.Activation('relu')
-
-            out_1 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_1))))))
-            out_2 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_2))))))
-
-            out_1 = keras.layers.Add()([in_1, out_1])
-            out_2 = keras.layers.Add()([in_2, out_2])
-
-            dropout_1 = keras.layers.Dropout(config.dropout)
-
-            out_1 = dropout_1(out_1)
-            out_2 = dropout_1(out_2)
-
-            return out_1, out_2
-        return inside
 
     def ValueHead():
         # Returns value; found at the end of the network
         def inside(x):
-            x = keras.layers.BatchNormalization()(x)
-            x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dense(config.head_neurons)(x)
-            x = keras.layers.BatchNormalization()(x)
-            x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dropout(config.dropout)(x) # Dropout
-            x = keras.layers.Dense(1, activation='sigmoid')(x)
+            x = keras.layers.Dense(1)(x)
 
             return x
         return inside
@@ -563,52 +534,36 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     def PolicyHead():
         # Returns policy list; found at the end of the network
         def inside(x):
-            x = keras.layers.BatchNormalization()(x)
-            x = keras.layers.Activation('relu')(x)
             # Generate probability distribution
             x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
 
             return x
         return inside
 
-    inputs, active_grid, active_features, other_grid, other_features, non_player_features = create_input_layers(shapes)
+    inputs, active_grid, active_features, other_grid, other_features, misc_features = create_input_layers(shapes)
 
-    # Start with a convolutional layer
-    # Because each grid needs the same network, use the same layers for each side
-    conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
-    batch_1 = keras.layers.BatchNormalization()
-    relu_1 = keras.layers.Activation('relu')
-    dropout_1 = keras.layers.Dropout(config.dropout)
-    
-    out_1 = dropout_1(relu_1(batch_1(conv_1(active_grid))))
-    out_2 = dropout_1(relu_1(batch_1(conv_1(other_grid))))
+    # The network is designed to be fast and compatable with tflite
+    # Drawing inspiration from stockfish's NNUE architecture
+    flat_a_grid = keras.layers.Flatten()(active_grid)
+    side_a = keras.layers.Concatenate()([flat_a_grid, *active_features])
+    side_a = keras.layers.Dense(256)(side_a)
+    side_a = keras.layers.Activation('relu')(side_a)
 
-    # Use residual blocks
-    for _ in range(config.layers):
-        residual_layer = ResidualConvLayer()
-        out_1, out_2 = residual_layer(out_1, out_2)
-    # Use 1x1 kernels
-    kernel_1 = keras.layers.Conv2D(config.single_filters, (1, 1))
-    out_1 = kernel_1(out_1)
-    out_2 = kernel_1(out_2)
+    flat_o_grid = keras.layers.Flatten()(other_grid)
+    side_o = keras.layers.Concatenate()([flat_o_grid, *other_features])
+    side_o = keras.layers.Dense(256)(side_o)
+    side_o = keras.layers.Activation('relu')(side_o)
 
-    # Flatten layers
-    flatten_1 = keras.layers.Flatten()
-    out_1 = flatten_1(out_1)
-    out_2 = flatten_1(out_2)
+    combined = keras.layers.Concatenate()([side_a, side_o, *misc_features])
 
-    # Concatenate with features
-    out_1 = keras.layers.Concatenate()([out_1, *active_features])
-    out_2 = keras.layers.Concatenate()([out_2, *other_features])
+    combined = keras.layers.Dense(32)(combined)
+    combined = keras.layers.Activation('relu')(combined)
 
-    # Connect other player with fully connected layer
-    out_2 = keras.layers.Dense(config.first_neurons)(out_2)
+    combined = keras.layers.Dense(32)(combined)
+    combined = keras.layers.Activation('relu')(combined)
 
-    # Concatenate with active player's layers and other features
-    out = keras.layers.Concatenate()([out_1, out_2, *non_player_features])
-
-    value_output = ValueHead()(out)
-    policy_output = PolicyHead()(out)
+    value_output = ValueHead()(combined)
+    policy_output = PolicyHead()(combined)
 
     model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
 
@@ -620,7 +575,8 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
 
     if show_summary: model.summary()
 
-    if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
+    # if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
+    if save_network: model.export(f"{directory_path}/savedmodel")
 
     return model
 
@@ -649,21 +605,46 @@ def evaluate(game, network):
     data = game_to_X(game)
     X = []
     for feature in data:
-        # expanded_feature = np.expand_dims(np.array(feature), axis=0)
-        # X.append(tf.convert_to_tensor(expanded_feature))
         X.append(np.expand_dims(np.array(feature), axis=0))
         
-
     value, policies = network.predict_on_batch(X)
     # Both value and policies are returned as arrays
     policies = np.array(policies)
-    policies = policies.reshape(POLICY_SHAPE)
-    return value[0][0], policies.tolist()
+    policies = policies.reshape(POLICY_SHAPE).tolist()
+    value = value[0][0]
 
-    # values, policies = network.predict(X, verbose=0)
-    # value, policies = network(X)
-    # Convert value from tensor to float
-    # value = value.numpy()[0]
+    return value, policies
+
+def evaluate_from_tflite(game, interpreter):
+    # Use a neural network to return value and policy.
+    data = game_to_X(game)
+    X = []
+    for feature in data:
+        X.append(np.expand_dims(np.array(feature), axis=0))
+    
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+        
+    interpreter.set_tensor(input_details[0]['index'], X)
+    value, policies = interpreter.get_tensor(output_details[0]['index'])
+    
+    input_details = interpreter.get_input_details()
+    for i in range(len(X)):
+        idx = int(input_details[i]['name'][16:].split(":")[0])
+
+        interpreter.set_tensor(interpreter.get_input_details()[i]["index"], X[idx])
+    interpreter.invoke()
+    result = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
+
+
+    # value, policies = signature_runner(inputs=X)
+
+    # Both value and policies are returned as arrays
+    policies = np.array(policies)
+    policies = policies.reshape(POLICY_SHAPE).tolist()
+    value = value[0][0]
+    
+    return value, policies
 
 def random_evaluate():
     # For testing how fast the MCTS is
