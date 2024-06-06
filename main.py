@@ -29,11 +29,10 @@ tflite_model = converter.convert()
 interpreter = tf.lite.Interpreter(model_content=tflite_model)
 interpreter.allocate_tensors()
 
-
 print(interpreter.get_signature_list())
 # print(interpreter.get_input_details())
 
-signature_runner = interpreter.get_signature_runner('serving_default')
+# signature_runner = interpreter.get_signature_runner('serving_default')
 
 class Main:
 

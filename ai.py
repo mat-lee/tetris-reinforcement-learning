@@ -474,55 +474,6 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     # Concatenate active player's kernels/features with opponent's dense layer and non-player specific features
     # Apply value head and policy head 
 
-    shapes = [(ROWS, COLS, 1), # Grid
-                (2 + PREVIEWS, len(MINOS)), # Pieces
-                (1,), # B2B
-                (1,), # Combo
-                (1,), # Lines cleared
-                (1,), # Lines sent
-                (ROWS, COLS, 1), 
-                (2 + PREVIEWS, len(MINOS)), 
-                (1,), 
-                (1,), 
-                (1,),
-                (1,),
-                (1,), # Color (Whether you had first move or not)
-                (1,)] # Total pieces placed
-
-    def create_input_layers(shapes):
-        # Use a convolutional layer
-        inputs = []
-        active_grid = None
-        active_features = []
-        other_grid = None
-        other_features = []
-        
-        non_player_features = []
-
-        for i, shape in enumerate(shapes):
-            # Add input
-            input = keras.Input(shape=shape, name=str(i))
-            inputs.append(input)
-
-            num_inputs = len(shapes)
-            # Active player's features
-            if i < (num_inputs - 2) / 2: # Ignore last two inputs, and take the first half
-                if shape == shapes[0]:
-                    active_grid = input
-                else:
-                    active_features.append(keras.layers.Flatten()(input))
-            # Other player's features
-            elif i < (num_inputs - 2): # Ignore last two inputs, take remaining half
-                if shape == shapes[0]:
-                    other_grid = input
-                else:
-                    other_features.append(keras.layers.Flatten()(input))
-            # Other features
-            else:
-                non_player_features.append(keras.layers.Flatten()(input))
-        
-        return inputs, active_grid, active_features, other_grid, other_features, non_player_features
-
     def ValueHead():
         # Returns value; found at the end of the network
         def inside(x):
@@ -540,21 +491,18 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
             return x
         return inside
 
-    inputs, active_grid, active_features, other_grid, other_features, misc_features = create_input_layers(shapes)
+    side_a_input = keras.layers.Input(shape=(313,))
+    side_o_input = keras.layers.Input(shape=(313,))
 
     # The network is designed to be fast and compatable with tflite
     # Drawing inspiration from stockfish's NNUE architecture
-    flat_a_grid = keras.layers.Flatten()(active_grid)
-    side_a = keras.layers.Concatenate()([flat_a_grid, *active_features])
-    side_a = keras.layers.Dense(256)(side_a)
+    side_a = keras.layers.Dense(256)(side_a_input)
     side_a = keras.layers.Activation('relu')(side_a)
 
-    flat_o_grid = keras.layers.Flatten()(other_grid)
-    side_o = keras.layers.Concatenate()([flat_o_grid, *other_features])
-    side_o = keras.layers.Dense(256)(side_o)
+    side_o = keras.layers.Dense(256)(side_o_input)
     side_o = keras.layers.Activation('relu')(side_o)
 
-    combined = keras.layers.Concatenate()([side_a, side_o, *misc_features])
+    combined = keras.layers.Concatenate()([side_a, side_o])
 
     combined = keras.layers.Dense(32)(combined)
     combined = keras.layers.Activation('relu')(combined)
@@ -565,7 +513,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     value_output = ValueHead()(combined)
     policy_output = PolicyHead()(combined)
 
-    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+    model = keras.Model(inputs=[side_a_input, side_o_input], outputs=[value_output, policy_output])
 
     if plot_model == True:
         keras.utils.plot_model(model, to_file=f"{directory_path}/model_{CURRENT_VERSION}_img.png", show_shapes=True)
@@ -620,31 +568,34 @@ def evaluate_from_tflite(game, interpreter):
     data = game_to_X(game)
     X = []
     for feature in data:
-        X.append(np.expand_dims(np.array(feature), axis=0))
+        X.append(np.expand_dims(np.float32(feature), axis=0))
     
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
         
-    interpreter.set_tensor(input_details[0]['index'], X)
-    value, policies = interpreter.get_tensor(output_details[0]['index'])
-    
-    input_details = interpreter.get_input_details()
-    for i in range(len(X)):
-        idx = int(input_details[i]['name'][16:].split(":")[0])
+    interpreter.set_tensor(input_details[1]['index'], X[0])
+    interpreter.set_tensor(input_details[0]['index'], X[1])
 
-        interpreter.set_tensor(interpreter.get_input_details()[i]["index"], X[idx])
     interpreter.invoke()
-    result = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
+
+    value = interpreter.get_tensor(output_details[1]['index'])
+    policies = interpreter.get_tensor(output_details[0]['index'])
+    
+    # input_details = interpreter.get_input_details()
+    # for i in range(len(X)):
+    #     idx = int(input_details[i]['name'][16:].split(":")[0])
+
+    # interpreter.set_tensor(interpreter.get_input_details()[i]["index"], X[idx])
+    # interpreter.invoke()
+    # result = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
 
 
     # value, policies = signature_runner(inputs=X)
 
     # Both value and policies are returned as arrays
-    policies = np.array(policies)
-    policies = policies.reshape(POLICY_SHAPE).tolist()
-    value = value[0][0]
+    policies = policies.reshape(POLICY_SHAPE)
     
-    return value, policies
+    return value[0][0], policies
 
 def random_evaluate():
     # For testing how fast the MCTS is
@@ -752,7 +703,21 @@ def game_to_X(game):
     color = game.players[game.turn].color
     pieces_placed = game.players[game.turn].stats.pieces
 
-    return grids[0], pieces[0], b2b[0], combo[0], lines_cleared[0], lines_sent[0], grids[1], pieces[1], b2b[1], combo[1], lines_cleared[1], lines_sent[1], color, pieces_placed
+    side_a = np.concatenate([np.array(grids[0]).flatten(), 
+                             pieces[0].flatten(), 
+                             [b2b[0], 
+                             combo[0], 
+                             lines_cleared[0], 
+                             lines_sent[0]]])
+    
+    side_o = np.concatenate([np.array(grids[1]).flatten(), 
+                             pieces[1].flatten(), 
+                             [b2b[1], 
+                             combo[1], 
+                             lines_cleared[1], 
+                             lines_sent[1]]])
+
+    return side_a, side_o
 
 def reflect_grid(grid):
     # Return a grid flipped horizontally
