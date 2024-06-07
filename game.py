@@ -30,16 +30,31 @@ class Game:
         player = self.players[self.turn]
 
 
-        # Move: (Piece type, col, row, rotation)
+        # Move: (Piece type, col, row, rotation) or (Policy index, col, row)
         if player.game_over == False:
+
+            piece = None
+            row = None
+            col = None
+            rotation = None
+            # If the move is straight from the policy (policy index, col, row),
+            # convert it to piece and rotation
+            if len(move) == 3:
+                piece, rotation = policy_index_to_piece[move[0]]
+                col = move[1]
+                row = move[2]
+            elif len(move) == 4:
+                piece, col, row, rotation = move
+
             # If the player doesn't have an active piece, the ai wants it to hold
             if player.piece == None:
                 player.hold_piece()
 
             # If the piece it wants to place is not the same as the active piece, hold
-            elif move[0] != player.piece.type:
+            elif piece != player.piece.type:
                 player.hold_piece()
-            player.force_place_piece(move[1], move[2], move[3])
+
+            player.force_place_piece(col, row, rotation)
 
             lines = self.check_garbage(send_garbage)
 

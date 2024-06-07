@@ -324,17 +324,31 @@ def get_move_matrix(player):
                 possible_piece_locations[piece.y_0][piece.x_0 + buffer][piece.rotation] = 1
 
                 # Check left, right, and down moves
-                for move in [[1, 0], [-1, 0], [0, 1]]:
-                    if sim_player.can_move(piece, x_offset=move[0], y_offset=move[1]): # Check this first to avoid index errors
-                        x = piece.x_0 + move[0]
-                        y = piece.y_0 + move[1]
+                for x_offset in [1, -1]:
+                    if sim_player.can_move(piece, x_offset=x_offset): # Check this first to avoid index errors
+                        x = piece.x_0 + x_offset
+                        y = piece.y_0
                         o = piece.rotation
 
                         if (possible_piece_locations[y][x + buffer][o] == 0 
-                            and (x, y, o) not in next_location_queue
-                            and y >= 0): # Avoid negative indexing
+                            and (x, y, o) not in next_location_queue):
 
                             next_location_queue.append((x, y, o))
+                
+                # Check full softdrop
+                ghost_y = sim_player.ghost_y
+
+                if ghost_y != sim_player.piece.y_0:
+                    x = piece.x_0
+                    o = piece.rotation
+
+                    if (possible_piece_locations[ghost_y][x + buffer][o] == 0
+                        and (x, ghost_y, o) not in next_location_queue):
+
+                        next_location_queue.append((x, ghost_y, o))
+
+
+                    
 
                 # Check rotations 1, 2, and 3
                 for i in range(1, 4):
@@ -350,7 +364,8 @@ def get_move_matrix(player):
                         next_location_queue.append((x, y, o))
 
                     # Reset piece locations
-                    piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
+                    if i != 3: # Don't need to reset on last rotation
+                        piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
 
                 next_location_queue.pop(0)
 
@@ -384,22 +399,15 @@ def get_move_matrix(player):
     return new_policy
 
 def get_move_list(move_matrix, policy_matrix):
-    # Returns list of possible moves with their policy
-    # Removes buffer
-    move_list = []
-
+    # # Returns list of possible moves with their policy
+    # # Removes buffer
     mask = np.multiply(move_matrix, policy_matrix)
-    # Ordered from smallest to largest
-    for layer in range(len(mask)):
-        piece, rotation = policy_index_to_piece[layer]
-        for col in range(len(mask[0][0])):
-            for row in range(len(mask[0])):
-                if mask[layer][row][col] > 0:
-                    move_list.append((mask[layer][row][col],
-                                        (piece, col - 2, row, rotation) # Switch to x y z and remove buffer
-                                        ))
-    # Sort by policy
-    # move_list = sorted(move_list, key=lambda tup: tup[0], reverse=True)
+
+    move_list = np.argwhere(mask != 0)
+
+    # Formats moves from (policy index, row, col) to (value, (policy index, col - 2, row))
+    move_list = [(mask[move[0]][move[1]][move[2]], (move[0], move[2] - 2, move[1])) for move in move_list]
+
     return move_list
 
 # Using deepcopy:                       100 iter in 36.911 s
@@ -523,8 +531,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
 
     if show_summary: model.summary()
 
-    # if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
-    if save_network: model.export(f"{directory_path}/savedmodel")
+    if save_network: model.export(f"{directory_path}/{CURRENT_VERSION}.0.keras")
 
     return model
 
@@ -1060,7 +1067,8 @@ def self_play_loop(show_games=False):
         if battle_networks(challenger_network, best_network, 0.55, show_game=show_games):
             # Challenger network becomes next highest version
             next_ver = highest_model_ver() + 1
-            challenger_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
+            challenger_network.export(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
+
             # The new network becomes the network to beat
             best_network = challenger_network
 
@@ -1071,9 +1079,19 @@ def load_best_network():
 
     print(path)
 
-    model = tf.keras.models.load_model(path)
+    converter = tf.lite.TFLiteConverter.from_saved_model(path)
+    
+    converter.target_spec.supported_ops = [
+    tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
+    tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
+    ]
 
-    return model
+    tflite_model = converter.convert()
+
+    interpreter = tf.lite.Interpreter(model_content=tflite_model)
+    interpreter.allocate_tensors()
+
+    return interpreter
 
 def highest_model_ver():
     max = -1

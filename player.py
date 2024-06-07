@@ -99,25 +99,22 @@ class Player:
         initial_rotation = piece.rotation
         final_rotation = (initial_rotation + dir) % 4
 
-        key = str(initial_rotation) + "-" + str(final_rotation)
-
         if piece.type == "I":
-            kicktable = i_wallkicks[key]
+            kicktable = i_wallkicks[initial_rotation][final_rotation]
         else:
-            kicktable = wallkicks[key]
+            kicktable = wallkicks[initial_rotation][final_rotation]
 
         rotated_piece_coordinates = piece.get_mino_coords(piece.x_0, piece.y_0, final_rotation, piece.type)
         for kick in kicktable:
-            collided = False
             for col, row in rotated_piece_coordinates:
                 if (row - kick[1] < 0
                  or row - kick[1] > ROWS - 1
                  or col + kick[0] < 0
                  or col + kick[0] > COLS - 1):
-                    collided = True
+                    break
                 elif self.board.grid[row - kick[1]][col + kick[0]] != 0:
-                    collided = True
-            if collided == False:
+                    break
+            else:
                 piece.x_0 += kick[0]
                 piece.y_0 += -kick[1]
                 piece.rotation = final_rotation

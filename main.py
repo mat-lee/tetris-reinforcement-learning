@@ -11,28 +11,7 @@ import cProfile
 import pstats
 
 # Load neural network
-# NN = load_best_network()
-
-
-
-import tensorflow as tf
-
-converter = tf.lite.TFLiteConverter.from_saved_model('/Users/matthewlee/Documents/Code/Tetris Game/Storage/savedmodel')
-
-converter.target_spec.supported_ops = [
-  tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
-  tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
-]
-
-tflite_model = converter.convert()
-
-interpreter = tf.lite.Interpreter(model_content=tflite_model)
-interpreter.allocate_tensors()
-
-print(interpreter.get_signature_list())
-# print(interpreter.get_input_details())
-
-# signature_runner = interpreter.get_signature_runner('serving_default')
+interpreter = load_best_network()
 
 class Main:
 
@@ -125,13 +104,12 @@ class Main:
             elif game.turn == 1:
                 if game.players[0].game_over == False:
                     with cProfile.Profile() as pr:
-                        # move, _ = MCTS(game, NN)
                         move, _ = MCTS(game, interpreter)
                     stats = pstats.Stats(pr)
                     stats.sort_stats(pstats.SortKey.TIME)
                     stats.print_stats(20)
 
-                    # move, _ = MCTS(game, NN)
+                    move, _ = MCTS(game, interpreter)
                     game.make_move(move=move)
 
             pygame.display.update()
