@@ -410,15 +410,16 @@ def get_move_list(move_matrix, policy_matrix):
 
     return move_list
 
-# Using deepcopy:                       100 iter in 36.911 s
-# Using copy functions in classes:      100 iter in 1.658 s
-# Many small changes:                   100 iter in 1.233 s
-# MCTS uses game instead of player:     100 iter in 1.577 s
-# Added large NN but optimized MCTS:    100 iter in 7.939 s
-#   Without NN:                         100 iter in 0.882 s
-#   Changed collision and added coords: 100 iter in 0.713 s
-# Use Model(X) instead of .predict:     100 iter in 3.506 s
-# Use Model.predict_on_batch(X):        100 iter in 1.788 s
+# Using deepcopy:                          100 iter in 36.911 s
+# Using copy functions in classes:         100 iter in 1.658 s
+# Many small changes:                      100 iter in 1.233 s
+# MCTS uses game instead of player:        100 iter in 1.577 s
+# Added large NN but optimized MCTS:       100 iter in 7.939 s
+#   Without NN:                            100 iter in 0.882 s
+#   Changed collision and added coords:    100 iter in 0.713 s
+# Use Model(X) instead of .predict:        100 iter in 3.506 s
+# Use Model.predict_on_batch(X):           100 iter in 1.788 s
+# Use TFlite model + argwhere and full sd: 100 iter in 0.748 s
 
 ##### Neural Network #####
 # 
@@ -531,7 +532,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
 
     if show_summary: model.summary()
 
-    if save_network: model.export(f"{directory_path}/{CURRENT_VERSION}.0.keras")
+    if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
 
     return model
 
@@ -631,8 +632,7 @@ def search_statistics(tree):
         root_child = tree.get_node(root_child_id)
         root_child_n = root_child.data.visit_count
         root_child_move = root_child.data.move
-        piece, col, row, rotation = root_child_move
-        policy_index = policy_piece_to_index[piece][rotation]
+        policy_index, col, row = root_child_move
         # ACCOUNT FOR BUFFER
         probability_matrix[policy_index][row][col + 2] = root_child_n
 
@@ -707,8 +707,8 @@ def game_to_X(game):
     combo = get_combo(game)
     lines_cleared = get_lines_cleared(game)
     lines_sent = get_lines_sent(game)
-    color = game.players[game.turn].color
-    pieces_placed = game.players[game.turn].stats.pieces
+    # color = game.players[game.turn].color
+    # pieces_placed = game.players[game.turn].stats.pieces
 
     side_a = np.concatenate([np.array(grids[0]).flatten(), 
                              pieces[0].flatten(), 
@@ -843,10 +843,10 @@ def play_game(network, NUMBER, show_game=False):
         
         # Piece sizes are needed to know where a reflected piece ends up
         reflected_search_matrix = reflect_policy(search_matrix)
-
+        '''
         # Get data
         move_data = [*game_to_X(game)] 
-
+        
         # Reflect each player for a total of 2 * 2 = 4 times more data
         # When the other player is reflected, it shouldn't impact the piece of the active player
         # When the active player is reflected, need to alter search stats
@@ -882,16 +882,16 @@ def play_game(network, NUMBER, show_game=False):
                 else:
                     copied_data.append(reflected_search_matrix)
 
-                game_data[game.turn].append(copied_data)
+                game_data[game.turn].append(copied_data)'''
 
-        # move_data = [*game_to_X(game)]
-        # # Convert to regular lists
-        # for i in range(len(move_data)):
-        #     if isinstance(move_data[i], np.ndarray):
-        #         move_data[i] = move_data[i].tolist()
+        move_data = [*game_to_X(game)]
+        # Convert to regular lists
+        for i in range(len(move_data)):
+            if isinstance(move_data[i], np.ndarray):
+                move_data[i] = move_data[i].tolist()
         
-        # move_data.append(search_matrix)
-        # game_data[game.turn].append(move_data)
+        move_data.append(search_matrix)
+        game_data[game.turn].append(move_data)
 
         game.make_move(move)
 
@@ -1033,7 +1033,8 @@ def self_play_loop(show_games=False):
     if show_games == True:
         pygame.init()
     # Given a network, generates training data, trains it, and checks if it improved.
-    best_network = load_best_network()
+    best_network = load_best_model()
+    best_interpreter = get_interpreter(best_network)
     iter = 0
 
     while True:
@@ -1042,13 +1043,14 @@ def self_play_loop(show_games=False):
         # Cloned models are worse than loading models
         # ARGHHHH
         # The challenger network will be trained and then battled against the prior network
-        challenger_network = load_best_network()
+        challenger_network = load_best_model()
+
         best_network_version = highest_model_ver()
 
         # Play a training set and train the network on past sets.
         for i in range(TRAINING_LOOPS):
             # Make data file
-            make_training_set(challenger_network, best_network_version, TRAINING_GAMES, show_game=show_games)
+            make_training_set(best_interpreter, best_network_version, TRAINING_GAMES, show_game=show_games)
             print("Finished set")
 
             # Load data generated by the best current network
@@ -1060,30 +1062,41 @@ def self_play_loop(show_games=False):
 
             # Train challenger network
             train_network(challenger_network, data)
+            challenger_interpreter = get_interpreter(challenger_network)
         print("Finished loop")
 
         # If new network is improved, save it and make it the default
         # Otherwise, repeat
-        if battle_networks(challenger_network, best_network, 0.55, show_game=show_games):
+        if battle_networks(challenger_interpreter, best_interpreter, 0.55, show_game=show_games):
             # Challenger network becomes next highest version
             next_ver = highest_model_ver() + 1
-            challenger_network.export(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
+            challenger_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
 
             # The new network becomes the network to beat
             best_network = challenger_network
+            best_interpreter = get_interpreter(best_network)
 
-def load_best_network():
+def load_best_model():
     max_ver = highest_model_ver()
 
     path = f"{directory_path}/{CURRENT_VERSION}.{max_ver}.keras"
 
     print(path)
 
+    model = keras.models.load_model(path)
+
+    return model
+
+def get_interpreter(model):
+    # Save a model as saved model, then load it as tflite
+    path = f"{directory_path}/TEMP_MODELS/savedmodel"
+    model.export(path)
+
     converter = tf.lite.TFLiteConverter.from_saved_model(path)
-    
+
     converter.target_spec.supported_ops = [
-    tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
-    tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
+        tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
+        tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
     ]
 
     tflite_model = converter.convert()

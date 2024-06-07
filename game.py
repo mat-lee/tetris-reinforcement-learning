@@ -173,6 +173,8 @@ class Game:
         self.add_history()
 
         self.players[1].hold_piece()
+
+        self.turn = 0
     
     @property
     def is_terminal(self):
