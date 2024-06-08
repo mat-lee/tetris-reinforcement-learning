@@ -323,7 +323,7 @@ def get_move_matrix(player):
 
                 possible_piece_locations[piece.y_0][piece.x_0 + buffer][piece.rotation] = 1
 
-                # Check left, right, and down moves
+                # Check left, right moves
                 for x_offset in [1, -1]:
                     if sim_player.can_move(piece, x_offset=x_offset): # Check this first to avoid index errors
                         x = piece.x_0 + x_offset
@@ -346,9 +346,6 @@ def get_move_matrix(player):
                         and (x, ghost_y, o) not in next_location_queue):
 
                         next_location_queue.append((x, ghost_y, o))
-
-
-                    
 
                 # Check rotations 1, 2, and 3
                 for i in range(1, 4):
@@ -527,7 +524,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     def ValueHead():
         # Returns value; found at the end of the network
         def inside(x):
-            x = keras.layers.Dense(1)(x)
+            x = keras.layers.Dense(1, activation="sigmoid")(x)
 
             return x
         return inside
@@ -1179,7 +1176,34 @@ def get_filenames(extension):
 
 # Debug Functions
 
+
+
 if __name__ == "__main__":
+
+    game = Game()
+    game.setup()
+
+    # Place a piece to make it more interesting
+    for i in range(10):
+        piece = game.players[game.turn].piece
+        game.make_move((piece.type, piece.x_0, game.players[game.turn].ghost_y, 0))
+
+    
+
+    # Profile make moves
+    with cProfile.Profile() as pr:
+        for i in range(100):
+            get_move_matrix(game.players[game.turn])
+    stats = pstats.Stats(pr)
+    stats.sort_stats(pstats.SortKey.TIME)
+    stats.print_stats(20)
+
+
+
+
+
+    '''
+    # Testing if reflecting pieces, grids, and policy are accurate
     def visualize_piece_placements(game, moves):
         pygame.init()
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -1232,11 +1256,4 @@ if __name__ == "__main__":
     reflected_moves = get_move_list(reflected_move_matrix, np.ones(shape=POLICY_SHAPE))
 
     visualize_piece_placements(game, reflected_moves)
-
-# pygame.init()
-# loaded_model = load_best_network()
-# clone_model = keras.models.clone_model(loaded_model)
-# print(battle_networks_win_loss(loaded_model, clone_model, 
-#                                network_1_title="Loaded Netowrk",
-#                                network_2_title="Cloned network",
-#                                show_game=True))
+    '''
