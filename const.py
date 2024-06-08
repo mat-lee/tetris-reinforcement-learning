@@ -13,14 +13,16 @@ COLS = 10
 MAX_ITER = 80 # 1600
 MAX_MOVES = 1000
 
-TRAINING_GAMES = 100 # 25000
+TRAINING_GAMES = 1 # 25000
 TRAINING_LOOPS = 1 # 1000
 SETS_TO_TRAIN_WITH = 20 # 20
-BATTLE_GAMES = 40 # 400
+BATTLE_GAMES = 1 # 400
 
 DIRICHLET_ALPHA = 0.1 # Roughly = 10/avg possible moves
 DIRICHLET_EXPLORATION = 0.25
 CPUCT = 3
+
+print(len("serving_default_input_layer"))
 
 # Controls:
 k_move_left =   pygame.K_LEFT

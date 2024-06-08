@@ -483,6 +483,47 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     # Concatenate active player's kernels/features with opponent's dense layer and non-player specific features
     # Apply value head and policy head 
 
+    shapes = [(ROWS, COLS), # Grid
+                (2 + PREVIEWS, len(MINOS)), # Pieces
+                (1,), # B2B
+                (1,), # Combo
+                (1,), # Lines cleared
+                (1,), # Lines sent
+                (ROWS, COLS), 
+                (2 + PREVIEWS, len(MINOS)), 
+                (1,), 
+                (1,), 
+                (1,),
+                (1,),
+                (1,), # Color (Whether you had first move or not)
+                (1,)] # Total pieces placed
+
+    def create_input_layers(shapes):
+        # Use a convolutional layer
+        inputs = []
+        active_features = []
+        other_features = []
+        
+        non_player_features = []
+
+        for i, shape in enumerate(shapes):
+            # Add input
+            input = keras.Input(shape=shape)
+            inputs.append(input)
+
+            num_inputs = len(shapes)
+            # Active player's features
+            if i < (num_inputs - 2) / 2: # Ignore last two inputs, and take the first half
+                active_features.append(keras.layers.Flatten()(input))
+            # Other player's features
+            elif i < (num_inputs - 2): # Ignore last two inputs, take remaining half
+                other_features.append(keras.layers.Flatten()(input))
+            # Other features
+            else:
+                non_player_features.append(keras.layers.Flatten()(input))
+        
+        return inputs, active_features, other_features, non_player_features
+
     def ValueHead():
         # Returns value; found at the end of the network
         def inside(x):
@@ -500,18 +541,19 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
             return x
         return inside
 
-    side_a_input = keras.layers.Input(shape=(313,))
-    side_o_input = keras.layers.Input(shape=(313,))
+    inputs, active_features, other_features, non_player_features = create_input_layers(shapes)
 
     # The network is designed to be fast and compatable with tflite
     # Drawing inspiration from stockfish's NNUE architecture
-    side_a = keras.layers.Dense(256)(side_a_input)
+    active_features = keras.layers.concatenate(active_features)
+    side_a = keras.layers.Dense(256)(active_features)
     side_a = keras.layers.Activation('relu')(side_a)
 
-    side_o = keras.layers.Dense(256)(side_o_input)
+    other_features = keras.layers.concatenate(other_features)
+    side_o = keras.layers.Dense(256)(other_features)
     side_o = keras.layers.Activation('relu')(side_o)
 
-    combined = keras.layers.Concatenate()([side_a, side_o])
+    combined = keras.layers.Concatenate()([side_a, side_o, *non_player_features])
 
     combined = keras.layers.Dense(32)(combined)
     combined = keras.layers.Activation('relu')(combined)
@@ -522,7 +564,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     value_output = ValueHead()(combined)
     policy_output = PolicyHead()(combined)
 
-    model = keras.Model(inputs=[side_a_input, side_o_input], outputs=[value_output, policy_output])
+    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
 
     if plot_model == True:
         keras.utils.plot_model(model, to_file=f"{directory_path}/model_{CURRENT_VERSION}_img.png", show_shapes=True)
@@ -556,33 +598,29 @@ def train_network(model, data):
 
     model.fit(x=features, y=[values, policies], batch_size=32, epochs=1, shuffle=True)
 
-def evaluate(game, network):
-    # Use a neural network to return value and policy.
-    data = game_to_X(game)
-    X = []
-    for feature in data:
-        X.append(np.expand_dims(np.array(feature), axis=0))
-        
-    value, policies = network.predict_on_batch(X)
-    # Both value and policies are returned as arrays
-    policies = np.array(policies)
-    policies = policies.reshape(POLICY_SHAPE).tolist()
-    value = value[0][0]
-
-    return value, policies
-
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
     data = game_to_X(game)
     X = []
     for feature in data:
-        X.append(np.expand_dims(np.float32(feature), axis=0))
+        if type(feature) in (float, int):
+            X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
+        else:
+            X.append(np.expand_dims(np.float32(feature), axis=0))
     
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
+
+    for i in range(len(X)):
+        split_str = input_details[i]['name'].split(":")[0]
         
-    interpreter.set_tensor(input_details[1]['index'], X[0])
-    interpreter.set_tensor(input_details[0]['index'], X[1])
+        if len(split_str) == 27: # "serving_default_input_layer"
+            idx = 0
+        else: 
+            split_str = split_str.split("_")[4]
+            idx = int(split_str)
+        
+        interpreter.set_tensor(input_details[i]["index"], X[idx])
 
     interpreter.invoke()
 
@@ -707,8 +745,8 @@ def game_to_X(game):
     combo = get_combo(game)
     lines_cleared = get_lines_cleared(game)
     lines_sent = get_lines_sent(game)
-    # color = game.players[game.turn].color
-    # pieces_placed = game.players[game.turn].stats.pieces
+    color = game.players[game.turn].color
+    pieces_placed = game.players[game.turn].stats.pieces
 
     side_a = np.concatenate([np.array(grids[0]).flatten(), 
                              pieces[0].flatten(), 
@@ -724,7 +762,7 @@ def game_to_X(game):
                              lines_cleared[1], 
                              lines_sent[1]]])
 
-    return side_a, side_o
+    return grids[0], pieces[0], b2b[0], combo[0], lines_cleared[0], lines_sent[0], grids[1], pieces[1], b2b[1], combo[1], lines_cleared[1], lines_sent[1], color, pieces_placed
 
 def reflect_grid(grid):
     # Return a grid flipped horizontally
