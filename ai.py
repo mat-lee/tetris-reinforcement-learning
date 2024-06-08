@@ -748,20 +748,6 @@ def game_to_X(game):
     color = game.players[game.turn].color
     pieces_placed = game.players[game.turn].stats.pieces
 
-    side_a = np.concatenate([np.array(grids[0]).flatten(), 
-                             pieces[0].flatten(), 
-                             [b2b[0], 
-                             combo[0], 
-                             lines_cleared[0], 
-                             lines_sent[0]]])
-    
-    side_o = np.concatenate([np.array(grids[1]).flatten(), 
-                             pieces[1].flatten(), 
-                             [b2b[1], 
-                             combo[1], 
-                             lines_cleared[1], 
-                             lines_sent[1]]])
-
     return grids[0], pieces[0], b2b[0], combo[0], lines_cleared[0], lines_sent[0], grids[1], pieces[1], b2b[1], combo[1], lines_cleared[1], lines_sent[1], color, pieces_placed
 
 def reflect_grid(grid):
@@ -881,7 +867,7 @@ def play_game(network, NUMBER, show_game=False):
         
         # Piece sizes are needed to know where a reflected piece ends up
         reflected_search_matrix = reflect_policy(search_matrix)
-        '''
+        
         # Get data
         move_data = [*game_to_X(game)] 
         
@@ -920,16 +906,16 @@ def play_game(network, NUMBER, show_game=False):
                 else:
                     copied_data.append(reflected_search_matrix)
 
-                game_data[game.turn].append(copied_data)'''
+                game_data[game.turn].append(copied_data)
 
-        move_data = [*game_to_X(game)]
+        '''move_data = [*game_to_X(game)]
         # Convert to regular lists
         for i in range(len(move_data)):
             if isinstance(move_data[i], np.ndarray):
                 move_data[i] = move_data[i].tolist()
         
         move_data.append(search_matrix)
-        game_data[game.turn].append(move_data)
+        game_data[game.turn].append(move_data)'''
 
         game.make_move(move)
 
