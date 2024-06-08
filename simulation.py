@@ -7,6 +7,18 @@ import time
 
 
 
+# data = load_data(0, 20)
+
+# model = load_best_model()
+# interpreter_1 = get_interpreter(model)
+
+# train_network(model, data)
+# interpreter_2 = get_interpreter(model)
+
+# pygame.init()
+# battle_networks_win_loss(interpreter_1, interpreter_2, show_game=True)
+
+
 
 # Create a network if none exist already
 
@@ -22,8 +34,14 @@ self_play_loop(show_games=True)
 
 
 
-
 ### Debugging
+
+
+
+
+
+
+
 
 
 

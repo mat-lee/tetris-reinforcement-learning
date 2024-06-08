@@ -876,7 +876,7 @@ def play_game(network, NUMBER, show_game=False):
                 # Copy move data
                 copied_data = []
                 for feature in move_data:
-                    if type(feature) == np.array:
+                    if isinstance(feature, np.ndarray):
                         copied_data.append(feature.copy())
                     elif type(feature) == list:
                         copied_data.append([x[:] for x in feature])

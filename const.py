@@ -22,8 +22,6 @@ DIRICHLET_ALPHA = 0.1 # Roughly = 10/avg possible moves
 DIRICHLET_EXPLORATION = 0.25
 CPUCT = 3
 
-print(len("serving_default_input_layer"))
-
 # Controls:
 k_move_left =   pygame.K_LEFT
 k_move_right =  pygame.K_RIGHT
