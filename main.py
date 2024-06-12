@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import MCTS, load_best_model, get_interpreter, reflect_policy, create_network
+from ai import MCTS, load_best_model, get_interpreter, Config
 from const import *
 from game import Game
 from mover import Mover
@@ -13,6 +13,8 @@ import pstats
 # Load neural network
 model = load_best_model()
 interpreter = get_interpreter(model)
+
+DefaultConfig = Config()
 
 class Main:
 
@@ -29,6 +31,8 @@ class Main:
         mover = self.mover
 
         game.setup()
+
+        # game.players[1].garbage_to_receive = [1 for i in range(18)]
 
         while True:
             game.show(screen)
@@ -110,7 +114,7 @@ class Main:
                     # stats.sort_stats(pstats.SortKey.TIME)
                     # stats.print_stats(20)
 
-                    move, _ = MCTS(game, interpreter)
+                    move, _ = MCTS(DefaultConfig, game, interpreter)
                     game.make_move(move=move)
 
             pygame.display.update()

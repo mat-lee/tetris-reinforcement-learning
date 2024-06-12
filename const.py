@@ -10,7 +10,7 @@ GRID_ROWS = 20
 COLS = 10
 
 # AI settings
-MAX_ITER = 80 # 1600
+MAX_ITER = 160 # 1600
 MAX_MOVES = 1000
 
 TRAINING_GAMES = 100 # 25000
@@ -20,7 +20,6 @@ BATTLE_GAMES = 40 # 400
 
 DIRICHLET_ALPHA = 0.1 # Roughly = 10/avg possible moves
 DIRICHLET_EXPLORATION = 0.25
-CPUCT = 3
 
 # Controls:
 k_move_left =   pygame.K_LEFT

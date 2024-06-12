@@ -65,17 +65,15 @@ class NodeState():
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(game, network, add_noise=False):
+def MCTS(config, game, network, add_noise=False):
     global total_branch, number_branch
     # Picks a move for the AI to make 
     # Initialize the search tree
     tree = treelib.Tree()
     game_copy = game.copy()
 
-    # Orient the game so that the AI is active
-    if game_copy.turn == 1:
-        game_copy.players = game_copy.players[::-1]
-        game_copy.turn = 0
+    # Remember which turn the AI started on
+    self_turn = game.turn
 
     # Restrict previews
     for player in game_copy.players:
@@ -119,23 +117,23 @@ def MCTS(game, network, add_noise=False):
                 # For each child calculate a score
                 # Polynomial upper confidence trees (PUCT)
                 child_data = tree.get_node(child_id).data
-                child_score = child_data.value_avg + CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
+                child_score = child_data.value_avg + config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
 
                 Qs.append(child_data.value_avg)
-                Us.append(child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count))
+                Us.append(config.CPUCT* child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count))
 
                 if child_score >= max_child_score:
                     max_child_score = child_score
                     max_child_id = child_id
             
-            # if iter == 10:
-            #     fig, axs = plt.subplots(3)
-            #     fig.suptitle('Q (value) vs U (policy) vs Q+U')
-            #     axs[0].plot(Qs)
-            #     axs[1].plot(Us)
-            #     axs[2].plot(np.array(Qs)+np.array(Us))
-            #     plt.savefig(f"{directory_path}/UCB_model_3_6_4_depth_{iter}")
-            #     print("saved")
+            if iter == 160:
+                fig, axs = plt.subplots(3)
+                fig.suptitle('Q (value) vs U (policy) vs Q+U')
+                axs[0].plot(Qs)
+                axs[1].plot(Us)
+                axs[2].plot(np.array(Qs)+np.array(Us))
+                plt.savefig(f"{directory_path}/UCB_model_4_0_0_depth_{iter}")
+                print("saved")
             
             # Pick the node with the highest score
             node = tree.get_node(max_child_id)
@@ -178,14 +176,14 @@ def MCTS(game, network, add_noise=False):
         # Range values from 0 to 1 so that value avg will be 0.5
         else: 
             winner = node_state.game.winner
-            if winner == 0: # AI Starts
+            if winner == self_turn: # AI Starts
                 value = 1
-            elif winner == 1: # Opponent
+            elif winner == 1 - self_turn: # Opponent
                 value = 0
             else: # Draw
                 value = 0.5
 
-        # If root node, add exploration noise to children
+        # If root node and in self play, add exploration noise to children
         if (add_noise == True and node.is_root()):
             child_ids = node.successors(tree.identifier)
             number_of_children = len(child_ids)
@@ -228,7 +226,7 @@ def MCTS(game, network, add_noise=False):
         node_state.value_sum += (value if node_state.game.turn == final_node_turn else 1-value)
         node_state.value_avg = node_state.value_sum / node_state.visit_count
 
-    #print(MAX_DEPTH, total_branch//number_branch)
+    # print(MAX_DEPTH, total_branch//number_branch)
 
     # Choose a move based on the number of visits
     root = tree.get_node("root")
@@ -242,7 +240,7 @@ def MCTS(game, network, add_noise=False):
         root_child = tree.get_node(root_child_id)
         root_child_n = root_child.data.visit_count
         root_child_n_list.append(root_child_n)
-        if root_child_n > max_n:
+        if root_child_n >= max_n: # It's possible n is 0 if there are no possible moves
             max_n = root_child_n
             max_id = root_child.identifier
 
@@ -458,20 +456,19 @@ def get_move_list(move_matrix, policy_matrix):
 
 class Config():
     def __init__(self, 
-                 dropout, 
-                 filters, 
-                 single_filters, 
-                 first_neurons, 
-                 head_neurons, 
-                 layers, 
-                 learning_rate):
-        self.dropout = dropout
-        self.filters = filters
-        self.single_filters = single_filters
-        self.first_neurons = first_neurons
-        self.head_neurons = head_neurons
-        self.layers = layers
+                 l1_neurons=256, 
+                 l2_neurons=32, 
+                 learning_rate=0.001, 
+                 loss_weights=[1, 1],
+                 epochs=1,
+                 CPUCT=3):
+        
+        self.l1_neurons = l1_neurons
+        self.l2_neurons = l2_neurons
         self.learning_rate = learning_rate
+        self.loss_weights = loss_weights
+        self.epochs = epochs
+        self.CPUCT = CPUCT
 
 def create_network(config: Config, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights
@@ -505,7 +502,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
 
         for i, shape in enumerate(shapes):
             # Add input
-            input = keras.Input(shape=shape)
+            input = keras.Input(shape=shape, name=f"{i}")
             inputs.append(input)
 
             num_inputs = len(shapes)
@@ -543,19 +540,19 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     # The network is designed to be fast and compatable with tflite
     # Drawing inspiration from stockfish's NNUE architecture
     active_features = keras.layers.concatenate(active_features)
-    side_a = keras.layers.Dense(256)(active_features)
+    side_a = keras.layers.Dense(config.l1_neurons)(active_features)
     side_a = keras.layers.Activation('relu')(side_a)
 
     other_features = keras.layers.concatenate(other_features)
-    side_o = keras.layers.Dense(256)(other_features)
+    side_o = keras.layers.Dense(config.l1_neurons)(other_features)
     side_o = keras.layers.Activation('relu')(side_o)
 
     combined = keras.layers.Concatenate()([side_a, side_o, *non_player_features])
 
-    combined = keras.layers.Dense(32)(combined)
+    combined = keras.layers.Dense(config.l2_neurons)(combined)
     combined = keras.layers.Activation('relu')(combined)
 
-    combined = keras.layers.Dense(32)(combined)
+    combined = keras.layers.Dense(config.l2_neurons)(combined)
     combined = keras.layers.Activation('relu')(combined)
 
     value_output = ValueHead()(combined)
@@ -567,7 +564,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
         keras.utils.plot_model(model, to_file=f"{directory_path}/model_{CURRENT_VERSION}_img.png", show_shapes=True)
 
     # Loss is the sum of MSE of values and Cross entropy of policies
-    model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=[1, 1])
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
 
     if show_summary: model.summary()
 
@@ -575,7 +572,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
 
     return model
 
-def train_network(model, data):
+def train_network(model, data, epochs=1):
     # Fit the model
     # Swap rows and columns
     features = list(map(list, zip(*data)))
@@ -593,7 +590,7 @@ def train_network(model, data):
 
     # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
-    model.fit(x=features, y=[values, policies], batch_size=32, epochs=1, shuffle=True)
+    model.fit(x=features, y=[values, policies], batch_size=32, epochs=epochs, shuffle=True)
 
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
@@ -611,10 +608,10 @@ def evaluate_from_tflite(game, interpreter):
     for i in range(len(X)):
         split_str = input_details[i]['name'].split(":")[0]
         
-        if len(split_str) == 27: # "serving_default_input_layer"
+        if len(split_str) == 12: # "serving_default"
             idx = 0
         else: 
-            split_str = split_str.split("_")[4]
+            split_str = split_str.split("_")[2]
             idx = int(split_str)
         
         interpreter.set_tensor(input_details[i]["index"], X[idx])
@@ -840,7 +837,7 @@ def reflect_policy(policy_matrix):
     
     return reflected_policy_matrix.tolist()
 
-def play_game(network, NUMBER, show_game=False):
+def play_game(config, network, NUMBER, show_game=False):
     # AI plays one game against itself
     # Returns the game data
     if show_game == True:
@@ -859,7 +856,7 @@ def play_game(network, NUMBER, show_game=False):
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         # with cProfile.Profile() as pr:
-        move, tree = MCTS(game, network, add_noise=True)
+        move, tree = MCTS(config, game, network, add_noise=True)
         search_matrix = search_statistics(tree) # Moves that the network looked at
         
         # Piece sizes are needed to know where a reflected piece ends up
@@ -880,7 +877,7 @@ def play_game(network, NUMBER, show_game=False):
                         copied_data.append(feature.copy())
                     elif type(feature) == list:
                         copied_data.append([x[:] for x in feature])
-                    else:
+                    else: # int or float
                         copied_data.append(feature)
 
                 # Flip boards and pieces
@@ -944,11 +941,11 @@ def play_game(network, NUMBER, show_game=False):
 
     return data
 
-def make_training_set(network, model_version_to_load, num_games, show_game=False):
+def make_training_set(config, network, model_version_to_load, num_games, show_game=False):
     # Creates a dataset of several AI games.
     series_data = []
     for i in range(1, num_games + 1):
-        data = play_game(network, i, show_game=show_game)
+        data = play_game(config, network, i, show_game=show_game)
         series_data.extend(data)
 
     json_data = json.dumps(series_data)
@@ -976,7 +973,7 @@ def load_data(model_version_to_load, last_n_sets):
             data.extend(set)
     return data
 
-def battle_networks(NN_1, NN_2, threshold, network_1_title='Network 1', network_2_title='Network 2', show_game=False):
+def battle_networks(NN_1, config_1, NN_2, config_2, threshold, network_1_title='Network 1', network_2_title='Network 2', show_game=False):
     # Battle two AI's with different networks.
     # Returns true if NN_1 wins, otherwise returns false
     wins = np.zeros((2), dtype=int)
@@ -992,9 +989,9 @@ def battle_networks(NN_1, NN_2, threshold, network_1_title='Network 1', network_
         game.setup()
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
             if game.turn == 0:
-                move, _ = MCTS(game, NN_1)    
+                move, _ = MCTS(config_1, game, NN_1)    
             elif game.turn == 1:
-                move, _ = MCTS(game, NN_2)
+                move, _ = MCTS(config_2, game, NN_2)
             game.make_move(move)
 
             if show_game == True:
@@ -1017,7 +1014,7 @@ def battle_networks(NN_1, NN_2, threshold, network_1_title='Network 1', network_
     # If neither side eaches a cutoff (which shouldn't happen) return false
     return False
 
-def battle_networks_win_loss(NN_1, NN_2, network_1_title='Network 1', network_2_title='Network 2', show_game=False):
+def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, network_1_title='Network 1', network_2_title='Network 2', show_game=False):
     # Battle two AI's with different networks, and returns the wins and losses for each network
     wins = np.zeros((2), dtype=int)
     for i in range(BATTLE_GAMES):
@@ -1032,9 +1029,9 @@ def battle_networks_win_loss(NN_1, NN_2, network_1_title='Network 1', network_2_
         game.setup()
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
             if game.turn == 0:
-                move, _ = MCTS(game, NN_1)    
+                move, _ = MCTS(config_1, game, NN_1)    
             elif game.turn == 1:
-                move, _ = MCTS(game, NN_2)
+                move, _ = MCTS(config_2, game, NN_2)
                 
             game.make_move(move)
 
@@ -1050,7 +1047,7 @@ def battle_networks_win_loss(NN_1, NN_2, network_1_title='Network 1', network_2_
     print(network_1_title, wins, network_2_title)
     return wins
 
-def self_play_loop(show_games=False):
+def self_play_loop(config, show_games=False):
     if show_games == True:
         pygame.init()
     # Given a network, generates training data, trains it, and checks if it improved.
@@ -1071,7 +1068,7 @@ def self_play_loop(show_games=False):
         # Play a training set and train the network on past sets.
         for i in range(TRAINING_LOOPS):
             # Make data file
-            make_training_set(best_interpreter, best_network_version, TRAINING_GAMES, show_game=show_games)
+            make_training_set(config, best_interpreter, best_network_version, TRAINING_GAMES, show_game=show_games)
             print("Finished set")
 
             # Load data generated by the best current network
@@ -1088,7 +1085,7 @@ def self_play_loop(show_games=False):
 
         # If new network is improved, save it and make it the default
         # Otherwise, repeat
-        if battle_networks(challenger_interpreter, best_interpreter, 0.55, show_game=show_games):
+        if battle_networks(challenger_interpreter, config, best_interpreter, config, 0.55, show_game=show_games):
             # Challenger network becomes next highest version
             next_ver = highest_model_ver() + 1
             challenger_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
