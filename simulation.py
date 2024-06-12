@@ -22,14 +22,14 @@ import time
 
 # Create a network if none exist already
 
-'''
+
 DefaultConfig = Config()
 
 if highest_model_ver() == -1:
     create_network(DefaultConfig, save_network=True, plot_model=False)
 
-self_play_loop(DefaultConfig, show_games=True)
-'''
+self_play_loop(DefaultConfig, skip_first_set=False, show_games=True)
+
 
 
 # load_best_network().summary()
@@ -63,7 +63,7 @@ print("nice")
 
 
 
-
+'''
 data = load_data(0, 10)
 print(len(data))
 
@@ -105,3 +105,4 @@ for i in range(len(changing_var)):
 
 
 print(scores)
+'''
