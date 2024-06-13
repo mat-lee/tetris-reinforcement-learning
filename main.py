@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import MCTS, load_best_network, reflect_policy, create_network
+from ai import directory_path, MCTS, load_best_model, get_interpreter, Config
 from const import *
 from game import Game
 from mover import Mover
@@ -11,7 +11,12 @@ import cProfile
 import pstats
 
 # Load neural network
-NN = load_best_network()
+# model = load_best_model()
+from tensorflow import keras
+model =  keras.models.load_model(f"{directory_path}/4_Trained_Model.keras")
+interpreter = get_interpreter(model)
+
+DefaultConfig = Config()
 
 class Main:
 
@@ -28,6 +33,8 @@ class Main:
         mover = self.mover
 
         game.setup()
+
+        # game.players[1].garbage_to_receive = [1 for i in range(18)]
 
         while True:
             game.show(screen)
@@ -103,13 +110,13 @@ class Main:
 
             elif game.turn == 1:
                 if game.players[0].game_over == False:
-                    with cProfile.Profile() as pr:
-                        move, _ = MCTS(game, NN)
-                    stats = pstats.Stats(pr)
-                    stats.sort_stats(pstats.SortKey.TIME)
-                    stats.print_stats(20)
+                    # with cProfile.Profile() as pr:
+                    #     move, _ = MCTS(game, interpreter)
+                    # stats = pstats.Stats(pr)
+                    # stats.sort_stats(pstats.SortKey.TIME)
+                    # stats.print_stats(20)
 
-                    # move, _ = MCTS(game, NN)
+                    move, _ = MCTS(DefaultConfig, game, interpreter)
                     game.make_move(move=move)
 
             pygame.display.update()
