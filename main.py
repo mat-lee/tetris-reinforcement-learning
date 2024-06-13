@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import MCTS, load_best_model, get_interpreter, Config
+from ai import directory_path, MCTS, load_best_model, get_interpreter, Config
 from const import *
 from game import Game
 from mover import Mover
@@ -11,7 +11,9 @@ import cProfile
 import pstats
 
 # Load neural network
-model = load_best_model()
+# model = load_best_model()
+from tensorflow import keras
+model =  keras.models.load_model(f"{directory_path}/4_Trained_Model.keras")
 interpreter = get_interpreter(model)
 
 DefaultConfig = Config()

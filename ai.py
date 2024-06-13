@@ -60,7 +60,9 @@ class NodeState():
 
         # Search tree variables
         # Would be stored in each edge, but this is essentially the same thing
-        self.visit_count = 1
+
+        self.visit_count = 0
+        # self.visit_count = 1
         self.value_sum = 0
         self.value_avg = 0
         self.policy = 0
@@ -136,6 +138,9 @@ def MCTS(config, game, network, add_noise=False):
             #     print("saved")
             
             # Pick the node with the highest score
+            if iter == 160 or iter == 1:
+                pass        
+
             node = tree.get_node(max_child_id)
             node_state = node.data
 
@@ -251,7 +256,8 @@ def MCTS(config, game, network, add_noise=False):
     # plt.savefig(f"{directory_path}/root_n_{MAX_ITER}_depth_3_4_2")
     # print("saved")
 
-    move = tree.get_node(max_id).data.move
+    data = tree.get_node(max_id).data
+    move = data.move
 
     return move, tree
 
@@ -305,6 +311,8 @@ def get_move_matrix(player):
 
             # Queue for looking through piece placements
             next_location_queue = []
+
+                # Use Deque and NamedTuple for (Piece, (location))
 
             # Start the piece at the highest point it can be placed
             highest_row = get_highest_row(sim_player.board.grid)
@@ -663,14 +671,17 @@ def search_statistics(tree):
     for root_child_id in root_children_id:
         root_child = tree.get_node(root_child_id)
         root_child_n = root_child.data.visit_count
-        root_child_move = root_child.data.move
-        policy_index, col, row = root_child_move
-        # ACCOUNT FOR BUFFER
-        probability_matrix[policy_index][row][col + 2] = root_child_n
+        if root_child_n != 0:
+            root_child_move = root_child.data.move
+            policy_index, col, row = root_child_move
+            # ACCOUNT FOR BUFFER
+            probability_matrix[policy_index][row][col + 2] = root_child_n
 
-        total_n += root_child_n
+            total_n += root_child_n
     
+    assert total_n != 0
     probability_matrix /= total_n
+
     return probability_matrix.tolist()
 
 
@@ -1057,9 +1068,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
 
     while True:
         iter += 1
-        # challenger_network = keras.models.clone_model(best_network)
-        # Cloned models are worse than loading models
-        # ARGHHHH
+
         # The challenger network will be trained and then battled against the prior network
         challenger_network = load_best_model()
 

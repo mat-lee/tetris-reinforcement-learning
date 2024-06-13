@@ -1,42 +1,61 @@
 from ai import *
 
-import numpy as np
-import time
-
 ### File for running the simulation commands
 
-
-
-# data = load_data(0, 20)
-
-# model = load_best_model()
-# interpreter_1 = get_interpreter(model)
-
-# train_network(model, data)
-# interpreter_2 = get_interpreter(model)
-
-# pygame.init()
-# battle_networks_win_loss(interpreter_1, interpreter_2, show_game=True)
-
-
-
 # Create a network if none exist already
+# DefaultConfig = Config()
+
+# if highest_model_ver() == -1:
+#     create_network(DefaultConfig, save_network=True, plot_model=False)
+
+# self_play_loop(DefaultConfig, skip_first_set=False, show_games=True)
 
 
-DefaultConfig = Config()
+data = load_data(0, 9)
 
-if highest_model_ver() == -1:
-    create_network(DefaultConfig, save_network=True, plot_model=False)
+test_model = load_best_model()
+train_network(test_model, data)
 
-self_play_loop(DefaultConfig, skip_first_set=False, show_games=True)
-
-
-
-# load_best_network().summary()
-
+test_model.save(f"{directory_path}/4_Trained_Model.keras")
 
 
 ### Debugging
+
+
+
+# data = load_data(0, 1)[:100]
+
+'''
+import time
+
+
+data = load_data(0, 1)
+game=Game()
+game.setup()
+
+pygame.init()
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+
+for move in data:
+    pygame.display.set_caption(str(move[14]))
+    pygame.event.get()
+
+    game.players[0].board.grid = move[0]
+    game.players[1].board.grid = move[6]
+
+    game.show(screen)
+    pygame.display.update()
+
+    time.sleep(0.3)'''
+
+
+
+
+
+
+
+
+
 
 
 
