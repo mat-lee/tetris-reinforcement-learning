@@ -3,20 +3,20 @@ from ai import *
 ### File for running the simulation commands
 
 # Create a network if none exist already
-# DefaultConfig = Config()
+DefaultConfig = Config()
 
-# if highest_model_ver() == -1:
-#     create_network(DefaultConfig, save_network=True, plot_model=False)
+if highest_model_ver() == -1:
+    create_network(DefaultConfig, save_network=True, plot_model=False)
 
-# self_play_loop(DefaultConfig, skip_first_set=False, show_games=True)
+self_play_loop(DefaultConfig, skip_first_set=False, show_games=True)
 
 
-data = load_data(0, 9)
+# data = load_data(0, 9)
 
-test_model = load_best_model()
-train_network(test_model, data)
+# test_model = load_best_model()
+# train_network(test_model, data)
 
-test_model.save(f"{directory_path}/4_Trained_Model.keras")
+# test_model.save(f"{directory_path}/4_Trained_Model.keras")
 
 
 ### Debugging

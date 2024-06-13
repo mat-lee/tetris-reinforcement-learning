@@ -215,6 +215,11 @@ def MCTS(config, game, network, add_noise=False):
         # Propogate positive values for the player made the move, and negative for the other player
         final_node_turn = node_state.game.turn
 
+        # When you make a make a move and evaluate it, the turn flips so
+        # the evaluation is from the perspective of the other player, 
+        # thus you have to flip the value
+        value = 1-value
+
         while not node.is_root():
             node_state = node.data
             node_state.visit_count += 1
