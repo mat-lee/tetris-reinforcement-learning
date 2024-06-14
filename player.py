@@ -33,14 +33,14 @@ class Player:
     def create_piece(self, piece_type):   
         piece = Piece(piece_dict[piece_type], type=piece_type)
         piece.move_to_spawn()
-        if not self.collision(piece.x_0, piece.y_0, piece.rotation, piece.type):
+        if not self.collision(piece.coordinates):
             self.piece = piece
         else:
             # If the block can't spawn lose
             self.game_over = True
 
-    def collision(self, x_0, y_0, rotation, type):
-        for col, row in Piece.get_mino_coords(x_0, y_0, rotation, type):
+    def collision(self, coords):
+        for col, row in coords:
             if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
                 return True
             elif self.board.grid[row][col] != 0:

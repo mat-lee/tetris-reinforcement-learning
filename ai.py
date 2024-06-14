@@ -10,6 +10,7 @@ import random
 import time
 import treelib
 
+from collections import deque
 from tensorflow import keras
 import tensorflow as tf
 from tensorflow.python.ops import math_ops
@@ -315,7 +316,7 @@ def get_move_matrix(player):
             possible_piece_locations = np.zeros((ROWS, width, 4))
 
             # Queue for looking through piece placements
-            next_location_queue = []
+            next_location_queue = deque()
 
                 # Use Deque and NamedTuple for (Piece, (location))
 
@@ -324,39 +325,35 @@ def get_move_matrix(player):
             starting_row = max(highest_row - len(piece_dict[piece.type]), ROWS - SPAWN_ROW)
             piece.y_0 = starting_row
 
-            next_location_queue.append((piece.x_0, piece.y_0, piece.rotation))
+            next_location_queue.append(((piece.x_0, piece.y_0, piece.rotation), piece.get_self_coords))
 
             # Search through the queue
             while len(next_location_queue) > 0:
-                piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
+                next_location = next_location_queue.popleft()
 
-                piece.coordinates = piece.get_self_coords
+                (piece.x_0, piece.y_0, piece.rotation), piece.coordinates = next_location
+                piece.coordinates = np.copy(piece.coordinates) # Create copy of coordinates
 
                 possible_piece_locations[piece.y_0][piece.x_0 + buffer][piece.rotation] = 1
 
-                # Check left, right moves
-                for x_offset in [1, -1]:
-                    if sim_player.can_move(piece, x_offset=x_offset): # Check this first to avoid index errors
-                        x = piece.x_0 + x_offset
-                        y = piece.y_0
+                # Check left, right, and down moves
+                for move in [np.array([1, 0]), np.array([-1, 0]), np.array([0, 1])]:
+                    # Calculate new coords instead of running func again
+                    new_coords = []
+                    for coord in np.copy(next_location[1]):
+                        new_coords.append(coord + move)
+
+                    if not sim_player.collision(new_coords):
+                        x = piece.x_0 + move[0]
+                        y = piece.y_0 + move[1]
                         o = piece.rotation
 
-                        if (possible_piece_locations[y][x + buffer][o] == 0 
-                            and (x, y, o) not in next_location_queue):
-
-                            next_location_queue.append((x, y, o))
-                
-                # Check full softdrop
-                ghost_y = sim_player.ghost_y
-
-                if ghost_y != sim_player.piece.y_0:
-                    x = piece.x_0
-                    o = piece.rotation
-
-                    if (possible_piece_locations[ghost_y][x + buffer][o] == 0
-                        and (x, ghost_y, o) not in next_location_queue):
-
-                        next_location_queue.append((x, ghost_y, o))
+                        if possible_piece_locations[y][x + buffer][o] == 0 and y >= 0:
+                            for move, _ in next_location_queue:
+                                if move == (x, y, o):
+                                    break
+                            else:
+                                next_location_queue.append(((x, y, o), new_coords))
 
                 # Check rotations 1, 2, and 3
                 for i in range(1, 4):
@@ -366,16 +363,16 @@ def get_move_matrix(player):
                     y = piece.y_0
                     o = piece.rotation
 
-                    if (possible_piece_locations[y][x + buffer][o] == 0
-                        and (x, y, o) not in next_location_queue
-                        and y >= 0): # Avoid negative indexing
-                        next_location_queue.append((x, y, o))
+                    if possible_piece_locations[y][x + buffer][o] == 0 and y >= 0:
+                        for move, _ in next_location_queue:
+                            if move == (x, y, o):
+                                break
+                        else:
+                            next_location_queue.append(((x, y, o), np.copy(piece.coordinates)))
 
                     # Reset piece locations
                     if i != 3: # Don't need to reset on last rotation
-                        piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
-
-                next_location_queue.pop(0)
+                        (piece.x_0, piece.y_0, piece.rotation), _ = next_location
 
             # Remove entries that can move downwards
             for o in range(4): # Smallest number of operations
