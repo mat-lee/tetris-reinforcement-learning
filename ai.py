@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import random
+import sys
 import time
 import treelib
 
@@ -21,25 +22,17 @@ import pstats
 # For naming data and models
 CURRENT_VERSION = 4.0
 
-# Tensorflow settings to use eager execution
-# Had the same performance
-# tf.compat.v1.disable_eager_execution()
-# tf.compat.v1.enable_v2_behavior()
-#tf.config.run_functions_eagerly(False)
-
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # Areas of optimization:
-# - Finding piece locations (piece locations held and not held are probably related)
-# - Optimizing piece coordinates
-# - Piece rotations that result in the same board (Pick random one)
+# - Finding piece locations
 
 # AI todo:
-# - Improve network (e.g. L2, CNNs, adjust number of weights/layers, Dropout)
+# - Improve network (Size/Speed) (L2, CNNs, adjust number of weights/layers, Dropout)
 # - Adjust parameters (CPuct, Dirichlet noise, Temperature)
 # - Encoding garbage into the neural network
-# - Data augmentation
+# - Examine values and how they're backpropogated VERY CAREFULLY
 
 total_branch = 0
 number_branch = 0
@@ -192,7 +185,7 @@ def MCTS(config, game, network, add_noise=False):
         if (add_noise == True and node.is_root()):
             child_ids = node.successors(tree.identifier)
             number_of_children = len(child_ids)
-            noise_distribution = np.random.gamma(DIRICHLET_ALPHA, 1, number_of_children)
+            noise_distribution = np.random.gamma(config.DIRICHLET_ALPHA, 1, number_of_children)
 
             pre_noise_policy = []
             post_noise_policy = []
@@ -201,7 +194,7 @@ def MCTS(config, game, network, add_noise=False):
                 child_data = tree.get_node(child_id).data
                 pre_noise_policy.append(child_data.policy)
 
-                child_data.policy = child_data.policy * (1 - DIRICHLET_EXPLORATION) + noise * DIRICHLET_EXPLORATION
+                child_data.policy = child_data.policy * (1 - config.DIRICHLET_EXPLORATION) + noise * config.DIRICHLET_EXPLORATION
                 post_noise_policy.append(child_data.policy)
             
             # fig, axs = plt.subplots(2)
@@ -472,8 +465,10 @@ class Config():
                  l1_neurons=256, 
                  l2_neurons=32, 
                  learning_rate=0.001, 
-                 loss_weights=[1, 1],
-                 epochs=1,
+                 loss_weights=[1, 1], 
+                 epochs=1, 
+                 DIRICHLET_ALPHA=0.2, 
+                 DIRICHLET_EXPLORATION=0.25, 
                  CPUCT=3):
         
         self.l1_neurons = l1_neurons
@@ -481,6 +476,8 @@ class Config():
         self.learning_rate = learning_rate
         self.loss_weights = loss_weights
         self.epochs = epochs
+        self.DIRICHLET_ALPHA = DIRICHLET_ALPHA
+        self.DIRICHLET_EXPLORATION = DIRICHLET_EXPLORATION
         self.CPUCT = CPUCT
 
 def create_network(config: Config, show_summary=True, save_network=True, plot_model=False):
@@ -687,6 +684,9 @@ def search_statistics(tree):
     assert total_n != 0
     probability_matrix /= total_n
 
+    # Reduce Storage
+    probability_matrix = np.float16(probability_matrix)
+
     return probability_matrix.tolist()
 
 
@@ -872,7 +872,7 @@ def play_game(config, network, NUMBER, show_game=False):
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         # with cProfile.Profile() as pr:
-        move, tree = MCTS(config, game, network, add_noise=False) #####
+        move, tree = MCTS(config, game, network, add_noise=True)
         search_matrix = search_statistics(tree) # Moves that the network looked at
         
         # Piece sizes are needed to know where a reflected piece ends up

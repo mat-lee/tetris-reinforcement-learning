@@ -18,9 +18,6 @@ TRAINING_LOOPS = 1 # 1000
 SETS_TO_TRAIN_WITH = 20 # 20
 BATTLE_GAMES = 100 # 400
 
-DIRICHLET_ALPHA = 0.2 # Roughly = 10/avg possible moves
-DIRICHLET_EXPLORATION = 0.25
-
 # Controls:
 k_move_left =   pygame.K_LEFT
 k_move_right =  pygame.K_RIGHT

@@ -17,7 +17,6 @@ self_play_loop(DefaultConfig, skip_first_set=False, show_games=True)
 
 
 
-
 '''
 data = load_data(0, 10)
 print(len(data))

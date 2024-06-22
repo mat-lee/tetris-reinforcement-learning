@@ -11,9 +11,7 @@ import cProfile
 import pstats
 
 # Load neural network
-# model = load_best_model()
-from tensorflow import keras
-model =  keras.models.load_model(f"{directory_path}/4_Trained_Model.keras")
+model = load_best_model()
 interpreter = get_interpreter(model)
 
 DefaultConfig = Config()

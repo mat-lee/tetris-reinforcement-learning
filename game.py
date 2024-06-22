@@ -29,7 +29,6 @@ class Game:
     def make_move(self, move, add_bag=True, add_history=True, send_garbage=True):
         player = self.players[self.turn]
 
-
         # Move: (Piece type, col, row, rotation) or (Policy index, col, row)
         if player.game_over == False:
 
