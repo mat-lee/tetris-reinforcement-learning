@@ -151,9 +151,13 @@ def MCTS(config, game, network, add_noise=False):
 
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
-            # value, policy = evaluate(node_state.game, network)
             value, policy = evaluate_from_tflite(node_state.game, network)
             # value, policy = random_evaluate()
+
+            # When you make a make a move and evaluate it, the turn flips so
+            # the evaluation is from the perspective of the other player, 
+            # thus you have to flip the value
+            value = 1-value
 
             if node_state.game.no_move == False:
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn])
@@ -207,11 +211,6 @@ def MCTS(config, game, network, add_noise=False):
         # Go back up the tree and updates nodes
         # Propogate positive values for the player made the move, and negative for the other player
         final_node_turn = node_state.game.turn
-
-        # When you make a make a move and evaluate it, the turn flips so
-        # the evaluation is from the perspective of the other player, 
-        # thus you have to flip the value
-        value = 1-value
 
         while not node.is_root():
             node_state = node.data
@@ -467,7 +466,7 @@ class Config():
                  learning_rate=0.001, 
                  loss_weights=[1, 1], 
                  epochs=1, 
-                 DIRICHLET_ALPHA=0.2, 
+                 DIRICHLET_ALPHA=0.01, 
                  DIRICHLET_EXPLORATION=0.25, 
                  CPUCT=3):
         
