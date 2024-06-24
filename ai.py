@@ -5,6 +5,7 @@ from collections import deque
 import json
 import math
 import matplotlib.pyplot as plt
+import multiprocessing as mp
 import numpy as np
 import os
 import random
@@ -307,13 +308,54 @@ def get_move_matrix(player):
 
     def check_add_to_sets(x, y, o):
         if (x, y, o) not in check_set:
-            next_location_queue.append((x, y, o))
+            next_location_queue.put((x, y, o))
             check_set.add((x, y, o))
 
             # Check if it can be placed
             coords = [[col + x, row + y + 1] for col, row in mino_coords_dict[piece.type][o]]
             if sim_player.collision(coords):
                 place_location_queue.append((x, y, o))
+
+    def search_location():
+        while not next_location_queue.empty() > 0:
+            location = next_location_queue.get()
+
+            piece.x_0, piece.y_0, piece.rotation = location
+
+            piece.coordinates = piece.get_self_coords
+
+            # Check left, right moves
+            for x_offset in [1, -1]:
+                if sim_player.can_move(piece, x_offset=x_offset): # Check this first to avoid index errors
+                    x = piece.x_0 + x_offset
+                    y = piece.y_0
+                    o = piece.rotation
+
+                    check_add_to_sets(x, y, o)
+            
+            # Check full softdrop
+            ghost_y = sim_player.ghost_y
+
+            if ghost_y != sim_player.piece.y_0:
+                x = piece.x_0
+                o = piece.rotation
+
+                check_add_to_sets(x, ghost_y, o)
+
+            # Check rotations 1, 2, and 3
+            for i in range(1, 4):
+                sim_player.try_wallkick(i)
+
+                x = piece.x_0
+                y = piece.y_0
+                o = piece.rotation
+
+                if y >= 0: # Avoid negative indexing
+                    check_add_to_sets(x, y, o)
+
+                # Reset piece locations
+                if i != 3: # Don't need to reset on last rotation
+                    piece.x_0, piece.y_0, piece.rotation = location
 
     # Convert to new policy format (19, 25 x 11)
     new_policy = np.zeros(POLICY_SHAPE)
@@ -336,7 +378,7 @@ def get_move_matrix(player):
 
         if piece != None and piece_1 != piece_2: # Skip if there's no piece or the pieces are the same
             # Queue for looking through piece placements
-            next_location_queue = deque()
+            next_location_queue = mp.Queue()
             place_location_queue = []
             check_set = set()
 
@@ -345,49 +387,14 @@ def get_move_matrix(player):
             starting_row = max(highest_row - len(piece_dict[piece.type]), ROWS - SPAWN_ROW)
             piece.y_0 = starting_row
 
-            next_location_queue.append((piece.x_0, piece.y_0, piece.rotation))
+            next_location_queue.put((piece.x_0, piece.y_0, piece.rotation))
             check_set.add((piece.x_0, piece.y_0, piece.rotation))
 
             # Search through the queue
-            while len(next_location_queue) > 0:
-                location = next_location_queue.popleft()
-
-                piece.x_0, piece.y_0, piece.rotation = location
-
-                piece.coordinates = piece.get_self_coords
-
-                # Check left, right moves
-                for x_offset in [1, -1]:
-                    if sim_player.can_move(piece, x_offset=x_offset): # Check this first to avoid index errors
-                        x = piece.x_0 + x_offset
-                        y = piece.y_0
-                        o = piece.rotation
-
-                        check_add_to_sets(x, y, o)
-                
-                # Check full softdrop
-                ghost_y = sim_player.ghost_y
-
-                if ghost_y != sim_player.piece.y_0:
-                    x = piece.x_0
-                    o = piece.rotation
-
-                    check_add_to_sets(x, ghost_y, o)
-
-                # Check rotations 1, 2, and 3
-                for i in range(1, 4):
-                    sim_player.try_wallkick(i)
-
-                    x = piece.x_0
-                    y = piece.y_0
-                    o = piece.rotation
-
-                    if y >= 0: # Avoid negative indexing
-                        check_add_to_sets(x, y, o)
-
-                    # Reset piece locations
-                    if i != 3: # Don't need to reset on last rotation
-                        piece.x_0, piece.y_0, piece.rotation = location
+            if __name__ == "__main__":
+                with mp.Pool(1) as p:
+                    p.apply_async(search_location)
+                # search_location()
 
             for x, y, o in place_location_queue:
                 rotation_index = o % len(policy_pieces[piece.type])

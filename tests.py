@@ -91,4 +91,4 @@ time_move_matrix()
 # Deque + set:                    0.310
 # Pop first:                      0.320
 # Don't use array                 0.297
-# Keeping piece coordinates:      
+# Using mp queue                  0.354
