@@ -40,7 +40,7 @@ class Piece:
 
     @property
     def get_self_coords(self):
-        return(Piece.get_mino_coords(self.x_0, self.y_0, self.rotation, self.type))
+        return Piece.get_mino_coords(self.x_0, self.y_0, self.rotation, self.type)
     
     @staticmethod
     def get_mino_coords(x_0, y_0, rotation, type):
@@ -48,4 +48,4 @@ class Piece:
         # [col, row]
         coordinate_list = [[x_0 + col, y_0 + row] for col, row in coordinate_list]
         
-        return(coordinate_list)
+        return coordinate_list

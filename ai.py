@@ -315,11 +315,6 @@ def get_move_matrix(player):
             if sim_player.collision(coords):
                 place_location_queue.append((x, y, o))
 
-    # On the left hand side, blocks can have negative x
-    # buffer = (2 if piece.type == "I" else (0 if piece.type == "O" else 1))
-    buffer = 2
-    width = COLS + buffer - 1
-
     # Convert to new policy format (19, 25 x 11)
     new_policy = np.zeros(POLICY_SHAPE)
 
@@ -340,8 +335,6 @@ def get_move_matrix(player):
         piece = sim_player.piece
 
         if piece != None and piece_1 != piece_2: # Skip if there's no piece or the pieces are the same
-            possible_piece_locations = np.zeros((ROWS, width, 4))
-
             # Queue for looking through piece placements
             next_location_queue = deque()
             place_location_queue = []
@@ -362,8 +355,6 @@ def get_move_matrix(player):
                 piece.x_0, piece.y_0, piece.rotation = location
 
                 piece.coordinates = piece.get_self_coords
-
-                possible_piece_locations[piece.y_0][piece.x_0 + buffer][piece.rotation] = 1
 
                 # Check left, right moves
                 for x_offset in [1, -1]:
@@ -413,37 +404,8 @@ def get_move_matrix(player):
                     # but moved one to the left
                     if o == 3:
                         new_col -= 1
-                new_policy[policy_index][new_row][new_col + 2] = 1 # Account for buffer
-            
-            '''
-            # Remove entries that can move downwards
-            for o in range(4): # Smallest number of operations
-                sim_player.piece.rotation = o
-                rotation_index = o % len(policy_pieces[piece.type])
-                policy_index = policy_piece_to_index[piece.type][rotation_index]
 
-                for x in range(COLS + buffer - 1):
-                    sim_player.piece.x_0 = x - buffer
-
-                    for y in reversed(range(ROWS - 1)):
-                        if possible_piece_locations[y][x][o] == 1:
-                            sim_player.piece.y_0 = y
-                            piece.coordinates = piece.get_self_coords
-                            if not sim_player.can_move(piece, y_offset=1): # If can't move down
-                                new_col = x
-                                new_row = y
-                                if piece.type in ["Z", "S", "I"]:
-                                    # For those pieces, rotation 2 is the same as rotation 0
-                                    # but moved one down
-                                    if o == 2:
-                                        new_row += 1
-                                    # For those pieces, rotation 3 is the same as rotation 1
-                                    # but moved one to the left
-                                    if o == 3:
-                                        new_col -= 1
-                                new_policy[policy_index][new_row][new_col] = 1
-            '''
-            
+                new_policy[policy_index][new_row][new_col + 2] = 1 # Account for buffer        
         
     return new_policy
 

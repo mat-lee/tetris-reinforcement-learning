@@ -101,7 +101,8 @@ policy_index_to_piece = {
     18: ["T", 3],
 }
 
-POLICY_SHAPE = (len(policy_index_to_piece), ROWS - 1, COLS + 1)
+# Leftside buffer is 2
+POLICY_SHAPE = (len(policy_index_to_piece), ROWS - 1, COLS + 2 - 1)
 POLICY_SIZE = prod(POLICY_SHAPE)
 
 policy_piece_to_index = {
