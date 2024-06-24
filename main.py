@@ -32,7 +32,7 @@ class Main:
 
         game.setup()
 
-        # game.players[1].garbage_to_receive = [1 for i in range(18)]
+        game.players[1].garbage_to_receive = [1 for i in range(18)]
 
         while True:
             game.show(screen)

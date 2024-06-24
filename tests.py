@@ -1,8 +1,11 @@
 from ai import Config, directory_path, get_interpreter, load_best_model, MCTS
+from const import *
 from game import Game
 
 from collections import namedtuple
 import matplotlib.pyplot as plt
+import pygame
+import time
 
 def test_dirichlet_noise():
     # Finding different values of dirichlet alpha affect piece decisions
@@ -47,4 +50,45 @@ def test_dirichlet_noise():
 
     return percent_dict
 
-test_dirichlet_noise()
+# Test the game speed
+def time_move_matrix():
+    num_games = 10
+
+    # Initialize pygame
+    pygame.init()
+    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+    pygame.display.set_caption(f'Profiling Get Move Matrix')
+
+    interpreter = get_interpreter(load_best_model())
+
+    config = Config()
+
+    moves = 0
+    START = time.time()
+
+    for _ in range(num_games):
+        game = Game()
+        game.setup()
+
+        while game.is_terminal == False:
+            move, _ = MCTS(config, game, interpreter)
+            game.make_move(move)
+            moves += 1
+
+            game.show(screen)
+            pygame.event.get()
+            pygame.display.update()
+
+    END = time.time()
+
+    print((END-START)/moves)
+
+time_move_matrix()
+
+# ---------- 100 iter ----------
+# Initial:                        0.340 0.357 0.362
+# Deque:                          0.382
+# Deque + set:                    0.310
+# Pop first:                      0.320
+# Don't use array                 0.310
+# Keeping piece coordinates:      

@@ -1,6 +1,7 @@
 from const import *
 from game import Game
 
+from collections import deque
 import json
 import math
 import matplotlib.pyplot as plt
@@ -11,10 +12,18 @@ import sys
 import time
 import treelib
 
+# # Prior to importing tensorflow, disable debug logs
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+
 from tensorflow import keras
 import tensorflow as tf
 from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
+
+# Reduce tensorflow text
+tf.get_logger().setLevel('ERROR')
+tf.autograph.set_verbosity(0)
 
 import cProfile
 import pstats
@@ -36,6 +45,26 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 total_branch = 0
 number_branch = 0
+
+class Config():
+    def __init__(self, 
+                 l1_neurons=256, 
+                 l2_neurons=32, 
+                 learning_rate=0.001, 
+                 loss_weights=[1, 1], 
+                 epochs=1, 
+                 DIRICHLET_ALPHA=0.01, 
+                 DIRICHLET_EXPLORATION=0.25, 
+                 CPUCT=3):
+        
+        self.l1_neurons = l1_neurons
+        self.l2_neurons = l2_neurons
+        self.learning_rate = learning_rate
+        self.loss_weights = loss_weights
+        self.epochs = epochs
+        self.DIRICHLET_ALPHA = DIRICHLET_ALPHA
+        self.DIRICHLET_EXPLORATION = DIRICHLET_EXPLORATION
+        self.CPUCT = CPUCT
 
 class NodeState():
     """Node class for storing the game in the tree.
@@ -66,9 +95,6 @@ def MCTS(config, game, network, add_noise=False):
     # Initialize the search tree
     tree = treelib.Tree()
     game_copy = game.copy()
-
-    # Remember which turn the AI started on
-    self_turn = game.turn
 
     # Restrict previews
     for player in game_copy.players:
@@ -154,11 +180,6 @@ def MCTS(config, game, network, add_noise=False):
             value, policy = evaluate_from_tflite(node_state.game, network)
             # value, policy = random_evaluate()
 
-            # When you make a make a move and evaluate it, the turn flips so
-            # the evaluation is from the perspective of the other player, 
-            # thus you have to flip the value
-            value = 1-value
-
             if node_state.game.no_move == False:
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn])
                 move_list = get_move_list(move_matrix, policy)
@@ -178,9 +199,9 @@ def MCTS(config, game, network, add_noise=False):
         # Range values from 0 to 1 so that value avg will be 0.5
         else: 
             winner = node_state.game.winner
-            if winner == self_turn: # AI Starts
+            if winner == node_state.game.turn: # If active player wins
                 value = 1
-            elif winner == 1 - self_turn: # Opponent
+            elif winner == 1 - node_state.game.turn: # If opponent wins
                 value = 0
             else: # Draw
                 value = 0.5
@@ -207,6 +228,11 @@ def MCTS(config, game, network, add_noise=False):
             # axs[1].plot(post_noise_policy)
             # plt.savefig(f"{directory_path}/policy_3_7_1")
             # print("saved")
+
+        # When you make a make a move and evaluate it, the turn flips so
+        # the evaluation is from the perspective of the other player, 
+        # thus you have to flip the value
+        value = 1-value
 
         # Go back up the tree and updates nodes
         # Propogate positive values for the player made the move, and negative for the other player
@@ -279,6 +305,16 @@ def get_move_matrix(player):
         # Else return the floor
         return len(grid)
 
+    def check_add_to_sets(x, y, o):
+        if (x, y, o) not in check_set:
+            next_location_queue.append((x, y, o))
+            check_set.add((x, y, o))
+
+            # Check if it can be placed
+            coords = [[col + x, row + y + 1] for col, row in mino_coords_dict[piece.type][o]]
+            if sim_player.collision(coords):
+                place_location_queue.append((x, y, o))
+
     # On the left hand side, blocks can have negative x
     # buffer = (2 if piece.type == "I" else (0 if piece.type == "O" else 1))
     buffer = 2
@@ -307,9 +343,9 @@ def get_move_matrix(player):
             possible_piece_locations = np.zeros((ROWS, width, 4))
 
             # Queue for looking through piece placements
-            next_location_queue = []
-
-                # Use Deque and NamedTuple for (Piece, (location))
+            next_location_queue = deque()
+            place_location_queue = []
+            check_set = set()
 
             # Start the piece at the highest point it can be placed
             highest_row = get_highest_row(sim_player.board.grid)
@@ -317,10 +353,13 @@ def get_move_matrix(player):
             piece.y_0 = starting_row
 
             next_location_queue.append((piece.x_0, piece.y_0, piece.rotation))
+            check_set.add((piece.x_0, piece.y_0, piece.rotation))
 
             # Search through the queue
             while len(next_location_queue) > 0:
-                piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
+                location = next_location_queue.popleft()
+
+                piece.x_0, piece.y_0, piece.rotation = location
 
                 piece.coordinates = piece.get_self_coords
 
@@ -333,10 +372,7 @@ def get_move_matrix(player):
                         y = piece.y_0
                         o = piece.rotation
 
-                        if (possible_piece_locations[y][x + buffer][o] == 0 
-                            and (x, y, o) not in next_location_queue):
-
-                            next_location_queue.append((x, y, o))
+                        check_add_to_sets(x, y, o)
                 
                 # Check full softdrop
                 ghost_y = sim_player.ghost_y
@@ -345,10 +381,7 @@ def get_move_matrix(player):
                     x = piece.x_0
                     o = piece.rotation
 
-                    if (possible_piece_locations[ghost_y][x + buffer][o] == 0
-                        and (x, ghost_y, o) not in next_location_queue):
-
-                        next_location_queue.append((x, ghost_y, o))
+                    check_add_to_sets(x, ghost_y, o)
 
                 # Check rotations 1, 2, and 3
                 for i in range(1, 4):
@@ -358,17 +391,31 @@ def get_move_matrix(player):
                     y = piece.y_0
                     o = piece.rotation
 
-                    if (possible_piece_locations[y][x + buffer][o] == 0
-                        and (x, y, o) not in next_location_queue
-                        and y >= 0): # Avoid negative indexing
-                        next_location_queue.append((x, y, o))
+                    if y >= 0: # Avoid negative indexing
+                        check_add_to_sets(x, y, o)
 
                     # Reset piece locations
                     if i != 3: # Don't need to reset on last rotation
-                        piece.x_0, piece.y_0, piece.rotation = next_location_queue[0]
+                        piece.x_0, piece.y_0, piece.rotation = location
 
-                next_location_queue.pop(0)
+            for x, y, o in place_location_queue:
+                rotation_index = o % len(policy_pieces[piece.type])
+                policy_index = policy_piece_to_index[piece.type][rotation_index]
 
+                new_col = x
+                new_row = y
+                if piece.type in ["Z", "S", "I"]:
+                    # For those pieces, rotation 2 is the same as rotation 0
+                    # but moved one down
+                    if o == 2:
+                        new_row += 1
+                    # For those pieces, rotation 3 is the same as rotation 1
+                    # but moved one to the left
+                    if o == 3:
+                        new_col -= 1
+                new_policy[policy_index][new_row][new_col + 2] = 1 # Account for buffer
+            
+            '''
             # Remove entries that can move downwards
             for o in range(4): # Smallest number of operations
                 sim_player.piece.rotation = o
@@ -395,6 +442,8 @@ def get_move_matrix(player):
                                     if o == 3:
                                         new_col -= 1
                                 new_policy[policy_index][new_row][new_col] = 1
+            '''
+            
         
     return new_policy
 
@@ -458,26 +507,6 @@ def get_move_list(move_matrix, policy_matrix):
 # Model 2.6: Adjusted neurons to 16 and max_iter to 160
 # Awful
 #
-
-class Config():
-    def __init__(self, 
-                 l1_neurons=256, 
-                 l2_neurons=32, 
-                 learning_rate=0.001, 
-                 loss_weights=[1, 1], 
-                 epochs=1, 
-                 DIRICHLET_ALPHA=0.01, 
-                 DIRICHLET_EXPLORATION=0.25, 
-                 CPUCT=3):
-        
-        self.l1_neurons = l1_neurons
-        self.l2_neurons = l2_neurons
-        self.learning_rate = learning_rate
-        self.loss_weights = loss_weights
-        self.epochs = epochs
-        self.DIRICHLET_ALPHA = DIRICHLET_ALPHA
-        self.DIRICHLET_EXPLORATION = DIRICHLET_EXPLORATION
-        self.CPUCT = CPUCT
 
 def create_network(config: Config, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights
@@ -871,7 +900,7 @@ def play_game(config, network, NUMBER, show_game=False):
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         # with cProfile.Profile() as pr:
-        move, tree = MCTS(config, game, network, add_noise=True)
+        move, tree = MCTS(config, game, network, add_noise=False) ########
         search_matrix = search_statistics(tree) # Moves that the network looked at
         
         # Piece sizes are needed to know where a reflected piece ends up
