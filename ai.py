@@ -306,6 +306,7 @@ def get_move_matrix(player):
         return len(grid)
 
     def check_add_to_sets(x, y, o):
+        # Checks if move has been looked at already
         if (x, y, o) not in check_set:
             next_location_queue.append((x, y, o))
             check_set.add((x, y, o))
@@ -335,6 +336,25 @@ def get_move_matrix(player):
         piece = sim_player.piece
 
         if piece != None and piece_1 != piece_2: # Skip if there's no piece or the pieces are the same
+            # For each piece:
+            # If the maxheight is below or the same as the piece spawn height:
+                # Phase 1:
+                    # Rotate the piece for each rotation
+                # Phase 2:
+                    # Move each rotation to each different column
+                # Phase 3:
+                    # Move each of those all the way down, marking each spot on the way down
+                # Phase 4:
+                    # Do the normal move gen
+            # If the maxheight is above the piece spawn height:
+                # Do normal move gen
+            
+            # Other ideas:
+            # Calculate all areas that a piece could fit, subtract the moves that can be found
+            # by harddropping, and then backtrack to find those moves
+                # Issue of backtracking kicks
+            
+            
             # Queue for looking through piece placements
             next_location_queue = deque()
             place_location_queue = []
@@ -572,24 +592,27 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     return model
 
 def train_network(model, data, epochs=1):
-    # Fit the model
-    # Swap rows and columns
-    features = list(map(list, zip(*data)))
+    # Don't train over everything simultaneously
+    # Keras has 2GB limit (?)
+    for set in data:
+        # Fit the model
+        # Swap rows and columns
+        features = list(map(list, zip(*set)))
 
-    # Make features into np arrays
-    for i in range(len(features)):
-        features[i] = np.array(features[i])
+        # Make features into np arrays
+        for i in range(len(features)):
+            features[i] = np.array(features[i])
 
-    # Last two columns are value and policy
-    policies = features.pop()
-    values = features.pop()
+        # Last two columns are value and policy
+        policies = features.pop()
+        values = features.pop()
 
-    # Reshape policies
-    policies = np.array(policies).reshape((-1, POLICY_SIZE))
+        # Reshape policies
+        policies = np.array(policies).reshape((-1, POLICY_SIZE))
 
-    # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
+        # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
-    model.fit(x=features, y=[values, policies], batch_size=32, epochs=epochs, shuffle=True)
+        model.fit(x=features, y=[values, policies], batch_size=64, epochs=epochs, shuffle=True)
 
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
@@ -842,11 +865,12 @@ def reflect_policy(policy_matrix):
     
     return reflected_policy_matrix.tolist()
 
-def play_game(config, network, NUMBER, show_game=False):
+def play_game(config, network, NUMBER, show_game=False, screen=None):
     # AI plays one game against itself
     # Returns the game data
     if show_game == True:
-        screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+        if screen == None:
+            screen = pygame.display.set_mode( (WIDTH, HEIGHT))
         pygame.display.set_caption(f'Training game {NUMBER}')
 
         for event in pygame.event.get():
@@ -946,11 +970,11 @@ def play_game(config, network, NUMBER, show_game=False):
 
     return data
 
-def make_training_set(config, network, model_version_to_load, num_games, show_game=False):
+def make_training_set(config, network, model_version_to_load, num_games, show_game=False, screen=None):
     # Creates a dataset of several AI games.
     series_data = []
     for i in range(1, num_games + 1):
-        data = play_game(config, network, i, show_game=show_game)
+        data = play_game(config, network, i, show_game=show_game, screen=screen)
         series_data.extend(data)
 
     json_data = json.dumps(series_data)
@@ -975,16 +999,17 @@ def load_data(model_version_to_load, last_n_sets):
             and data_number > max_set - last_n_sets):
             # Load data
             set = json.load(open(f"{directory_path}/{filename}", 'r'))
-            data.extend(set)
+            data.append(set)
     return data
 
-def battle_networks(NN_1, config_1, NN_2, config_2, threshold, network_1_title='Network 1', network_2_title='Network 2', show_game=False):
+def battle_networks(NN_1, config_1, NN_2, config_2, threshold, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
     # Battle two AI's with different networks.
     # Returns true if NN_1 wins, otherwise returns false
     wins = np.zeros((2), dtype=int)
     for i in range(BATTLE_GAMES):
         if show_game == True:
-            screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+            if screen == None:
+                screen = pygame.display.set_mode( (WIDTH, HEIGHT))
             pygame.display.set_caption(f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}')
 
             for event in pygame.event.get():
@@ -1019,12 +1044,13 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, network_1_title='
     # If neither side eaches a cutoff (which shouldn't happen) return false
     return False
 
-def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, network_1_title='Network 1', network_2_title='Network 2', show_game=False):
+def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
     # Battle two AI's with different networks, and returns the wins and losses for each network
     wins = np.zeros((2), dtype=int)
     for i in range(BATTLE_GAMES):
         if show_game == True:
-            screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+            if screen != None:
+                screen = pygame.display.set_mode( (WIDTH, HEIGHT))
             pygame.display.set_caption(f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}')
 
             for event in pygame.event.get():
@@ -1055,6 +1081,7 @@ def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, network_1_title='Ne
 def self_play_loop(config, skip_first_set=False, show_games=False):
     if show_games == True:
         pygame.init()
+        screen = pygame.display.set_mode( (WIDTH, HEIGHT))
     # Given a network, generates training data, trains it, and checks if it improved.
     best_network = load_best_model()
     best_interpreter = get_interpreter(best_network)
@@ -1072,7 +1099,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         for i in range(TRAINING_LOOPS):
             # Make data file
             if not skip_first_set:
-                make_training_set(config, best_interpreter, best_network_version, TRAINING_GAMES, show_game=show_games)
+                make_training_set(config, best_interpreter, best_network_version, TRAINING_GAMES, show_game=show_games, screen=screen)
                 print("Finished set")
 
             # Load data generated by the best current network
@@ -1089,7 +1116,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
 
         # If new network is improved, save it and make it the default
         # Otherwise, repeat
-        if battle_networks(challenger_interpreter, config, best_interpreter, config, 0.55, show_game=show_games):
+        if battle_networks(challenger_interpreter, config, best_interpreter, config, 0.55, show_game=show_games, screen=screen):
             # Challenger network becomes next highest version
             next_ver = highest_model_ver() + 1
             challenger_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")

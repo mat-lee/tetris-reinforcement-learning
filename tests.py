@@ -92,7 +92,7 @@ def time_move_matrix():
 # Don't use array                 0.297
     # Using mp queue              0.354
 
-data = load_data(1, 20)
+data = load_data(0, 20)
 # reversed_data = data[::-1]
 
 
