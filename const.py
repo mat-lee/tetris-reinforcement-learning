@@ -23,6 +23,7 @@ k_move_left =   pygame.K_LEFT
 k_move_right =  pygame.K_RIGHT
 k_soft_drop =   pygame.K_DOWN
 k_hard_drop =   pygame.K_SPACE
+k_make_ai_move = pygame.K_F
 k_rotate_ccw =  pygame.K_z
 k_rotate_cw =   pygame.K_UP
 k_rotate_180 =  pygame.K_a

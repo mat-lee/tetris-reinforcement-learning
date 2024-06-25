@@ -58,6 +58,10 @@ class Main:
                                         game.human_player.piece.y_0,
                                         game.human_player.piece.rotation)
                                 game.make_move(move)
+                            elif event.key == k_make_ai_move:
+                                if game.players[0].game_over == False:
+                                    move, _ = MCTS(DefaultConfig, game, interpreter)
+                                    game.make_move(move=move)
                             elif event.key == k_rotate_cw:
                                 game.human_player.try_wallkick(1)
                             elif event.key == k_rotate_180:
