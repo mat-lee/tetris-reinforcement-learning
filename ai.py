@@ -29,7 +29,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 4.0
+CURRENT_VERSION = 4.1
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -345,8 +345,7 @@ def get_move_matrix(player):
             starting_row = max(highest_row - len(piece_dict[piece.type]), ROWS - SPAWN_ROW)
             piece.y_0 = starting_row
 
-            next_location_queue.append((piece.x_0, piece.y_0, piece.rotation))
-            check_set.add((piece.x_0, piece.y_0, piece.rotation))
+            check_add_to_sets(piece.x_0, piece.y_0, piece.rotation)
 
             # Search through the queue
             while len(next_location_queue) > 0:
@@ -675,7 +674,7 @@ def search_statistics(tree):
     probability_matrix /= total_n
 
     # Reduce Storage
-    probability_matrix = np.float16(probability_matrix)
+    probability_matrix = np.around(probability_matrix, 4)
 
     return probability_matrix.tolist()
 
@@ -862,7 +861,7 @@ def play_game(config, network, NUMBER, show_game=False):
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         # with cProfile.Profile() as pr:
-        move, tree = MCTS(config, game, network, add_noise=False) ########
+        move, tree = MCTS(config, game, network, add_noise=True)
         search_matrix = search_statistics(tree) # Moves that the network looked at
         
         # Piece sizes are needed to know where a reflected piece ends up

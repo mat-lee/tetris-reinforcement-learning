@@ -1,4 +1,4 @@
-from ai import Config, directory_path, get_interpreter, load_best_model, MCTS
+from ai import Config, directory_path, get_interpreter, load_best_model, load_data, MCTS, train_network
 from const import *
 from game import Game
 
@@ -50,8 +50,9 @@ def test_dirichlet_noise():
 
     return percent_dict
 
-# Test the game speed
 def time_move_matrix():
+    # Test the game speed
+    # Returns the average speed of each move over n games
     num_games = 10
 
     # Initialize pygame
@@ -83,12 +84,20 @@ def time_move_matrix():
 
     print((END-START)/moves)
 
-time_move_matrix()
-
 # ---------- 100 iter ----------
 # Initial:                        0.340 0.357 0.362
 # Deque:                          0.382
 # Deque + set:                    0.310
 # Pop first:                      0.320
 # Don't use array                 0.297
-# Keeping piece coordinates:      
+    # Using mp queue              0.354
+
+data = load_data(1, 20)
+# reversed_data = data[::-1]
+
+
+model = load_best_model()
+
+train_network(model, data)
+
+print("testing")
