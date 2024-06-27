@@ -95,7 +95,7 @@ def time_move_matrix() -> None:
 
 def battle_parameters(load_from_best_model: bool = False,
                       data: list[list] = None, 
-                      var: "str" = "", 
+                      var: str = "", 
                       values: list[int] = None) -> None:
     ## Grid search battling different parameters
 
@@ -124,7 +124,7 @@ def battle_parameters(load_from_best_model: bool = False,
         for j in range(i):
             if i != j:
                 second_network = interpreters[j]
-                second_config = configs[i] 
+                second_config = configs[j]
                 score_1, score_2 = battle_networks_win_loss(first_network, first_config, 
                                                             second_network, second_config,
                                                             100, 
@@ -137,4 +137,4 @@ def battle_parameters(load_from_best_model: bool = False,
 
     print(scores)
 
-battle_parameters(load_from_best_model=True, var="CPUCT", values=[1, 4, 9, 16, 25])
+battle_parameters(load_from_best_model=True, var="MAX_ITER", values=[1, 800])

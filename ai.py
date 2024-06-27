@@ -56,6 +56,7 @@ class Config():
                  learning_rate=0.001, 
                  loss_weights=[1, 1], 
                  epochs=1, 
+                 MAX_ITER=160, # 1600
                  DIRICHLET_ALPHA=0.01, 
                  DIRICHLET_EXPLORATION=0.25, 
                  CPUCT=3):
@@ -112,7 +113,7 @@ def MCTS(config, game, network, add_noise=False):
     MAX_DEPTH = 0
     iter = 0
 
-    while iter < MAX_ITER:
+    while iter < config.MAX_ITER:
         iter += 1
 
         # Begin at the root node
