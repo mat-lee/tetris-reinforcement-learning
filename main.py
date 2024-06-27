@@ -32,6 +32,7 @@ class Main:
 
         game.setup()
 
+        game.players[0].garbage_to_receive = [1 for i in range(18)]
         game.players[1].garbage_to_receive = [1 for i in range(18)]
 
         while True:
@@ -59,7 +60,7 @@ class Main:
                                         game.human_player.piece.rotation)
                                 game.make_move(move)
                             elif event.key == k_make_ai_move:
-                                if game.players[0].game_over == False:
+                                if game.players[1].game_over == False:
                                     move, _ = MCTS(DefaultConfig, game, interpreter)
                                     game.make_move(move=move)
                             elif event.key == k_rotate_cw:

@@ -10,10 +10,10 @@ GRID_ROWS = 20
 COLS = 10
 
 # AI settings
-MAX_ITER = 80 # 1600
+MAX_ITER = 160 # 1600
 MAX_MOVES = 1000
 
-TRAINING_GAMES = 200 # 25000
+TRAINING_GAMES = 100 # 25000
 TRAINING_LOOPS = 1 # 1000
 SETS_TO_TRAIN_WITH = 20 # 20
 BATTLE_GAMES = 200 # 400
@@ -23,7 +23,7 @@ k_move_left =   pygame.K_LEFT
 k_move_right =  pygame.K_RIGHT
 k_soft_drop =   pygame.K_DOWN
 k_hard_drop =   pygame.K_SPACE
-k_make_ai_move = pygame.K_F
+k_make_ai_move = pygame.K_f
 k_rotate_ccw =  pygame.K_z
 k_rotate_cw =   pygame.K_UP
 k_rotate_180 =  pygame.K_a

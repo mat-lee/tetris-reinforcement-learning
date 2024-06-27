@@ -2,6 +2,7 @@ from ai import *
 
 ### File for running the simulation commands
 
+
 # Create a network if none exist already
 DefaultConfig = Config()
 

@@ -53,6 +53,15 @@ def test_dirichlet_noise():
 def time_move_matrix():
     # Test the game speed
     # Returns the average speed of each move over n games
+
+    # ---------- 100 iter ----------
+    # Initial:                        0.340 0.357 0.362
+    # Deque:                          0.382
+    # Deque + set:                    0.310
+    # Pop first:                      0.320
+    # Don't use array                 0.297
+        # Using mp Queue              0.354
+
     num_games = 10
 
     # Initialize pygame
@@ -83,21 +92,3 @@ def time_move_matrix():
     END = time.time()
 
     print((END-START)/moves)
-
-# ---------- 100 iter ----------
-# Initial:                        0.340 0.357 0.362
-# Deque:                          0.382
-# Deque + set:                    0.310
-# Pop first:                      0.320
-# Don't use array                 0.297
-    # Using mp queue              0.354
-
-data = load_data(0, 20)
-# reversed_data = data[::-1]
-
-
-model = load_best_model()
-
-train_network(model, data)
-
-print("testing")
