@@ -1,4 +1,4 @@
-from ai import Config, directory_path, get_interpreter, load_best_model, load_data, MCTS, train_network
+from ai import battle_networks_win_loss, Config, create_network, directory_path, get_interpreter, load_best_model, load_data, MCTS, train_network
 from const import *
 from game import Game
 
@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import pygame
 import time
 
-def test_dirichlet_noise():
+def test_dirichlet_noise() -> None:
     # Finding different values of dirichlet alpha affect piece decisions
     alpha_values = [1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
     alpha_values = {alpha: {'n_same': 0, 'n_total': 0} for alpha in alpha_values}
@@ -50,7 +50,7 @@ def test_dirichlet_noise():
 
     return percent_dict
 
-def time_move_matrix():
+def time_move_matrix() -> None:
     # Test the game speed
     # Returns the average speed of each move over n games
 
@@ -92,3 +92,49 @@ def time_move_matrix():
     END = time.time()
 
     print((END-START)/moves)
+
+def battle_parameters(load_from_best_model: bool = False,
+                      data: list[list] = None, 
+                      var: "str" = "", 
+                      values: list[int] = None) -> None:
+    ## Grid search battling different parameters
+
+    configs = [Config() for _ in range(len(values))]
+    for value, config in zip(values, configs):
+        setattr(config, var, value)
+
+    if load_from_best_model == False:
+        networks = [create_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
+
+        for config, network in zip(configs, networks):
+            train_network(config, network, data)
+    else:
+        networks = [load_best_model() for _ in range(len(values))]
+
+    interpreters = [get_interpreter(network) for network in networks]
+
+    scores={str(title): {} for title in values}
+
+    pygame.init()
+    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+
+    for i in range(len(values)):
+        first_network = interpreters[i]
+        first_config = configs[i]
+        for j in range(i):
+            if i != j:
+                second_network = interpreters[j]
+                second_config = configs[i] 
+                score_1, score_2 = battle_networks_win_loss(first_network, first_config, 
+                                                            second_network, second_config,
+                                                            100, 
+                                                            network_1_title=values[i], 
+                                                            network_2_title=values[j], 
+                                                            show_game=True, screen=screen)
+                
+                scores[str(values[i])][str(values[j])] = f"{score_1}-{score_2}"
+                scores[str(values[j])][str(values[i])] = f"{score_2}-{score_1}"
+
+    print(scores)
+
+battle_parameters(load_from_best_model=True, var="CPUCT", values=[1, 4, 9, 16, 25])

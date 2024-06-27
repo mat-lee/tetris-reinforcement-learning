@@ -594,7 +594,7 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
 
     return model
 
-def train_network(model, data, epochs=1):
+def train_network(config, model, data):
     # Don't train over everything simultaneously
     # Keras has 2GB limit (?)
     for set in data:
@@ -615,7 +615,7 @@ def train_network(model, data, epochs=1):
 
         # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
-        model.fit(x=features, y=[values, policies], batch_size=64, epochs=epochs, shuffle=True)
+        model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=True)
 
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
@@ -886,7 +886,7 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         # with cProfile.Profile() as pr:
-        move, tree = MCTS(config, game, network, add_noise=True)
+        move, tree = MCTS(config, game, network, add_noise=True) # Add training noise
         search_matrix = search_statistics(tree) # Moves that the network looked at
         
         # Piece sizes are needed to know where a reflected piece ends up
@@ -1003,11 +1003,11 @@ def load_data(model_version_to_load, last_n_sets):
             data.append(set)
     return data
 
-def battle_networks(NN_1, config_1, NN_2, config_2, threshold, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
+def battle_networks(NN_1, config_1, NN_2, config_2, threshold, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
     # Battle two AI's with different networks.
     # Returns true if NN_1 wins, otherwise returns false
     wins = np.zeros((2), dtype=int)
-    for i in range(BATTLE_GAMES):
+    for i in range(games):
         if show_game == True:
             if screen == None:
                 screen = pygame.display.set_mode( (WIDTH, HEIGHT))
@@ -1035,20 +1035,20 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, network_1_title='
         else: wins[winner] += 1
 
         # End early if either player reaches the cutoff
-        if wins[0] >= threshold * BATTLE_GAMES:
+        if wins[0] >= threshold * games:
             print(*wins)
             return True
-        elif wins[1] > (1 - threshold) * BATTLE_GAMES:
+        elif wins[1] > (1 - threshold) * games:
             print(*wins)
             return False
 
     # If neither side eaches a cutoff (which shouldn't happen) return false
     return False
 
-def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
+def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
     # Battle two AI's with different networks, and returns the wins and losses for each network
     wins = np.zeros((2), dtype=int)
-    for i in range(BATTLE_GAMES):
+    for i in range(games):
         if show_game == True:
             if screen != None:
                 screen = pygame.display.set_mode( (WIDTH, HEIGHT))
@@ -1111,7 +1111,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
             print(len(data))#, len(data_batch))
 
             # Train challenger network
-            train_network(challenger_network, data)
+            train_network(config, challenger_network, data)
 
             del data
 
@@ -1120,7 +1120,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
 
         # If new network is improved, save it and make it the default
         # Otherwise, repeat
-        if battle_networks(challenger_interpreter, config, best_interpreter, config, 0.55, show_game=show_games, screen=screen):
+        if battle_networks(challenger_interpreter, config, best_interpreter, config, 0.55, BATTLE_GAMES, show_game=show_games, screen=screen):
             # Challenger network becomes next highest version
             next_ver = highest_model_ver() + 1
             challenger_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
