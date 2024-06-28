@@ -71,7 +71,7 @@ def time_move_matrix() -> None:
 
     interpreter = get_interpreter(load_best_model())
 
-    config = Config()
+    config = Config(MAX_ITER=100)
 
     moves = 0
     START = time.time()
@@ -127,7 +127,7 @@ def battle_parameters(load_from_best_model: bool = False,
                 second_config = configs[j]
                 score_1, score_2 = battle_networks_win_loss(first_network, first_config, 
                                                             second_network, second_config,
-                                                            100, 
+                                                            400, 
                                                             network_1_title=values[i], 
                                                             network_2_title=values[j], 
                                                             show_game=True, screen=screen)
@@ -137,4 +137,5 @@ def battle_parameters(load_from_best_model: bool = False,
 
     print(scores)
 
-battle_parameters(load_from_best_model=True, var="MAX_ITER", values=[1, 800])
+battle_parameters(load_from_best_model=True, var="CPUCT", values=[0.66, 1, 1.5])
+# time_move_matrix()
