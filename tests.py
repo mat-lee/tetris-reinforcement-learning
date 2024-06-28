@@ -180,4 +180,38 @@ def battle_parameters(load_from_best_model: bool = False,
 
 battle_parameters(load_from_best_model=True, var="CPUCT", values=[0.64, 0.8, 1])
 
+def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
+    # Battle two AI's with different networks, and returns the wins and losses for each network
+    wins = np.zeros((2), dtype=int)
+    for i in range(games):
+        if show_game == True:
+            if screen != None:
+                screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+            pygame.display.set_caption(f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}')
+
+            for event in pygame.event.get():
+                pass
+
+        game = Game()
+        game.setup()
+        while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
+            if game.turn == 0:
+                move, _ = MCTS(config_1, game, NN_1)    
+            elif game.turn == 1:
+                move, _ = MCTS(config_2, game, NN_2)
+                
+            game.make_move(move)
+
+            if show_game == True:
+                game.show(screen)
+                pygame.display.update()
+
+        winner = game.winner
+        if winner == -1:
+            wins += 0.5
+        else: wins[winner] += 1
+
+    print(network_1_title, wins, network_2_title)
+    return wins
+
 # test_algorithm_accuracy()
