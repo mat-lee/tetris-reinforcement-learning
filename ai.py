@@ -30,7 +30,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 4.1
+CURRENT_VERSION = 4.5
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -46,6 +46,7 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Shuffle loading data
 # - Change how data is savaed and loaded
 # - Read/implement paper on accelerating self play
+# - Investigate hold issue (maybe search depth?)
 
 total_branch = 0
 number_branch = 0
@@ -562,13 +563,7 @@ def get_move_list(move_matrix, policy_matrix):
 #   Policy: (19 x 25 x 11) = 5225 (Hold x Rows x Columns x Rotations)
 #   Value: (1)
 
-def create_network(config: Config, show_summary=True, save_network=True, plot_model=False):
-    # Creates a network with random weights
-    # 1: For each grid, apply the same neural network, and then use 1x1 kernel and concatenate
-    # 1 -> 2: For opponent grid, apply fully connected layer
-    # Concatenate active player's kernels/features with opponent's dense layer and non-player specific features
-    # Apply value head and policy head 
-
+def create_input_layers():
     shapes = [(ROWS, COLS), # Grid
                 (2 + PREVIEWS, len(MINOS)), # Pieces
                 (1,), # B2B
@@ -584,31 +579,42 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
                 (1,), # Color (Whether you had first move or not)
                 (1,)] # Total pieces placed
 
-    def create_input_layers(shapes):
-        # Use a convolutional layer
-        inputs = []
-        active_features = []
-        other_features = []
-        
-        non_player_features = []
+    inputs = []
+    active_features = []
+    active_grid = None
+    opponent_features = []
+    opponent_grid = None
+    
+    non_player_features = []
 
-        for i, shape in enumerate(shapes):
-            # Add input
-            input = keras.Input(shape=shape, name=f"{i}")
-            inputs.append(input)
+    for i, shape in enumerate(shapes):
+        # Add input
+        input = keras.Input(shape=shape, name=f"{i}")
+        inputs.append(input)
 
-            num_inputs = len(shapes)
-            # Active player's features
-            if i < (num_inputs - 2) / 2: # Ignore last two inputs, and take the first half
-                active_features.append(keras.layers.Flatten()(input))
-            # Other player's features
-            elif i < (num_inputs - 2): # Ignore last two inputs, take remaining half
-                other_features.append(keras.layers.Flatten()(input))
-            # Other features
+        num_inputs = len(shapes)
+        # Active player's features
+        if i < (num_inputs - 2) / 2: # Ignore last two inputs, and take the first half
+            if shape == shapes[0]:
+                active_grid = input
             else:
-                non_player_features.append(keras.layers.Flatten()(input))
-        
-        return inputs, active_features, other_features, non_player_features
+                active_features.append(keras.layers.Flatten()(input))
+        # Other player's features
+        elif i < (num_inputs - 2): # Ignore last two inputs, take remaining half
+            if shape == shapes[0]:
+                opponent_grid = input
+            else:
+                opponent_features.append(keras.layers.Flatten()(input))
+        # Other features
+        else:
+            non_player_features.append(keras.layers.Flatten()(input))
+    
+    return inputs, active_grid, active_features, opponent_grid, opponent_features, non_player_features
+
+
+def generate_fishlike_network(config: Config) -> keras.Model:
+    # The network is designed to be fast and compatable with tflite
+    # Drawing inspiration from stockfish's NNUE architecture
 
     def ValueHead():
         # Returns value; found at the end of the network
@@ -627,16 +633,16 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
             return x
         return inside
 
-    inputs, active_features, other_features, non_player_features = create_input_layers(shapes)
+    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
 
-    # The network is designed to be fast and compatable with tflite
-    # Drawing inspiration from stockfish's NNUE architecture
-    active_features = keras.layers.concatenate(active_features)
-    side_a = keras.layers.Dense(config.l1_neurons)(active_features)
+    flat_a_grid = keras.layers.Flatten()(a_grid)
+    a_features = keras.layers.Concatenate()([flat_a_grid, *a_features])
+    side_a = keras.layers.Dense(config.l1_neurons)(a_features)
     side_a = keras.layers.Activation('relu')(side_a)
 
-    other_features = keras.layers.concatenate(other_features)
-    side_o = keras.layers.Dense(config.l1_neurons)(other_features)
+    flat_o_grid = keras.layers.Flatten()(o_grid)
+    o_features = keras.layers.Concatenate()([flat_o_grid, *o_features])
+    side_o = keras.layers.Dense(config.l1_neurons)(o_features)
     side_o = keras.layers.Activation('relu')(side_o)
 
     combined = keras.layers.Concatenate()([side_a, side_o, *non_player_features])
@@ -651,6 +657,17 @@ def create_network(config: Config, show_summary=True, save_network=True, plot_mo
     policy_output = PolicyHead()(combined)
 
     model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+
+    return model
+
+def instantiate_network(config: Config, nn_generator=generate_fishlike_network, show_summary=True, save_network=True, plot_model=False):
+    # Creates a network with random weights
+    # 1: For each grid, apply the same neural network, and then use 1x1 kernel and concatenate
+    # 1 -> 2: For opponent grid, apply fully connected layer
+    # Concatenate active player's kernels/features with opponent's dense layer and non-player specific features
+    # Apply value head and policy head 
+
+    model = nn_generator(config)
 
     if plot_model == True:
         keras.utils.plot_model(model, to_file=f"{directory_path}/model_{CURRENT_VERSION}_img.png", show_shapes=True)
