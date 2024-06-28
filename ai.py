@@ -60,7 +60,7 @@ class Config():
                  MAX_ITER=160, # 1600
                  DIRICHLET_ALPHA=0.01, 
                  DIRICHLET_EXPLORATION=0.25, 
-                 CPUCT=3):
+                 CPUCT=1):
         
         self.l1_neurons = l1_neurons
         self.l2_neurons = l2_neurons
@@ -95,7 +95,7 @@ class NodeState():
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(config, game, network, add_noise=False):
+def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss'):
     global total_branch, number_branch
     # Picks a move for the AI to make 
     # Initialize the search tree
@@ -176,7 +176,7 @@ def MCTS(config, game, network, add_noise=False):
             # value, policy = random_evaluate()
 
             if node_state.game.no_move == False:
-                move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn])
+                move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn], algo=move_algorithm)
                 move_list = get_move_list(move_matrix, policy)
 
                 # Generate new leaves
@@ -279,13 +279,16 @@ def MCTS(config, game, network, add_noise=False):
 
     return move, tree
 
-def get_move_matrix(player):
+def get_move_matrix(player, algo=None):
     # Returns a list of all possible moves that a player can make
     # Very Important: With my coordinate system, pieces can be placed with negative x values
     # To avoid negative indexing, the list of moves is shifted by 2
     # It encodes moves from -2 to 8 as indices 0 to 10
-
-    # Possible locations needs to be larger to acount for blocks with negative x and y
+    #
+    # Algorithm names:
+        # 'brute-force'
+        # 'faster-but-loss'
+    # Possible locations needs to be larger to acount for blocks with negative x
     # O piece        0 to 8
     # Any 3x3 piece -1 to 8
     # I piece       -2 to 8
@@ -300,16 +303,169 @@ def get_move_matrix(player):
         # Else return the floor
         return len(grid)
 
-    def check_add_to_sets(x, y, o):
+    def check_add_to_sets(x, y, o, check_placement=True):
         # Checks if move has been looked at already
         if (x, y, o) not in check_set:
             next_location_queue.append((x, y, o))
             check_set.add((x, y, o))
 
             # Check if it can be placed
-            coords = [[col + x, row + y + 1] for col, row in mino_coords_dict[piece.type][o]]
-            if sim_player.collision(coords):
-                place_location_queue.append((x, y, o))
+            if check_placement:
+                coords = [[col + x, row + y + 1] for col, row in mino_coords_dict[piece.type][o]]
+                if sim_player.collision(coords):
+                    place_location_queue.append((x, y, o))
+
+    def algo_1(check_rotations):
+        # My initial algorithm
+        # Will always find every piece placement
+        # Takes a long time
+        while len(next_location_queue) > 0:
+            location = next_location_queue.popleft()
+
+            piece.x_0, piece.y_0, piece.rotation = location
+
+            piece.coordinates = piece.get_self_coords
+
+            # Check left, right moves
+            for x_offset in [1, -1]:
+                if sim_player.can_move(piece, x_offset=x_offset): # Check this first to avoid index errors
+                    x = piece.x_0 + x_offset
+                    y = piece.y_0
+                    o = piece.rotation
+
+                    check_add_to_sets(x, y, o)
+            
+            # Check full softdrop
+            ghost_y = sim_player.ghost_y
+
+            if ghost_y != sim_player.piece.y_0:
+                x = piece.x_0
+                o = piece.rotation
+
+                check_add_to_sets(x, ghost_y, o)
+
+            # Check left, right, and down moves
+            for move in [[1, 0], [-1, 0], [0, 1]]:
+                if sim_player.can_move(piece, x_offset=move[0], y_offset=move[1]): # Check this first to avoid index errors
+                    x = piece.x_0 + move[0]
+                    y = piece.y_0 + move[1]
+                    o = piece.rotation
+
+                    check_add_to_sets(x, y, o)
+
+            if check_rotations:
+                # Check rotations 1, 2, and 3
+                for i in range(1, 4):
+                    sim_player.try_wallkick(i)
+
+                    x = piece.x_0
+                    y = piece.y_0
+                    o = piece.rotation
+
+                    if y >= 0: # Avoid negative indexing
+                        check_add_to_sets(x, y, o)
+
+                    # Reset piece locations
+                    if i != 3: # Don't need to reset on last rotation
+                        piece.x_0, piece.y_0, piece.rotation = location
+
+    def algo_2(check_rotations):
+        # Faster algorithm
+        # Requires spawn height to be above or equal to max height
+        #
+        # For each piece:
+        # If the maxheight is below or the same as the piece spawn height:
+            # Phase 1:
+                # Rotate the piece for each rotation
+            # Phase 2:
+                # Move each rotation to each different column
+            # Phase 3:
+                # Move each of those all the way down, marking each spot on the way down
+            # Phase 4:
+                # Do the normal move gen
+        # If the maxheight is above the piece spawn height:
+            # Do normal move gen
+
+        phase_2_queue = deque()
+
+        # Phase 1
+        location = next_location_queue.popleft()
+        piece.x_0, piece.y_0, piece.rotation = location
+        piece.coordinates = piece.get_self_coords
+
+        phase_2_queue.append((piece.x_0, piece.y_0, piece.rotation))
+
+        if check_rotations:
+            for i in range(1, 4):
+                sim_player.try_wallkick(i)
+
+                x = piece.x_0
+                y = piece.y_0
+                o = piece.rotation
+
+                phase_2_queue.append((x, y, o))
+                check_set.add((x, y, o))
+
+                if i != 3:
+                    piece.x_0, piece.y_0, piece.rotation = location
+        
+        phase_3_queue = deque()
+
+        # Phase 2
+        while len(phase_2_queue) > 0:
+            location = phase_2_queue.popleft()
+            phase_3_queue.append(location)
+
+            for x_dir in [-1, 1]:
+                piece.x_0, piece.y_0, piece.rotation = location
+                piece.coordinates = piece.get_self_coords
+
+                while sim_player.can_move(piece, x_offset=x_dir):
+                    x = piece.x_0 + x_dir
+                    y = piece.y_0
+                    o = piece.rotation
+
+                    piece.x_0 = x
+                    piece.coordinates = piece.get_self_coords
+
+                    phase_3_queue.append((x, y, o))
+                    check_set.add((x, y, o))
+
+        # Phase 3
+        while len(phase_3_queue) > 0:
+            location = phase_3_queue.popleft()
+            piece.x_0, piece.y_0, piece.rotation = location
+            piece.coordinates = piece.get_self_coords
+
+            x = piece.x_0
+            y = piece.y_0
+            o = piece.rotation
+
+            while sim_player.can_move(piece, y_offset=1):
+                x = piece.x_0
+                y = piece.y_0 + 1
+                o = piece.rotation
+
+                piece.y_0 = y
+                piece.coordinates = piece.get_self_coords
+
+                # Add these to check set but not queue until they hit the bottom
+                check_set.add((x, y, o))
+
+            # Check these using the normal algorithm
+            next_location_queue.append((x, y, o))
+
+            # Piece must be placeable by definition
+            place_location_queue.append((x, y, o))
+
+        # Phase 4 is the regular algorithm
+        algo_1(check_rotations)
+
+
+    # Other ideas:
+    # Calculate all areas that a piece could fit, subtract the moves that can be found
+    # by harddropping, and then backtrack to find unfound moves
+        # Issue of backtracking kicks
 
     # Convert to new policy format (19, 25 x 11)
     new_policy = np.zeros(POLICY_SHAPE)
@@ -331,25 +487,6 @@ def get_move_matrix(player):
         piece = sim_player.piece
 
         if piece != None and piece_1 != piece_2: # Skip if there's no piece or the pieces are the same
-            # For each piece:
-            # If the maxheight is below or the same as the piece spawn height:
-                # Phase 1:
-                    # Rotate the piece for each rotation
-                # Phase 2:
-                    # Move each rotation to each different column
-                # Phase 3:
-                    # Move each of those all the way down, marking each spot on the way down
-                # Phase 4:
-                    # Do the normal move gen
-            # If the maxheight is above the piece spawn height:
-                # Do normal move gen
-            
-            # Other ideas:
-            # Calculate all areas that a piece could fit, subtract the moves that can be found
-            # by harddropping, and then backtrack to find those moves
-                # Issue of backtracking kicks
-            
-            
             # Queue for looking through piece placements
             next_location_queue = deque()
             place_location_queue = []
@@ -362,46 +499,18 @@ def get_move_matrix(player):
 
             check_add_to_sets(piece.x_0, piece.y_0, piece.rotation)
 
+            # O piece can't rotate
+            check_rotations = True
+            if piece.type == "O":
+                check_rotations = False
+
             # Search through the queue
-            while len(next_location_queue) > 0:
-                location = next_location_queue.popleft()
-
-                piece.x_0, piece.y_0, piece.rotation = location
-
-                piece.coordinates = piece.get_self_coords
-
-                # Check left, right moves
-                for x_offset in [1, -1]:
-                    if sim_player.can_move(piece, x_offset=x_offset): # Check this first to avoid index errors
-                        x = piece.x_0 + x_offset
-                        y = piece.y_0
-                        o = piece.rotation
-
-                        check_add_to_sets(x, y, o)
-                
-                # Check full softdrop
-                ghost_y = sim_player.ghost_y
-
-                if ghost_y != sim_player.piece.y_0:
-                    x = piece.x_0
-                    o = piece.rotation
-
-                    check_add_to_sets(x, ghost_y, o)
-
-                # Check rotations 1, 2, and 3
-                for i in range(1, 4):
-                    sim_player.try_wallkick(i)
-
-                    x = piece.x_0
-                    y = piece.y_0
-                    o = piece.rotation
-
-                    if y >= 0: # Avoid negative indexing
-                        check_add_to_sets(x, y, o)
-
-                    # Reset piece locations
-                    if i != 3: # Don't need to reset on last rotation
-                        piece.x_0, piece.y_0, piece.rotation = location
+            if algo == 'brute-force':
+                algo_1(check_rotations)
+            elif algo == 'faster-but-loss':
+                algo_2(check_rotations)
+            else:
+                raise Exception("Invalid algorithm type")
 
             for x, y, o in place_location_queue:
                 rotation_index = o % len(policy_pieces[piece.type])
@@ -450,39 +559,8 @@ def get_move_list(move_matrix, policy_matrix):
 # 
 # Player orientation: Active player, other player
 # y:
-#   Policy: (2 x 25 x 11 x 4) = 2200 (Hold x Rows x Columns x Rotations)
+#   Policy: (19 x 25 x 11) = 5225 (Hold x Rows x Columns x Rotations)
 #   Value: (1)
-# 
-# Model <1.7: In the trenches
-# 
-# Model 1.8: Added data augmentation and changed amount of training data and added dirichlet noise: 
-# Performs semi rare line clears
-# 
-# Model 1.9: Fixed data augmentation pieces not being swapped correctly
-# Back in the trenches
-#
-# Model 2.0: Normalized policy values, minor piece optimization improvement, major tf optimizations:
-# Increased iter, heavily enlarged network (37 million parameters)
-# Out of the trenches: some line clears
-#
-# Model 2.1: Reduced network, (grids -> cnn) + flattened inputs -> dense -> output, added continuous training
-# Back into trenches
-#
-# Model 2.2: Completely restructured network
-# Trenches
-#
-# Model 2.3: Enlargened/lengthened network + saved image, max iter: 40 -> 80, battle games: 20 -> 40
-# Some line clears
-# 
-# Model 2.4: Model only uses data from the current best network
-# Awful
-#
-# Model 2.5: Adjusted dropout to 0.5
-# Awful
-#
-# Model 2.6: Adjusted neurons to 16 and max_iter to 160
-# Awful
-#
 
 def create_network(config: Config, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights

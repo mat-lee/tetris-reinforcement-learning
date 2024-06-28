@@ -1,9 +1,10 @@
-from ai import battle_networks_win_loss, Config, create_network, directory_path, get_interpreter, load_best_model, load_data, MCTS, train_network
+from ai import battle_networks_win_loss, Config, create_network, directory_path, get_interpreter, get_move_matrix, load_best_model, load_data, MCTS, train_network
 from const import *
 from game import Game
 
 from collections import namedtuple
 import matplotlib.pyplot as plt
+import numpy as np
 import pygame
 import time
 
@@ -61,6 +62,11 @@ def time_move_matrix() -> None:
     # Pop first:                      0.320
     # Don't use array                 0.297
         # Using mp Queue              0.354
+    
+    # Default                         0.298
+    # Don't check o rotations         0.280
+    # Use single softdrop             0.339
+    # Using fast algo                 0.194
 
     num_games = 10
 
@@ -92,6 +98,41 @@ def time_move_matrix() -> None:
     END = time.time()
 
     print((END-START)/moves)
+
+def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss') -> None:
+    # Test how accurate an algorithm is
+    # Returns the percent of moves an algorithm found compared to all possible moves
+
+    num_games = 10
+
+    # Initialize pygame
+    pygame.init()
+    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+    pygame.display.set_caption(f'Testing algorithm accuracy')
+
+    interpreter = get_interpreter(load_best_model())
+
+    config = Config()
+
+    truth_moves = 0
+    test_moves = 0
+
+    for _ in range(num_games):
+        game = Game()
+        game.setup()
+
+        while game.is_terminal == False:
+            truth_moves += np.sum(get_move_matrix(game.players[game.turn], algo=truth_algo))
+            test_moves += np.sum(get_move_matrix(game.players[game.turn], algo=test_algo))
+
+            move, _ = MCTS(config, game, interpreter, move_algorithm='brute-force')
+            game.make_move(move)
+
+            game.show(screen)
+            pygame.event.get()
+            pygame.display.update()
+    
+    print(test_moves / truth_moves * 100)
 
 def battle_parameters(load_from_best_model: bool = False,
                       data: list[list] = None, 
@@ -137,5 +178,6 @@ def battle_parameters(load_from_best_model: bool = False,
 
     print(scores)
 
-battle_parameters(load_from_best_model=True, var="CPUCT", values=[0.66, 1, 1.5])
-# time_move_matrix()
+battle_parameters(load_from_best_model=True, var="CPUCT", values=[0.64, 0.8, 1])
+
+# test_algorithm_accuracy()

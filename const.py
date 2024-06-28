@@ -102,6 +102,7 @@ policy_index_to_piece = {
 }
 
 # Leftside buffer is 2
+# Can't place piece at the bottom most row
 POLICY_SHAPE = (len(policy_index_to_piece), ROWS - 1, COLS + 2 - 1)
 POLICY_SIZE = prod(POLICY_SHAPE)
 
