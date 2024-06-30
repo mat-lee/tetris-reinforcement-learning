@@ -1,4 +1,4 @@
-from ai import battle_networks_win_loss, Config, create_network, directory_path, get_interpreter, get_move_matrix, load_best_model, load_data, MCTS, train_network
+from ai import Config, generate_alphazerolike_network, generate_fishlike_network, instantiate_network, directory_path, get_interpreter, get_move_matrix, load_best_model, load_data, MCTS, train_network
 from const import *
 from game import Game
 
@@ -145,7 +145,7 @@ def battle_parameters(load_from_best_model: bool = False,
         setattr(config, var, value)
 
     if load_from_best_model == False:
-        networks = [create_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
+        networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
 
         for config, network in zip(configs, networks):
             train_network(config, network, data)
@@ -178,9 +178,7 @@ def battle_parameters(load_from_best_model: bool = False,
 
     print(scores)
 
-battle_parameters(load_from_best_model=True, var="CPUCT", values=[0.64, 0.8, 1])
-
-def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
+def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None) -> list[int, int]:
     # Battle two AI's with different networks, and returns the wins and losses for each network
     wins = np.zeros((2), dtype=int)
     for i in range(games):
@@ -214,4 +212,29 @@ def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_ti
     print(network_1_title, wins, network_2_title)
     return wins
 
-# test_algorithm_accuracy()
+def battle_different_networks(nn_gen_1, nn_gen_2):
+    config = Config(l1_neurons=2560, l2_neurons=64)
+    network_1 = instantiate_network(config, nn_generator=nn_gen_1, show_summary=True, save_network=False, plot_model=False)
+    network_2 = instantiate_network(config, nn_generator=nn_gen_2, show_summary=True, save_network=False, plot_model=False)
+
+    data_0 = load_data(0, 20)
+    data_1 = load_data(1, 20)
+    data_2 = load_data(2, 20)
+    train_network(config, network_1, data_0)
+    train_network(config, network_1, data_1)
+    train_network(config, network_1, data_2)
+    train_network(config, network_2, data_0)
+    train_network(config, network_2, data_1)
+    train_network(config, network_2, data_2)
+
+    interpreter_1 = get_interpreter(network_1)
+    interpreter_2 = get_interpreter(network_2)
+
+    pygame.init()
+    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+
+    battle_networks_win_loss(interpreter_1, config, 
+                             interpreter_2, config, 
+                             400, show_game=True, screen=screen)
+
+battle_different_networks(generate_alphazerolike_network, generate_fishlike_network)

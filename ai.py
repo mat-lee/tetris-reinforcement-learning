@@ -30,7 +30,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 4.5
+CURRENT_VERSION = 4.1
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -564,20 +564,20 @@ def get_move_list(move_matrix, policy_matrix):
 #   Value: (1)
 
 def create_input_layers():
-    shapes = [(ROWS, COLS), # Grid
-                (2 + PREVIEWS, len(MINOS)), # Pieces
-                (1,), # B2B
-                (1,), # Combo
-                (1,), # Lines cleared
-                (1,), # Lines sent
-                (ROWS, COLS), 
-                (2 + PREVIEWS, len(MINOS)), 
-                (1,), 
-                (1,), 
-                (1,),
-                (1,),
-                (1,), # Color (Whether you had first move or not)
-                (1,)] # Total pieces placed
+    shapes = [(ROWS, COLS, 1), # Grid
+              (2 + PREVIEWS, len(MINOS)), # Pieces
+              (1,), # B2B
+              (1,), # Combo
+              (1,), # Lines cleared
+              (1,), # Lines sent
+              (ROWS, COLS, 1), 
+              (2 + PREVIEWS, len(MINOS)), 
+              (1,), 
+              (1,), 
+              (1,),
+              (1,),
+              (1,), # Color (Whether you had first move or not)
+              (1,)] # Total pieces placed
 
     inputs = []
     active_features = []
@@ -610,7 +610,6 @@ def create_input_layers():
             non_player_features.append(keras.layers.Flatten()(input))
     
     return inputs, active_grid, active_features, opponent_grid, opponent_features, non_player_features
-
 
 def generate_fishlike_network(config: Config) -> keras.Model:
     # The network is designed to be fast and compatable with tflite
@@ -655,6 +654,75 @@ def generate_fishlike_network(config: Config) -> keras.Model:
 
     value_output = ValueHead()(combined)
     policy_output = PolicyHead()(combined)
+
+    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+
+    return model
+
+def generate_alphazerolike_network(config: Config) -> keras.Model:
+    # The network is designed to be fast and compatable with tflite
+    # Drawing inspiration from stockfish's NNUE architecture
+
+    filters = 16
+    dropout = 0.4
+
+    def ValueHead():
+        # Returns value; found at the end of the network
+        def inside(x):
+            x = keras.layers.Dense(1, activation="sigmoid")(x)
+
+            return x
+        return inside
+
+    def PolicyHead():
+        # Returns policy list; found at the end of the network
+        def inside(x):
+            # Generate probability distribution
+            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+
+            return x
+        return inside
+
+    def ResidualLayer():
+        # Uses skip conections
+        def inside(x):
+            y = keras.layers.Conv2D(filters, (3, 3), padding="same")(x)
+            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Activation('relu')(y)
+            y = keras.layers.Conv2D(filters, (3, 3), padding="same")(y)
+            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Activation('relu')(y)
+            z = keras.layers.Add()([x, y]) # Skip connection
+
+            z = keras.layers.Dropout(dropout)(z)
+
+            return z
+        return inside
+
+    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
+
+    stacked_grids = keras.layers.Concatenate(axis=-1)([a_grid, o_grid])
+    # stacked_grids = a_grid
+
+    # Apply a convolution
+    stacked_grids = keras.layers.Conv2D(filters, (3, 3), padding="same")(stacked_grids)
+    stacked_grids = keras.layers.BatchNormalization()(stacked_grids)
+    stacked_grids = keras.layers.Activation('relu')(stacked_grids)
+    stacked_grids = keras.layers.Dropout(dropout)(stacked_grids)
+
+    # 10 residual layers
+    for _ in range(10):
+        stacked_grids = ResidualLayer()(stacked_grids)
+    
+    # 1x1 Kernel
+    x = keras.layers.Conv2D(1, (1, 1))(stacked_grids)
+    x = keras.layers.Flatten()(x)
+
+    # Combine with other features
+    x = keras.layers.Concatenate()([x, *a_features, *o_features, *non_player_features])
+
+    value_output = ValueHead()(x)
+    policy_output = PolicyHead()(x)
 
     model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
 
@@ -712,7 +780,10 @@ def evaluate_from_tflite(game, interpreter):
         if type(feature) in (float, int):
             X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
         else:
-            X.append(np.expand_dims(np.float32(feature), axis=0))
+            np_feature = np.expand_dims(np.float32(feature), axis=0)
+            if np_feature.shape == (1, 26, 10): # Expand grids
+                np_feature = np.expand_dims(np_feature, axis=-1)
+            X.append(np_feature)
     
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
