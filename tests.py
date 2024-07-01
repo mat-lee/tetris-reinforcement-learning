@@ -237,4 +237,16 @@ def battle_different_networks(nn_gen_1, nn_gen_2):
                              interpreter_2, config, 
                              400, show_game=True, screen=screen)
 
-battle_different_networks(generate_alphazerolike_network, generate_fishlike_network)
+# battle_different_networks(generate_alphazerolike_network, generate_fishlike_network)
+
+config = Config()
+network = instantiate_network(config, nn_generator=generate_alphazerolike_network, show_summary=True, save_network=False, plot_model=True)
+
+data_0 = load_data(0, 20)
+data_1 = load_data(1, 20)
+data_2 = load_data(2, 20)
+train_network(config, network, data_0)
+train_network(config, network, data_1)
+train_network(config, network, data_2)
+
+network.save(f"{directory_path}/4.24e65.0.keras")

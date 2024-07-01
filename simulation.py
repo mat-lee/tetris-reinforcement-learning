@@ -4,7 +4,7 @@ from ai import *
 
 DefaultConfig = Config()
 # Create a network if none exist already
-if highest_model_ver() == -1:
+if highest_model_ver(CURRENT_VERSION) == -1:
     instantiate_network(DefaultConfig, generate_fishlike_network, save_network=True, plot_model=False)
 
 # Initiate selfplay
