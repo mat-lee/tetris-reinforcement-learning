@@ -250,4 +250,4 @@ def battle_different_networks(*args):
 
     print(scores)
 
-battle_different_networks(gen_alphastack_nn, gen_alphasplit_nn, gen_alphasame_nn)
+# battle_different_networks(gen_alphastack_nn, gen_alphasplit_nn, gen_alphasame_nn)

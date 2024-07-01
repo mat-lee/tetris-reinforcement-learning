@@ -3,7 +3,7 @@ from game import Game
 
 from collections import deque
 import gc
-import json
+#import json
 import math
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,6 +12,7 @@ import random
 import sys
 import time
 import treelib
+import ujson
 
 # # Prior to importing tensorflow, disable debug logs
 import os
@@ -30,7 +31,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 4.3
+CURRENT_VERSION = 40.3
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -910,7 +911,7 @@ def instantiate_network(config: Config, nn_generator, show_summary=True, save_ne
 
     if show_summary: model.summary()
 
-    if save_network: model.save(f"{directory_path}/{nn_generator}_{CURRENT_VERSION}.0.keras")
+    if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
 
     return model
 
@@ -1301,7 +1302,7 @@ def make_training_set(config, network, model_version_to_load, num_games, show_ga
         data = play_game(config, network, i, show_game=show_game, screen=screen)
         series_data.extend(data)
 
-    json_data = json.dumps(series_data)
+    json_data = ujson.dumps(series_data)
 
     # Increment set counter
     next_set = highest_data_ver(model_version_to_load) + 1
@@ -1329,7 +1330,7 @@ def load_data(model_ver=None, model_iter=None, last_n_sets=20):
             if iteration == model_iter or model_iter == None:
                 if data_number > max_set - last_n_sets:
                     # Load data
-                    set = json.load(open(f"{directory_path}/{filename}", 'r'))
+                    set = ujson.load(open(f"{directory_path}/{filename}", 'r'))
                     data.append(set)
 
                     sets += 1
