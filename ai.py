@@ -611,7 +611,7 @@ def create_input_layers():
     
     return inputs, active_grid, active_features, opponent_grid, opponent_features, non_player_features
 
-def generate_fishlike_network(config: Config) -> keras.Model:
+def gen_fishlike_nn(config: Config) -> keras.Model:
     # The network is designed to be fast and compatable with tflite
     # Drawing inspiration from stockfish's NNUE architecture
 
@@ -659,7 +659,7 @@ def generate_fishlike_network(config: Config) -> keras.Model:
 
     return model
 
-def generate_alphazerolike_network(config: Config) -> keras.Model:
+def gen_alphastack_nn(config: Config) -> keras.Model:
     # The network is designed to be fast and compatable with tflite
     # Drawing inspiration from stockfish's NNUE architecture
 
@@ -728,7 +728,172 @@ def generate_alphazerolike_network(config: Config) -> keras.Model:
 
     return model
 
-def instantiate_network(config: Config, nn_generator=generate_fishlike_network, show_summary=True, save_network=True, plot_model=False):
+def gen_alphasplit_nn(config: Config) -> keras.Model:
+    # The network is designed to be fast and compatable with tflite
+    # Drawing inspiration from stockfish's NNUE architecture
+
+    filters = 16
+    dropout = 0.4
+
+    def ValueHead():
+        # Returns value; found at the end of the network
+        def inside(x):
+            x = keras.layers.Dense(1, activation="sigmoid")(x)
+
+            return x
+        return inside
+
+    def PolicyHead():
+        # Returns policy list; found at the end of the network
+        def inside(x):
+            # Generate probability distribution
+            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+
+            return x
+        return inside
+
+    def ResidualLayer():
+        # Uses skip conections
+        def inside(x):
+            y = keras.layers.Conv2D(filters, (3, 3), padding="same")(x)
+            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Activation('relu')(y)
+            y = keras.layers.Conv2D(filters, (3, 3), padding="same")(y)
+            y = keras.layers.BatchNormalization()(y)
+            y = keras.layers.Activation('relu')(y)
+            z = keras.layers.Add()([x, y]) # Skip connection
+
+            z = keras.layers.Dropout(dropout)(z)
+
+            return z
+        return inside
+
+    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
+
+    # Apply a convolution
+    a_grid = keras.layers.Conv2D(filters, (3, 3), padding="same")(a_grid)
+    a_grid = keras.layers.BatchNormalization()(a_grid)
+    a_grid = keras.layers.Activation('relu')(a_grid)
+    a_grid = keras.layers.Dropout(dropout)(a_grid)
+
+    o_grid = keras.layers.Conv2D(filters, (3, 3), padding="same")(o_grid)
+    o_grid = keras.layers.BatchNormalization()(o_grid)
+    o_grid = keras.layers.Activation('relu')(o_grid)
+    o_grid = keras.layers.Dropout(dropout)(o_grid)
+
+    # 10 residual layers
+    for _ in range(10):
+        a_grid = ResidualLayer()(a_grid)
+        o_grid = ResidualLayer()(o_grid)
+    
+    # 1x1 Kernel
+    a_grid = keras.layers.Conv2D(1, (1, 1))(a_grid)
+    a_grid = keras.layers.Flatten()(a_grid)
+
+    o_grid = keras.layers.Conv2D(1, (1, 1))(o_grid)
+    o_grid = keras.layers.Flatten()(o_grid)
+
+    # Shrink opponent grid info
+    o_grid = keras.layers.Dense(16)(o_grid)
+
+    # Combine with other features
+    x = keras.layers.Concatenate()([a_grid, o_grid, *a_features, *o_features, *non_player_features])
+
+    value_output = ValueHead()(x)
+    policy_output = PolicyHead()(x)
+
+    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+
+    return model
+
+def gen_alphasame_nn(config: Config) -> keras.Model:
+    # The network is designed to be fast and compatable with tflite
+    # Drawing inspiration from stockfish's NNUE architecture
+
+    filters = 16
+    dropout = 0.4
+
+    def ValueHead():
+        # Returns value; found at the end of the network
+        def inside(x):
+            x = keras.layers.Dense(1, activation="sigmoid")(x)
+
+            return x
+        return inside
+
+    def PolicyHead():
+        # Returns policy list; found at the end of the network
+        def inside(x):
+            # Generate probability distribution
+            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+
+            return x
+        return inside
+
+    def ResidualLayer():
+        # Uses skip conections
+        def inside(in_1, in_2):
+            conv_1 = keras.layers.Conv2D(filters, (3, 3), padding="same")
+            batch_1 = keras.layers.BatchNormalization()
+            relu_1 = keras.layers.Activation('relu')
+            conv_2 = keras.layers.Conv2D(filters, (3, 3), padding="same")
+            batch_2 = keras.layers.BatchNormalization()
+            relu_2 = keras.layers.Activation('relu')
+
+            out_1 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_1))))))
+            out_2 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_2))))))
+
+            out_1 = keras.layers.Add()([in_1, out_1])
+            out_2 = keras.layers.Add()([in_2, out_2])
+
+            dropout_1 = keras.layers.Dropout(dropout)
+
+            out_1 = dropout_1(out_1)
+            out_2 = dropout_1(out_2)
+
+            return out_1, out_2
+        return inside
+
+    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
+
+    # Start with a convolutional layer
+    # Because each grid needs the same network, use the same layers for each side
+    conv_1 = keras.layers.Conv2D(filters, (3, 3), padding="same")
+    batch_1 = keras.layers.BatchNormalization()
+    relu_1 = keras.layers.Activation('relu')
+    dropout_1 = keras.layers.Dropout(dropout)
+    
+    a_grid = dropout_1(relu_1(batch_1(conv_1(a_grid))))
+    o_grid = dropout_1(relu_1(batch_1(conv_1(o_grid))))
+
+    # 10 residual layers
+    for _ in range(10):
+        residual_layer = ResidualLayer()
+        a_grid, o_grid = residual_layer(a_grid, o_grid)
+    
+    # 1x1 Kernel
+    kernel_1 = keras.layers.Conv2D(1, (1, 1))
+    a_grid = kernel_1(a_grid)
+    o_grid = kernel_1(o_grid)
+
+    flatten_1 = keras.layers.Flatten()
+    a_grid = flatten_1(a_grid)
+    o_grid = flatten_1(o_grid)
+
+    # Shrink opponent grid info
+    o_grid = keras.layers.Dense(16)(o_grid)
+
+    # Combine with other features
+    x = keras.layers.Concatenate()([a_grid, o_grid, *a_features, *o_features, *non_player_features])
+
+    value_output = ValueHead()(x)
+    policy_output = PolicyHead()(x)
+
+    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+
+    return model
+
+def instantiate_network(config: Config, nn_generator, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights
     # 1: For each grid, apply the same neural network, and then use 1x1 kernel and concatenate
     # 1 -> 2: For opponent grid, apply fully connected layer
@@ -745,7 +910,7 @@ def instantiate_network(config: Config, nn_generator=generate_fishlike_network, 
 
     if show_summary: model.summary()
 
-    if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
+    if save_network: model.save(f"{directory_path}/{nn_generator}_{CURRENT_VERSION}.0.keras")
 
     return model
 
@@ -1155,6 +1320,8 @@ def load_data(model_ver=None, model_iter=None, last_n_sets=20):
     # SHOULD ONLY BE USED IF model_ver AND model_iter are specified
     max_set = highest_data_ver(model_iter)
 
+    sets, len_sets = 0, 0
+
     # Get n games
     for filename in get_filenames('.txt'):
         version, iteration, data_number = split_data_filename(filename)
@@ -1164,6 +1331,11 @@ def load_data(model_ver=None, model_iter=None, last_n_sets=20):
                     # Load data
                     set = json.load(open(f"{directory_path}/{filename}", 'r'))
                     data.append(set)
+
+                    sets += 1
+                    len_sets += len(set)
+    
+    print(sets, len_sets)
     return data
 
 def battle_networks(NN_1, config_1, NN_2, config_2, threshold, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
@@ -1237,7 +1409,6 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
 
         # Load data generated by the best current network
         data = load_data(CURRENT_VERSION, best_network_version, SETS_TO_TRAIN_WITH)
-        print(len(data))
 
         # Train challenger network
         train_network(config, challenger_network, data)

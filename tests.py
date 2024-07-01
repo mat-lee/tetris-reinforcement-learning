@@ -1,4 +1,4 @@
-from ai import Config, generate_alphazerolike_network, generate_fishlike_network, instantiate_network, directory_path, get_interpreter, get_move_matrix, load_best_model, load_data, MCTS, train_network
+from ai import *
 from const import *
 from game import Game
 
@@ -212,41 +212,42 @@ def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_ti
     print(network_1_title, wins, network_2_title)
     return wins
 
-def battle_different_networks(nn_gen_1, nn_gen_2):
+def battle_different_networks(*args):
     config = Config(l1_neurons=2560, l2_neurons=64)
-    network_1 = instantiate_network(config, nn_generator=nn_gen_1, show_summary=True, save_network=False, plot_model=False)
-    network_2 = instantiate_network(config, nn_generator=nn_gen_2, show_summary=True, save_network=False, plot_model=False)
+    
+    networks = [instantiate_network(config, 
+                                    nn_generator=arg, 
+                                    show_summary=True, 
+                                    save_network=False, 
+                                    plot_model=False) for arg in args]
 
-    data_0 = load_data(0, 20)
-    data_1 = load_data(1, 20)
-    data_2 = load_data(2, 20)
-    train_network(config, network_1, data_0)
-    train_network(config, network_1, data_1)
-    train_network(config, network_1, data_2)
-    train_network(config, network_2, data_0)
-    train_network(config, network_2, data_1)
-    train_network(config, network_2, data_2)
+    data = load_data(model_ver=CURRENT_VERSION)
 
-    interpreter_1 = get_interpreter(network_1)
-    interpreter_2 = get_interpreter(network_2)
+    for network in networks:
+        train_network(config, network, data)
+
+    interpreters = [get_interpreter(network) for network in networks]
 
     pygame.init()
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
 
-    battle_networks_win_loss(interpreter_1, config, 
-                             interpreter_2, config, 
-                             400, show_game=True, screen=screen)
+    scores={str(arg): {} for arg in args}
 
-# battle_different_networks(generate_alphazerolike_network, generate_fishlike_network)
+    for i in range(len(args)):
+        first_network = interpreters[i]
+        for j in range(i):
+            if i != j:
+                second_network = interpreters[j]
+                score_1, score_2 = battle_networks_win_loss(first_network, config, 
+                                                            second_network, config,
+                                                            400, 
+                                                            network_1_title=str(args[i]), 
+                                                            network_2_title=str(args[j]), 
+                                                            show_game=True, screen=screen)
+                
+                scores[str(args[i])][str(args[j])] = f"{score_1}-{score_2}"
+                scores[str(args[j])][str(args[i])] = f"{score_2}-{score_1}"
 
-config = Config()
-network = instantiate_network(config, nn_generator=generate_alphazerolike_network, show_summary=True, save_network=False, plot_model=True)
+    print(scores)
 
-data_0 = load_data(0, 20)
-data_1 = load_data(1, 20)
-data_2 = load_data(2, 20)
-train_network(config, network, data_0)
-train_network(config, network, data_1)
-train_network(config, network, data_2)
-
-network.save(f"{directory_path}/4.24e65.0.keras")
+battle_different_networks(gen_alphastack_nn, gen_alphasplit_nn, gen_alphasame_nn)
