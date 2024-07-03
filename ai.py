@@ -31,7 +31,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 40.3
+CURRENT_VERSION = 4.3
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -53,17 +53,20 @@ total_branch = 0
 number_branch = 0
 
 class Config():
-    def __init__(self, 
-                 l1_neurons=256, 
-                 l2_neurons=32, 
-                 learning_rate=0.001, 
-                 loss_weights=[1, 1], 
-                 epochs=1, 
-                 MAX_ITER=160, # 1600
-                 DIRICHLET_ALPHA=0.01, 
-                 DIRICHLET_EXPLORATION=0.25, 
-                 CPUCT=1):
-        
+    def __init__(
+        self, 
+        augment_data=True,
+        l1_neurons=256, 
+        l2_neurons=32, 
+        learning_rate=0.001, 
+        loss_weights=[1, 1], 
+        epochs=1, 
+        MAX_ITER=160, # 1600
+        DIRICHLET_ALPHA=0.01, 
+        DIRICHLET_EXPLORATION=0.25, 
+        CPUCT=1
+    ):
+        self.augment_data = augment_data
         self.l1_neurons = l1_neurons
         self.l2_neurons = l2_neurons
         self.learning_rate = learning_rate
@@ -1295,20 +1298,27 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
 
     return data
 
-def make_training_set(config, network, model_version_to_load, num_games, show_game=False, screen=None):
+def make_training_set(config, network, model_version_to_load, num_games, save_game=True, show_game=False, screen=None):
     # Creates a dataset of several AI games.
+    if show_game:
+        pygame.init()
+
     series_data = []
     for i in range(1, num_games + 1):
         data = play_game(config, network, i, show_game=show_game, screen=screen)
         series_data.extend(data)
 
-    json_data = ujson.dumps(series_data)
+    if save_game == True:
+        json_data = ujson.dumps(series_data)
 
-    # Increment set counter
-    next_set = highest_data_ver(model_version_to_load) + 1
+        # Increment set counter
+        next_set = highest_data_ver(model_version_to_load) + 1
 
-    with open(f"{directory_path}/{CURRENT_VERSION}.{model_version_to_load}.{next_set}.txt", 'w') as out_file:
-        out_file.write(json_data)
+        with open(f"{directory_path}/{CURRENT_VERSION}.{model_version_to_load}.{next_set}.txt", 'w') as out_file:
+            out_file.write(json_data)
+    
+    else:
+        return series_data
 
 def load_data(model_ver=None, model_iter=None, last_n_sets=20):
     data = []

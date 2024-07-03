@@ -8,6 +8,66 @@ import numpy as np
 import pygame
 import time
 
+# ------------------------- Internal Functions -------------------------
+def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None) -> list[int, int]:
+    # Battle two AI's with different networks, and returns the wins and losses for each network
+    wins = np.zeros((2), dtype=int)
+    for i in range(games):
+        if show_game == True:
+            if screen != None:
+                screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+            pygame.display.set_caption(f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}')
+
+            for event in pygame.event.get():
+                pass
+
+        game = Game()
+        game.setup()
+        while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
+            if game.turn == 0:
+                move, _ = MCTS(config_1, game, NN_1)    
+            elif game.turn == 1:
+                move, _ = MCTS(config_2, game, NN_2)
+                
+            game.make_move(move)
+
+            if show_game == True:
+                game.show(screen)
+                pygame.display.update()
+
+        winner = game.winner
+        if winner == -1:
+            wins += 0.5
+        else: wins[winner] += 1
+
+    print(network_1_title, wins, network_2_title)
+    return wins
+
+def battle_royale(interpreters, configs, names, num_games, visual=True) -> dict:
+    screen = None
+    if visual == True:
+        pygame.init()
+        screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+
+    scores={name: {} for name in names}
+
+    for i in range(len(interpreters)):
+        for j in range(i):
+            if i != j:
+                score_1, score_2 = battle_networks_win_loss(interpreters[i], configs[i], 
+                                                            interpreters[j], configs[j],
+                                                            num_games, 
+                                                            network_1_title=names[i], 
+                                                            network_2_title=names[j], 
+                                                            show_game=visual, screen=screen)
+                
+                scores[names[i]][names[j]] = f"{score_1}-{score_2}"
+                scores[names[j]][names[i]] = f"{score_2}-{score_1}"
+
+    return scores
+
+# ------------------------- Test Functions -------------------------
+
 def test_dirichlet_noise() -> None:
     # Finding different values of dirichlet alpha affect piece decisions
     alpha_values = [1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
@@ -107,7 +167,7 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
 
     # Initialize pygame
     pygame.init()
-    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption(f'Testing algorithm accuracy')
 
     interpreter = get_interpreter(load_best_model())
@@ -134,16 +194,21 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     
     print(test_moves / truth_moves * 100)
 
-def battle_parameters(load_from_best_model: bool = False,
-                      data: list[list] = None, 
-                      var: str = "", 
-                      values: list[int] = None) -> None:
+def test_parameters(
+    data, 
+    var: str, 
+    values: list,
+    num_games: int,
+    load_from_best_model: bool = False,
+    visual: bool = True
+):
     ## Grid search battling different parameters
-
+    # Configs
     configs = [Config() for _ in range(len(values))]
     for value, config in zip(values, configs):
         setattr(config, var, value)
 
+    # Networks
     if load_from_best_model == False:
         networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
 
@@ -152,102 +217,96 @@ def battle_parameters(load_from_best_model: bool = False,
     else:
         networks = [load_best_model() for _ in range(len(values))]
 
+    # Networks -> interpreters
     interpreters = [get_interpreter(network) for network in networks]
 
-    scores={str(title): {} for title in values}
+    print(battle_royale(interpreters, 
+                        configs, 
+                        [str(value) for value in values], 
+                        num_games,
+                        visual=visual))
 
-    pygame.init()
-    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-
-    for i in range(len(values)):
-        first_network = interpreters[i]
-        first_config = configs[i]
-        for j in range(i):
-            if i != j:
-                second_network = interpreters[j]
-                second_config = configs[j]
-                score_1, score_2 = battle_networks_win_loss(first_network, first_config, 
-                                                            second_network, second_config,
-                                                            400, 
-                                                            network_1_title=values[i], 
-                                                            network_2_title=values[j], 
-                                                            show_game=True, screen=screen)
-                
-                scores[str(values[i])][str(values[j])] = f"{score_1}-{score_2}"
-                scores[str(values[j])][str(values[i])] = f"{score_2}-{score_1}"
-
-    print(scores)
-
-def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None) -> list[int, int]:
-    # Battle two AI's with different networks, and returns the wins and losses for each network
-    wins = np.zeros((2), dtype=int)
-    for i in range(games):
-        if show_game == True:
-            if screen != None:
-                screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-            pygame.display.set_caption(f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}')
-
-            for event in pygame.event.get():
-                pass
-
-        game = Game()
-        game.setup()
-        while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
-            if game.turn == 0:
-                move, _ = MCTS(config_1, game, NN_1)    
-            elif game.turn == 1:
-                move, _ = MCTS(config_2, game, NN_2)
-                
-            game.make_move(move)
-
-            if show_game == True:
-                game.show(screen)
-                pygame.display.update()
-
-        winner = game.winner
-        if winner == -1:
-            wins += 0.5
-        else: wins[winner] += 1
-
-    print(network_1_title, wins, network_2_title)
-    return wins
-
-def battle_different_networks(*args):
-    config = Config(l1_neurons=2560, l2_neurons=64)
+def test_architectures(
+    nn_gens: list, 
+    data,
+    num_games,
+    visual=True
+):
+    # Configs aren't being changed here but the list is needed for battle royale
+    configs = [Config() for _ in range(len(nn_gens))]
     
-    networks = [instantiate_network(config, 
-                                    nn_generator=arg, 
+    networks = [instantiate_network(configs[0], 
+                                    nn_generator=nn_gen, 
                                     show_summary=True, 
                                     save_network=False, 
-                                    plot_model=False) for arg in args]
-
-    data = load_data(model_ver=CURRENT_VERSION)
+                                    plot_model=False) for nn_gen in nn_gens]
 
     for network in networks:
-        train_network(config, network, data)
+        train_network(configs[0], network, data)
 
     interpreters = [get_interpreter(network) for network in networks]
 
-    pygame.init()
-    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+    print(battle_royale(interpreters, 
+                        configs, 
+                        [str(nn_gen) for nn_gen in nn_gens],
+                        num_games=num_games))
 
-    scores={str(arg): {} for arg in args}
+def test_data_parameters(
+    var: str, 
+    values: list,
+    num_training_games: int,
+    num_battle_games: int,
+    load_from_best_model: bool = False,
+    visual = True
+):
+    ## Grid search battling different parameters
+    screen = None
+    if visual == True:
+        screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    
+    # Configs
+    configs = [Config() for _ in range(len(values))]
+    for value, config in zip(values, configs):
+        setattr(config, var, value)
 
-    for i in range(len(args)):
-        first_network = interpreters[i]
-        for j in range(i):
-            if i != j:
-                second_network = interpreters[j]
-                score_1, score_2 = battle_networks_win_loss(first_network, config, 
-                                                            second_network, config,
-                                                            400, 
-                                                            network_1_title=str(args[i]), 
-                                                            network_2_title=str(args[j]), 
-                                                            show_game=True, screen=screen)
-                
-                scores[str(args[i])][str(args[j])] = f"{score_1}-{score_2}"
-                scores[str(args[j])][str(args[i])] = f"{score_2}-{score_1}"
+    # Networks
+    if load_from_best_model:
+        networks = [load_best_model() for _ in range(len(values))]
+    else:
+        networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
 
-    print(scores)
+    for config, network in zip(configs, networks):
+        interpreter = get_interpreter(network)
+        set = make_training_set(config, interpreter, 999, num_training_games, save_game=False, show_game=visual, screen=screen)
+        
+        train_network(config, network, [set])
 
-# battle_different_networks(gen_alphastack_nn, gen_alphasplit_nn, gen_alphasame_nn)
+    # Networks -> interpreters
+    interpreters = [get_interpreter(network) for network in networks]
+
+    print(battle_royale(interpreters, 
+                        configs, 
+                        [str(value) for value in values], 
+                        num_battle_games,
+                        visual=visual))
+
+data = load_data(model_ver=CURRENT_VERSION, model_iter=highest_model_ver(CURRENT_VERSION), last_n_sets=20)
+test_architectures([gen_alphastack_nn, gen_alphasplit_nn, gen_alphasame_nn],
+              data,
+              num_games=400)
+
+# I believe alphasplit won
+
+# test_data_parameters("DIRICHLET_ALPHA", [0.01, 0.1, 1], num_training_games=200, num_battle_games=400, load_from_best_model=True)
+# test_data_parameters("MAX_ITER", [80, 120, 160, 200, 480], num_training_games=200, num_battle_games=400, load_from_best_model=True)
+
+
+
+
+
+# Command for running python files
+# This is for running many tests at the same time
+"/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/SRC/tests.py"
+
+# Test history:
+# 
