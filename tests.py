@@ -195,12 +195,12 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     print(test_moves / truth_moves * 100)
 
 def test_parameters(
-    data, 
     var: str, 
     values: list,
     num_games: int,
-    load_from_best_model: bool = False,
-    visual: bool = True
+    data=None,
+    load_from_best_model: bool=False,
+    visual: bool=True
 ):
     ## Grid search battling different parameters
     # Configs
@@ -216,6 +216,8 @@ def test_parameters(
             train_network(config, network, data)
     else:
         networks = [load_best_model() for _ in range(len(values))]
+    
+    del data
 
     # Networks -> interpreters
     interpreters = [get_interpreter(network) for network in networks]
@@ -244,6 +246,8 @@ def test_architectures(
     for network in networks:
         train_network(configs[0], network, data)
 
+    del data
+
     interpreters = [get_interpreter(network) for network in networks]
 
     print(battle_royale(interpreters, 
@@ -254,6 +258,7 @@ def test_architectures(
 def test_data_parameters(
     var: str, 
     values: list,
+    num_training_loops: int,
     num_training_games: int,
     num_battle_games: int,
     load_from_best_model: bool = False,
@@ -276,37 +281,69 @@ def test_data_parameters(
         networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
 
     for config, network in zip(configs, networks):
-        interpreter = get_interpreter(network)
-        set = make_training_set(config, interpreter, 999, num_training_games, save_game=False, show_game=visual, screen=screen)
-        
-        train_network(config, network, [set])
+        for _ in range(num_training_loops):
+            interpreter = get_interpreter(network)
+            set = make_training_set(config, interpreter, 999, num_training_games, save_game=False, show_game=visual, screen=screen)
+            
+            train_network(config, network, [set])
+
+            del set
 
     # Networks -> interpreters
     interpreters = [get_interpreter(network) for network in networks]
 
+    # When battling, have each use the same config
+    battle_configs = [Config() for _ in range(len(values))]
+
     print(battle_royale(interpreters, 
-                        configs, 
+                        battle_configs, 
                         [str(value) for value in values], 
                         num_battle_games,
                         visual=visual))
 
-data = load_data(model_ver=CURRENT_VERSION, model_iter=highest_model_ver(CURRENT_VERSION), last_n_sets=20)
-test_architectures([gen_alphastack_nn, gen_alphasplit_nn, gen_alphasame_nn],
-              data,
-              num_games=400)
+def test_older_vs_newer_networks():
+    # Making sure that the newest iteration of a network is better than earlier versions
+    best_model = get_interpreter(load_best_model())
 
-# I believe alphasplit won
+    path = f"{directory_path}/{CURRENT_VERSION}.{0}.keras"
+    old_model = get_interpreter(keras.models.load_model(path))
 
-# test_data_parameters("DIRICHLET_ALPHA", [0.01, 0.1, 1], num_training_games=200, num_battle_games=400, load_from_best_model=True)
-# test_data_parameters("MAX_ITER", [80, 120, 160, 200, 480], num_training_games=200, num_battle_games=400, load_from_best_model=True)
+    config = Config()
+    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+    pygame.init()
+    battle_networks_win_loss(best_model, config, old_model, config, 200, "new", "old", True, screen)
 
+def test_if_changes_improved_model():
+    config = Config()
+    network = instantiate_network(config, nn_generator=gen_alphasplit_nn, show_summary=False, save_network=False, plot_model=False)
+    data = load_data(model_ver=CURRENT_VERSION, last_n_sets=20)
 
+    train_network(config, network, data)
 
+    best_nn = get_interpreter(load_best_model())
+    chal_nn = get_interpreter(network)
+
+    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+    pygame.init()
+
+    if battle_networks(best_nn, config, chal_nn, config, 0.55, 200, "Best", "New", show_game=True, screen=screen):
+        network.save(f"{directory_path}/New.keras")
+        print("Success")
+    else:
+        print("Failure")
+
+# test_data_parameters("DIRICHLET_ALPHA", [0.003, 0.01, 0.03], num_training_loops=1, num_training_games=200, num_battle_games=400, load_from_best_model=True)
+# test_data_parameters("MAX_ITER", [40, 80], num_training_loops=2, num_training_games=100, num_battle_games=400, load_from_best_model=True)
+
+# data = load_data(model_ver=CURRENT_VERSION, model_iter=highest_model_ver(CURRENT_VERSION), last_n_sets=20)
+
+# test_parameters("CPUCT", [0.36, 0.49, 0.64], 200, load_from_best_model=True)
+
+# test_older_networks()
+
+test_if_changes_improved_model()
 
 
 # Command for running python files
 # This is for running many tests at the same time
 "/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/SRC/tests.py"
-
-# Test history:
-# 

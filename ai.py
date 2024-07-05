@@ -37,7 +37,7 @@ CURRENT_VERSION = 4.3
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # Areas of optimization:
-# - Finding piece locations/generating move matrix (O pieces no rotation, use faster algo)
+# - Generating move matrix
 # - Load data faster
 
 # AI todo:
@@ -48,6 +48,19 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Change how data is savaed and loaded
 # - Read/implement paper on accelerating self play
 # - Investigate hold issue (maybe search depth?)
+
+# Testing Results/Todo:
+# - augment_data:
+# - Architecture:           alphasplit
+# - MAX_ITER:               * Inconclusive
+# - DIRICHLET_ALPHA:        0.1 > 1
+# - Changing alpha values:  
+# - CPUCT:                  0.36 = 0.49 = 0.64
+#
+# - Global pooling
+#
+# - learning_rate:
+# - loss_weights:
 
 total_branch = 0
 number_branch = 0
@@ -64,7 +77,7 @@ class Config():
         MAX_ITER=160, # 1600
         DIRICHLET_ALPHA=0.01, 
         DIRICHLET_EXPLORATION=0.25, 
-        CPUCT=1
+        CPUCT=0.5
     ):
         self.augment_data = augment_data
         self.l1_neurons = l1_neurons
@@ -1216,11 +1229,11 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
         move, tree = MCTS(config, game, network, add_noise=True) # Add training noise
         search_matrix = search_statistics(tree) # Moves that the network looked at
         
-        # Piece sizes are needed to know where a reflected piece ends up
-        reflected_search_matrix = reflect_policy(search_matrix)
-        
         # Get data
         move_data = [*game_to_X(game)] 
+
+        # Piece sizes are needed to know where a reflected piece ends up
+        reflected_search_matrix = reflect_policy(search_matrix)
         
         # Reflect each player for a total of 2 * 2 = 4 times more data
         # When the other player is reflected, it shouldn't impact the piece of the active player
@@ -1347,6 +1360,8 @@ def load_data(model_ver=None, model_iter=None, last_n_sets=20):
                     len_sets += len(set)
     
     print(sets, len_sets)
+    # Shuffle data
+    random.shuffle(data)
     return data
 
 def battle_networks(NN_1, config_1, NN_2, config_2, threshold, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
