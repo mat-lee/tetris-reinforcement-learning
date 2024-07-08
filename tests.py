@@ -316,7 +316,7 @@ def test_older_vs_newer_networks():
 def test_if_changes_improved_model():
     config = Config()
     network = instantiate_network(config, nn_generator=gen_alphasplit_nn, show_summary=False, save_network=False, plot_model=False)
-    data = load_data(model_ver=CURRENT_VERSION, last_n_sets=20)
+    data = load_data(model_ver=CURRENT_VERSION, model_iter=highest_model_ver(CURRENT_VERSION), last_n_sets=20)
 
     train_network(config, network, data)
 
@@ -332,17 +332,16 @@ def test_if_changes_improved_model():
     else:
         print("Failure")
 
-# test_data_parameters("DIRICHLET_ALPHA", [0.003, 0.01, 0.03], num_training_loops=1, num_training_games=200, num_battle_games=400, load_from_best_model=True)
-# test_data_parameters("MAX_ITER", [40, 80], num_training_loops=2, num_training_games=100, num_battle_games=400, load_from_best_model=True)
 
-# data = load_data(model_ver=CURRENT_VERSION, model_iter=highest_model_ver(CURRENT_VERSION), last_n_sets=20)
+data = load_data(CURRENT_VERSION, highest_model_ver(CURRENT_VERSION), last_n_sets=5)
 
-# test_parameters("CPUCT", [0.36, 0.49, 0.64], 200, load_from_best_model=True)
+# test_data_parameters("DIRICHLET_ALPHA", values=[0.01, 0.03, 0.1], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
 
-# test_older_networks()
+# test_parameters("filters", [4, 16, 64], 200, data, load_from_best_model=False, visual=True)
 
-test_if_changes_improved_model()
+# time_move_matrix()
 
+test_parameters("loss_weights", [[1, 0.33], [1, 1], [1, 3]], 200, data=data, load_from_best_model=False, visual=True)
 
 # Command for running python files
 # This is for running many tests at the same time
