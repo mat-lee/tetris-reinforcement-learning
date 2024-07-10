@@ -5,7 +5,7 @@ from ai import *
 DefaultConfig = Config(layers=1)
 
 # Create a network if none exist already
-if highest_model_ver(CURRENT_VERSION) == -1:
+if highest_model_number(MODEL_VERSION) == -1:
     instantiate_network(DefaultConfig, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False)
 
 # Initiate selfplay

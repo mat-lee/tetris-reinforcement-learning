@@ -32,7 +32,8 @@ import cProfile
 import pstats
 
 # For naming data and models
-CURRENT_VERSION = 4.4
+MODEL_VERSION = 4.4
+DATA_VERSION = 1.0
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -54,11 +55,14 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - augment_data:
 # - Architecture:           alphasplit
 # - MAX_ITER:               * Inconclusive
-# - DIRICHLET_ALPHA:        0.03 > 1
+# - DIRICHLET_ALPHA: 0.03 > 1
+# - Dirichlet S: 250  = 500 = 750
+# - Use Dirichlet S with Alpha=0.01 and S=50: No diffierence
 # - Changing alpha values:  
-# - CPUCT:                  0.36 = 0.49 = 0.64
+# - CPUCT:                  0.5 < 0.75 > 1
 #
 # - Global pooling
+# - Dropout: 0.2 = 0.3 = 0.4
 #
 # - learning_rate:
 # - loss_weights:
@@ -85,9 +89,11 @@ class Config():
         loss_weights=[1, 1], 
         epochs=1, 
         MAX_ITER=160, # 1600
-        DIRICHLET_ALPHA=0.01, 
+        DIRICHLET_ALPHA=0.01,
+        DIRICHLET_S=500,
+        use_dirichlet_s=True,
         DIRICHLET_EXPLORATION=0.25, 
-        CPUCT=1
+        CPUCT=0.75
     ):
         self.l1_neurons = l1_neurons
         self.l2_neurons = l2_neurons
@@ -103,6 +109,8 @@ class Config():
         self.epochs = epochs
         self.MAX_ITER = MAX_ITER
         self.DIRICHLET_ALPHA = DIRICHLET_ALPHA
+        self.DIRICHLET_S = DIRICHLET_S
+        self.use_dirichlet_s = use_dirichlet_s
         self.DIRICHLET_EXPLORATION = DIRICHLET_EXPLORATION
         self.CPUCT = CPUCT
 
@@ -239,7 +247,11 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
         if (add_noise == True and node.is_root()):
             child_ids = node.successors(tree.identifier)
             number_of_children = len(child_ids)
-            noise_distribution = np.random.gamma(config.DIRICHLET_ALPHA, 1, number_of_children)
+            d_alpha = config.DIRICHLET_ALPHA
+            if config.use_dirichlet_s:
+                d_alpha *= config.DIRICHLET_S / number_of_children
+
+            noise_distribution = np.random.gamma(d_alpha, 1, number_of_children)
 
             pre_noise_policy = []
             post_noise_policy = []
@@ -608,14 +620,14 @@ def instantiate_network(config: Config, nn_generator=gen_alphasplit_nn, show_sum
     model = nn_generator(config)
 
     if plot_model == True:
-        keras.utils.plot_model(model, to_file=f"{directory_path}/model_{CURRENT_VERSION}_img.png", show_shapes=True)
+        keras.utils.plot_model(model, to_file=f"{directory_path}/model_{MODEL_VERSION}_img.png", show_shapes=True)
 
     # Loss is the sum of MSE of values and Cross entropy of policies
     model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
 
     if show_summary: model.summary()
 
-    if save_network: model.save(f"{directory_path}/{CURRENT_VERSION}.0.keras")
+    if save_network: model.save(f"{directory_path}/models/{MODEL_VERSION}/0.keras")
 
     return model
 
@@ -999,7 +1011,7 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
 
     return data
 
-def make_training_set(config, network, model_version_to_load, num_games, save_game=True, show_game=False, screen=None):
+def make_training_set(config, network, num_games, save_game=True, show_game=False, screen=None):
     # Creates a dataset of several AI games.
     if show_game:
         pygame.init()
@@ -1013,15 +1025,15 @@ def make_training_set(config, network, model_version_to_load, num_games, save_ga
         json_data = ujson.dumps(series_data)
 
         # Increment set counter
-        next_set = highest_data_ver(model_version_to_load) + 1
+        next_set = highest_data_number() + 1
 
-        with open(f"{directory_path}/{CURRENT_VERSION}.{model_version_to_load}.{next_set}.txt", 'w') as out_file:
+        with open(f"{directory_path}/data/{DATA_VERSION}/{next_set}.txt", 'w') as out_file:
             out_file.write(json_data)
     
     else:
         return series_data
 
-def load_data(model_ver=None, model_iter=None, last_n_sets=20):
+def load_data(last_n_sets=20):
     data = []
     # Load data from the past n games
     # You can input model_ver or model_iter as None to load 
@@ -1030,22 +1042,22 @@ def load_data(model_ver=None, model_iter=None, last_n_sets=20):
 
     # Find highest set number
     # SHOULD ONLY BE USED IF model_ver AND model_iter are specified
-    max_set = highest_data_ver(model_iter)
+    max_set = highest_data_number()
 
     sets, len_sets = 0, 0
 
-    # Get n games
-    for filename in get_filenames('.txt'):
-        version, iteration, data_number = split_data_filename(filename)
-        if version == model_ver or model_ver == None:
-            if iteration == model_iter or model_iter == None:
-                if data_number > max_set - last_n_sets:
-                    # Load data
-                    set = ujson.load(open(f"{directory_path}/{filename}", 'r'))
-                    data.append(set)
+    path = f"{directory_path}/data/{DATA_VERSION}"
 
-                    sets += 1
-                    len_sets += len(set)
+    # Get n games
+    for filename in os.listdir(path):
+        data_number = int(filename.split('.')[0])
+        if data_number > max_set - last_n_sets:
+            # Load data
+            set = ujson.load(open(f"{path}/{filename}", 'r'))
+            data.append(set)
+
+            sets += 1
+            len_sets += len(set)
     
     print(sets, len_sets)
     # Shuffle data
@@ -1112,17 +1124,17 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         # The challenger network will be trained and then battled against the prior network
         challenger_network = load_best_model()
 
-        best_network_version = highest_model_ver(CURRENT_VERSION)
+        best_network_version = highest_model_number(MODEL_VERSION)
 
         # Play a training set and train the network on past sets.
         for i in range(TRAINING_LOOPS):
             # Make data file
             if not skip_first_set:
-                make_training_set(config, best_interpreter, best_network_version, TRAINING_GAMES, show_game=show_games, screen=screen)
+                make_training_set(config, best_interpreter, TRAINING_GAMES, show_game=show_games, screen=screen)
                 print("Finished set")
 
-        # Load data generated by the best current network
-        data = load_data(CURRENT_VERSION, best_network_version, SETS_TO_TRAIN_WITH)
+        # Load data
+        data = load_data(SETS_TO_TRAIN_WITH)
 
         # Train challenger network
         train_network(config, challenger_network, data)
@@ -1136,8 +1148,8 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         # Otherwise, repeat
         if battle_networks(challenger_interpreter, config, best_interpreter, config, 0.55, BATTLE_GAMES, show_game=show_games, screen=screen):
             # Challenger network becomes next highest version
-            next_ver = highest_model_ver(CURRENT_VERSION) + 1
-            challenger_network.save(f"{directory_path}/{CURRENT_VERSION}.{next_ver}.keras")
+            next_ver = highest_model_number(MODEL_VERSION) + 1
+            challenger_network.save(f"{directory_path}/models/{MODEL_VERSION}/{next_ver}.keras")
 
             # The new network becomes the network to beat
             best_network = challenger_network
@@ -1149,9 +1161,9 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         gc.collect
 
 def load_best_model():
-    max_ver = highest_model_ver(CURRENT_VERSION)
+    max_ver = highest_model_number(MODEL_VERSION)
 
-    path = f"{directory_path}/{CURRENT_VERSION}.{max_ver}.keras"
+    path = f"{directory_path}/models/{MODEL_VERSION}/{max_ver}.keras"
 
     print(path)
 
@@ -1178,52 +1190,33 @@ def get_interpreter(model):
 
     return interpreter
 
-def highest_model_ver(ver):
+def highest_model_number(ver):
     max = -1
 
-    for filename in get_filenames('.keras'):
-        version, model_version = split_model_filename(filename)
-        if (version == ver
-            and model_version > max):
-            max = model_version
+    path = f"{directory_path}/models/{ver}"
+
+    os.makedirs(path, exist_ok=True)
+
+    for filename in os.listdir(path):
+        model_number = int(filename.split('.')[0])
+        if model_number > max:
+            max = model_number
 
     return max
 
-def highest_data_ver(ver):
+def highest_data_number():
     max = -1
 
-    for filename in get_filenames('.txt'):
-        version, model_version, data_number = split_data_filename(filename)
-        if (version == CURRENT_VERSION 
-            and model_version == ver
-            and data_number > max):
+    path = f"{directory_path}/data/{DATA_VERSION}"
+
+    os.makedirs(path, exist_ok=True)
+
+    for filename in os.listdir(path):
+        data_number = int(filename.split('.')[0])
+        if data_number > max:
             max = data_number
 
     return max
-
-def split_data_filename(filename):
-    version_part_1, filename = filename.split('.', 1)
-    version_part_2, filename = filename.split('.', 1)
-    model_version, cut_filename = filename.split('.', 1)
-    number = cut_filename.split('.', 1)[0]
-
-    return float(f"{version_part_1}.{version_part_2}"), int(model_version), int(number)
-
-def split_model_filename(filename):
-    version_part_1, filename = filename.split('.', 1)
-    version_part_2, filename = filename.split('.', 1)
-    model_version = filename.split('.', 1)[0]
-
-    return float(f"{version_part_1}.{version_part_2}"), int(model_version)
-
-def get_filenames(extension):
-    filenames = []
-
-    for filename in os.listdir(f'{directory_path}'):
-        if filename.endswith(extension):
-            filenames.append(filename)
-    
-    return filenames
 
 # Debug Functions
 

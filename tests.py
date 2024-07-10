@@ -209,15 +209,16 @@ def test_parameters(
         setattr(config, var, value)
 
     # Networks
-    if load_from_best_model == False:
+    if load_from_best_model:
+        networks = [load_best_model() for _ in range(len(values))]
+    else:
         networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
 
+    if data != None:
         for config, network in zip(configs, networks):
             train_network(config, network, data)
-    else:
-        networks = [load_best_model() for _ in range(len(values))]
-    
-    del data
+        
+        del data
 
     # Networks -> interpreters
     interpreters = [get_interpreter(network) for network in networks]
@@ -253,7 +254,8 @@ def test_architectures(
     print(battle_royale(interpreters, 
                         configs, 
                         [str(nn_gen) for nn_gen in nn_gens],
-                        num_games=num_games))
+                        num_games=num_games), 
+                        visual=visual)
 
 def test_data_parameters(
     var: str, 
@@ -283,7 +285,7 @@ def test_data_parameters(
     for config, network in zip(configs, networks):
         for _ in range(num_training_loops):
             interpreter = get_interpreter(network)
-            set = make_training_set(config, interpreter, 999, num_training_games, save_game=False, show_game=visual, screen=screen)
+            set = make_training_set(config, interpreter, num_training_games, save_game=False, show_game=visual, screen=screen)
             
             train_network(config, network, [set])
 
@@ -305,7 +307,7 @@ def test_older_vs_newer_networks():
     # Making sure that the newest iteration of a network is better than earlier versions
     best_model = get_interpreter(load_best_model())
 
-    path = f"{directory_path}/{CURRENT_VERSION}.{0}.keras"
+    path = f"{directory_path}/models/{MODEL_VERSION}.0.keras"
     old_model = get_interpreter(keras.models.load_model(path))
 
     config = Config()
@@ -316,7 +318,7 @@ def test_older_vs_newer_networks():
 def test_if_changes_improved_model():
     config = Config()
     network = instantiate_network(config, nn_generator=gen_alphasplit_nn, show_summary=False, save_network=False, plot_model=False)
-    data = load_data(model_ver=CURRENT_VERSION, model_iter=highest_model_ver(CURRENT_VERSION), last_n_sets=20)
+    data = load_data(last_n_sets=20)
 
     train_network(config, network, data)
 
@@ -333,15 +335,17 @@ def test_if_changes_improved_model():
         print("Failure")
 
 
-data = load_data(CURRENT_VERSION, highest_model_ver(CURRENT_VERSION), last_n_sets=5)
+data = load_data(last_n_sets=10)
 
+test_data_parameters("use_dirichlet_s", values=[0, 1], num_training_loops=1, num_training_games=100, num_battle_games=200, load_from_best_model=True, visual=True)
 # test_data_parameters("DIRICHLET_ALPHA", values=[0.01, 0.03, 0.1], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
+# test_data_parameters("DIRICHLET_S", values=[250, 500, 750], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
+# test_parameters("CPUCT", [0.5, 0.75, 1], 200, load_from_best_model=True, visual=True)
 
-# test_parameters("filters", [4, 16, 64], 200, data, load_from_best_model=False, visual=True)
+# test_parameters("loss_weights", [[1, 0.33], [1, 1], [1, 3]], 200, data=data, load_from_best_model=False, visual=True)
+# test_parameters("learning_rate", [1e-4, 1e-3, 1e-2], 200, data=data, load_from_best_model=True)
 
-# time_move_matrix()
-
-test_parameters("loss_weights", [[1, 0.33], [1, 1], [1, 3]], 200, data=data, load_from_best_model=False, visual=True)
+# test_parameters("dropout", [0.2, 0.3, 0.4], num_games=200, data=data,load_from_best_model=True)
 
 # Command for running python files
 # This is for running many tests at the same time
