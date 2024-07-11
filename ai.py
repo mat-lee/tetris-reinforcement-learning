@@ -19,6 +19,7 @@ import ujson
 import os
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
+
 from tensorflow import keras
 import tensorflow as tf
 from tensorflow.python.ops import math_ops
@@ -32,8 +33,8 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 4.4
-DATA_VERSION = 1.0
+MODEL_VERSION = 4.9
+DATA_VERSION = 1.1
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -78,13 +79,13 @@ class Config():
         l2_neurons=32,
 
         layers=10, # Alphalike
-        filters=16, 
+        filters=64, 
         dropout=0.4,
         kernels=1,
         o_side_neurons=16,
         value_head_neurons=16,
 
-        use_tanh=False,
+        use_tanh=True,
 
         augment_data=True,
         learning_rate=0.001, 
@@ -630,7 +631,10 @@ def instantiate_network(config: Config, nn_generator=gen_alphasplit_nn, show_sum
 
     if show_summary: model.summary()
 
-    if save_network: model.save(f"{directory_path}/models/{MODEL_VERSION}/0.keras")
+    if save_network:
+        path = f"{directory_path}/models/{MODEL_VERSION}"
+        os.makedirs(path, exist_ok=True)
+        model.save(f"{path}/0.keras")
 
     return model
 

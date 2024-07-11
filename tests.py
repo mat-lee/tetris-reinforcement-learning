@@ -159,6 +159,24 @@ def time_move_matrix() -> None:
 
     print((END-START)/moves)
 
+def profile_game() -> None:
+    game = Game()
+    game.setup()
+
+    config = Config()
+    network = get_interpreter(load_best_model())
+
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption(f'Testing algorithm accuracy')
+
+    # Profile game
+    with cProfile.Profile() as pr:
+        play_game(config, network, 777, show_game=True, screen=screen)
+    stats = pstats.Stats(pr)
+    stats.sort_stats(pstats.SortKey.TIME)
+    stats.print_stats(20)
+
 def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss') -> None:
     # Test how accurate an algorithm is
     # Returns the percent of moves an algorithm found compared to all possible moves
@@ -335,9 +353,10 @@ def test_if_changes_improved_model():
         print("Failure")
 
 
-data = load_data(last_n_sets=10)
+# data = load_data(last_n_sets=10)
+DefaultConfig=Config()
 
-test_data_parameters("use_dirichlet_s", values=[0, 1], num_training_loops=1, num_training_games=100, num_battle_games=200, load_from_best_model=True, visual=True)
+# test_data_parameters("use_dirichlet_s", values=[0, 1], num_training_loops=1, num_training_games=100, num_battle_games=200, load_from_best_model=True, visual=True)
 # test_data_parameters("DIRICHLET_ALPHA", values=[0.01, 0.03, 0.1], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
 # test_data_parameters("DIRICHLET_S", values=[250, 500, 750], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
 # test_parameters("CPUCT", [0.5, 0.75, 1], 200, load_from_best_model=True, visual=True)
@@ -346,6 +365,11 @@ test_data_parameters("use_dirichlet_s", values=[0, 1], num_training_loops=1, num
 # test_parameters("learning_rate", [1e-4, 1e-3, 1e-2], 200, data=data, load_from_best_model=True)
 
 # test_parameters("dropout", [0.2, 0.3, 0.4], num_games=200, data=data,load_from_best_model=True)
+
+instantiate_network(DefaultConfig, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False)
+profile_game()
+
+
 
 # Command for running python files
 # This is for running many tests at the same time

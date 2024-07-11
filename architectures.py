@@ -59,7 +59,7 @@ def ValueHead(config):
         x = keras.layers.BatchNormalization()(x)
         x = keras.layers.Activation('relu')(x)
         x = keras.layers.Dropout(config.dropout)(x) # Dropout
-        x = keras.layers.Dense(1, activation=('tanh' if config.tanh else 'sigmoid'))(x)
+        x = keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'))(x)
 
         return x
     return inside
