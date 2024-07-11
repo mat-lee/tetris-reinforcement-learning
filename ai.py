@@ -79,7 +79,7 @@ class Config():
         l2_neurons=32,
 
         layers=10, # Alphalike
-        filters=64, 
+        filters=16, 
         dropout=0.4,
         kernels=1,
         o_side_neurons=16,
