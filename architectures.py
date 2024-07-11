@@ -3,6 +3,7 @@ from const import *
 
 from tensorflow import keras
 
+
 def create_input_layers():
     shapes = [(ROWS, COLS, 1), # Grid
               (2 + PREVIEWS, len(MINOS)), # Pieces
@@ -58,7 +59,7 @@ def ValueHead(config):
         x = keras.layers.BatchNormalization()(x)
         x = keras.layers.Activation('relu')(x)
         x = keras.layers.Dropout(config.dropout)(x) # Dropout
-        x = keras.layers.Dense(1, activation='sigmoid')(x)
+        x = keras.layers.Dense(1, activation=('tanh' if config.tanh else 'sigmoid'))(x)
 
         return x
     return inside

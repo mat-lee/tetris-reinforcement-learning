@@ -84,6 +84,8 @@ class Config():
         o_side_neurons=16,
         value_head_neurons=16,
 
+        use_tanh=False,
+
         augment_data=True,
         learning_rate=0.001, 
         loss_weights=[1, 1], 
@@ -103,6 +105,7 @@ class Config():
         self.kernels = kernels
         self.o_side_neurons = o_side_neurons
         self.value_head_neurons = value_head_neurons
+        self.use_tanh = use_tanh
         self.augment_data = augment_data
         self.learning_rate = learning_rate
         self.loss_weights = loss_weights
@@ -239,9 +242,9 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
             if winner == node_state.game.turn: # If active player wins
                 value = 1
             elif winner == 1 - node_state.game.turn: # If opponent wins
-                value = 0
+                value = (-1 if config.use_tanh else 0)
             else: # Draw
-                value = 0.5
+                value = (0 if config.use_tanh else 0.5)
 
         # If root node and in self play, add exploration noise to children
         if (add_noise == True and node.is_root()):
@@ -273,7 +276,7 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
         # When you make a make a move and evaluate it, the turn flips so
         # the evaluation is from the perspective of the other player, 
         # thus you have to flip the value
-        value = 1-value
+        value = (-value if config.use_tanh else 1 - value)
 
         # Go back up the tree and updates nodes
         # Propogate positive values for the player made the move, and negative for the other player
@@ -283,7 +286,7 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
             node_state = node.data
             node_state.visit_count += 1
             # Revert value if the other player just went
-            node_state.value_sum += (value if node_state.game.turn == final_node_turn else 1-value)
+            node_state.value_sum += (value if node_state.game.turn == final_node_turn else (-value if config.use_tanh else 1 - value))
             node_state.value_avg = node_state.value_sum / node_state.visit_count
 
             upwards_id = node.predecessor(tree.identifier)
@@ -292,7 +295,7 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
         # Repeat for root node
         node_state = node.data
         node_state.visit_count += 1
-        node_state.value_sum += (value if node_state.game.turn == final_node_turn else 1-value)
+        node_state.value_sum += (value if node_state.game.turn == final_node_turn else (-value if config.use_tanh else 1 - value))
         node_state.value_avg = node_state.value_sum / node_state.visit_count
 
     # print(MAX_DEPTH, total_branch//number_branch)
@@ -995,12 +998,12 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
     winner = game.winner
     for player_idx in range(len(game_data)):
         if winner == -1: # Draw
-            value = 0.5
+            value = (0 if config.use_tanh else 0.5)
         # Set values to 1 and -1
         elif winner == player_idx:
             value = 1
         else:
-            value = 0
+            value = (-1 if config.use_tanh else 0)
         # Insert value before policy for each move of that player
         for move_idx in range(len(game_data[player_idx])):
             game_data[player_idx][move_idx].insert(-1, value)
