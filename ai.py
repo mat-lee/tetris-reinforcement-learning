@@ -33,7 +33,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 4.9
+MODEL_VERSION = 4.5
 DATA_VERSION = 1.1
 
 # Where data and models are saved
@@ -56,11 +56,11 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - augment_data:
 # - Architecture:           alphasplit
 # - MAX_ITER:               * Inconclusive
-# - DIRICHLET_ALPHA: 0.03 > 1
-# - Dirichlet S: 250  = 500 = 750
-# - Use Dirichlet S with Alpha=0.01 and S=50: No diffierence
+# - DIRICHLET_ALPHA: 
+# - Dirichlet S: 
+# - Use Dirichlet S with Alpha=0.01 and S=50: 
 # - Changing alpha values:  
-# - CPUCT:                  0.5 < 0.75 > 1
+# - CPUCT:                  
 #
 # - Global pooling
 # - Dropout: 0.2 = 0.3 = 0.4
@@ -91,7 +91,7 @@ class Config():
         learning_rate=0.001, 
         loss_weights=[1, 1], 
         epochs=1, 
-        MAX_ITER=160, # 1600
+        MAX_ITER=160, # 1600 ##########
         DIRICHLET_ALPHA=0.01,
         DIRICHLET_S=500,
         use_dirichlet_s=True,
@@ -207,6 +207,9 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
             DEPTH += 1
             if DEPTH > MAX_DEPTH:
                 MAX_DEPTH = DEPTH
+            
+            if iter == config.MAX_ITER - 1:
+                pass
 
         # If not the root node, place piece in node
         if not node.is_root():
@@ -308,20 +311,24 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
     max_id = None
 
     root_child_n_list = []
+    root_child_policy_list = []
 
     for root_child_id in root_children_id:
         root_child = tree.get_node(root_child_id)
         root_child_n = root_child.data.visit_count
         root_child_n_list.append(root_child_n)
+        root_child_policy_list.append(root_child.data.policy)
+
         if root_child_n >= max_n: # It's possible n is 0 if there are no possible moves
             max_n = root_child_n
             max_id = root_child.identifier
 
     # fig, axs = plt.subplots(2)
     # fig.suptitle('N Compared to policy')
-    # axs[0].plot(post_noise_policy)
+    # # axs[0].plot(post_noise_policy)
+    # axs[0].plot(root_child_policy_list)
     # axs[1].plot(root_child_n_list)
-    # plt.savefig(f"{directory_path}/root_n_{MAX_ITER}_depth_3_4_2")
+    # plt.savefig(f"{directory_path}/root_n_{config.MAX_ITER}_depth_{MODEL_VERSION}.png")
     # print("saved")
 
     data = tree.get_node(max_id).data
