@@ -159,6 +159,24 @@ def time_move_matrix() -> None:
 
     print((END-START)/moves)
 
+def time_architectures(var, values) -> None:
+    # Tests how fast an algorithm takes to make a move
+    scores = {}
+    configs = [Config(MAX_ITER=100) for _ in range(len(values))]
+    for value, config in zip(values, configs):
+        setattr(config, var, value)
+        network = get_interpreter(instantiate_network(config,show_summary=False, save_network=False))
+
+        game = Game()
+        game.setup()
+
+        START = time.time()
+        MCTS(config, game, network)
+        END = time.time()
+
+        scores[str(value)] = END - START
+    print(scores)
+
 def profile_game() -> None:
     game = Game()
     game.setup()
@@ -354,7 +372,7 @@ def test_if_changes_improved_model():
 
 
 # data = load_data(last_n_sets=10)
-DefaultConfig=Config()
+# DefaultConfig=Config()
 
 # test_data_parameters("use_dirichlet_s", values=[0, 1], num_training_loops=1, num_training_games=100, num_battle_games=200, load_from_best_model=True, visual=True)
 # test_data_parameters("DIRICHLET_ALPHA", values=[0.01, 0.03, 0.1], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
@@ -367,8 +385,10 @@ DefaultConfig=Config()
 # test_parameters("dropout", [0.2, 0.3, 0.4], num_games=200, data=data,load_from_best_model=True)
 
 # instantiate_network(DefaultConfig, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False)
-# profile_game()
+# # profile_game()
+# time_move_matrix()
 
+time_architectures('filters', [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024])
 
 
 # Command for running python files

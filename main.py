@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import directory_path, MCTS, load_best_model, get_interpreter, Config
+from ai import directory_path, instantiate_network, MCTS, load_best_model, get_interpreter, Config
 from const import *
 from game import Game
 from mover import Mover
@@ -10,11 +10,28 @@ from mover import Mover
 import cProfile
 import pstats
 
-# Load neural network
-model = load_best_model()
-interpreter = get_interpreter(model)
-
 DefaultConfig = Config()
+
+# Load neural network
+# model = load_best_model()
+# interpreter = get_interpreter(model)
+
+model = instantiate_network(DefaultConfig, save_network=False)
+
+
+
+
+# full_model = tf.function(lambda x: model(x))
+# full_model = full_model.get_concrete_function()
+
+# frozen_func = convert_variables_to_constants_v2(full_model)
+# frozen_func.graph.as_graph_def()
+
+# sess = tf.InteractiveSession()
+
+# sess.graph.as_default()
+# tf.import_graph_def(graph_def)
+
 
 class Main:
 
@@ -32,8 +49,8 @@ class Main:
 
         game.setup()
 
-        game.players[0].garbage_to_receive = [1 for i in range(18)]
-        game.players[1].garbage_to_receive = [1 for i in range(18)]
+        # game.players[0].garbage_to_receive = [1 for i in range(18)]
+        # game.players[1].garbage_to_receive = [1 for i in range(18)]
 
         while True:
             game.show(screen)
@@ -61,7 +78,7 @@ class Main:
                                 game.make_move(move)
                             elif event.key == k_make_ai_move:
                                 if game.players[1].game_over == False:
-                                    move, _ = MCTS(DefaultConfig, game, interpreter)
+                                    move, _ = MCTS(DefaultConfig, game, model)
                                     game.make_move(move=move)
                             elif event.key == k_rotate_cw:
                                 game.human_player.try_wallkick(1)
@@ -119,8 +136,11 @@ class Main:
                     # stats.sort_stats(pstats.SortKey.TIME)
                     # stats.print_stats(20)
 
-                    move, _ = MCTS(DefaultConfig, game, interpreter)
+                    START = time.time()
+                    move, _ = MCTS(DefaultConfig, game, model)
                     game.make_move(move=move)
+                    END = time.time()
+                    print(END-START)
 
             pygame.display.update()
 

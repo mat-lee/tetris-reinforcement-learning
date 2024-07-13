@@ -18,12 +18,17 @@ import ujson
 # # Prior to importing tensorflow, disable debug logs
 import os
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-
+# os.environ['TF_CPP_VMODULE'] = '2'
 
 from tensorflow import keras
 import tensorflow as tf
 from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
+
+# tf.compat.v1.disable_eager_execution() #########
+print(tf.executing_eagerly())
+# tf.compat.v1.enable_v2_behavior()
+print(tf.executing_eagerly())
 
 # Reduce tensorflow text
 # tf.get_logger().setLevel('ERROR')
@@ -78,8 +83,8 @@ class Config():
         l1_neurons=256, # Fishlike
         l2_neurons=32,
 
-        layers=10, # Alphalike
-        filters=16, 
+        layers=20, # Alphalike
+        filters=256, 
         dropout=0.4,
         kernels=1,
         o_side_neurons=16,
@@ -221,7 +226,7 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
 
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
-            value, policy = evaluate_from_tflite(node_state.game, network)
+            value, policy = evaluate(node_state.game, network)
             # value, policy = random_evaluate()
 
             if node_state.game.no_move == False:
@@ -667,6 +672,39 @@ def train_network(config, model, data):
         # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
         model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=True)
+
+def evaluate(game, network):
+    # Use a neural network to return value and policy.
+    data = game_to_X(game)
+    X = []
+    for feature in data:
+        if type(feature) in (float, int):
+            X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
+        else:
+            np_feature = np.expand_dims(np.float32(feature), axis=0)
+            if np_feature.shape == (1, 26, 10): # Expand grids
+                np_feature = np.expand_dims(np_feature, axis=-1)
+            X.append(np_feature)
+    
+    value, policies = network.predict_on_batch(X)
+    # value = value.numpy()
+    # policies = policies.numpy()
+
+    # input_details = interpreter.get_input_details()
+    # for i in range(len(X)):
+    #     idx = int(input_details[i]['name'][16:].split(":")[0])
+
+    # interpreter.set_tensor(interpreter.get_input_details()[i]["index"], X[idx])
+    # interpreter.invoke()
+    # result = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
+
+
+    # value, policies = signature_runner(inputs=X)
+
+    # Both value and policies are returned as arrays
+    policies = policies.reshape(POLICY_SHAPE)
+    
+    return value[0][0], policies
 
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
