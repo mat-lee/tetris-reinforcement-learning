@@ -33,8 +33,8 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 4.5
-DATA_VERSION = 1.1
+MODEL_VERSION = 4.4
+DATA_VERSION = 1.0
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -68,6 +68,9 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - learning_rate:
 # - loss_weights:
 
+# With 10 layers, 16 filters is max number of filters before inference time scales
+
+
 total_branch = 0
 number_branch = 0
 
@@ -75,6 +78,7 @@ class Config():
     def __init__(
         self, 
 
+        # Architecture Parameters
         l1_neurons=256, # Fishlike
         l2_neurons=32,
 
@@ -85,16 +89,27 @@ class Config():
         o_side_neurons=16,
         value_head_neurons=16,
 
-        use_tanh=True,
+        use_tanh=False, # Affects data saving and model activation
+        default_value=0.4,
 
+        # Training Parameters
         augment_data=True,
         learning_rate=0.001, 
         loss_weights=[1, 1], 
         epochs=1, 
+
+        # MCTS Parameters
+        is_training=False, # Set to true to use playout cap randomization
+
         MAX_ITER=160, # 1600 ##########
+        use_playout_cap_randomization=False,
+        playout_cap_chance=0.25,
+        playout_cap_mult=5,
+
         DIRICHLET_ALPHA=0.01,
         DIRICHLET_S=500,
         use_dirichlet_s=True,
+        
         DIRICHLET_EXPLORATION=0.25, 
         CPUCT=0.75
     ):
@@ -107,11 +122,16 @@ class Config():
         self.o_side_neurons = o_side_neurons
         self.value_head_neurons = value_head_neurons
         self.use_tanh = use_tanh
+        self.default_value = default_value
         self.augment_data = augment_data
         self.learning_rate = learning_rate
         self.loss_weights = loss_weights
         self.epochs = epochs
+        self.is_training = is_training
         self.MAX_ITER = MAX_ITER
+        self.use_playout_cap_randomization = use_playout_cap_randomization
+        self.playout_cap_chance = playout_cap_chance
+        self.playout_cap_mult = playout_cap_mult
         self.DIRICHLET_ALPHA = DIRICHLET_ALPHA
         self.DIRICHLET_S = DIRICHLET_S
         self.use_dirichlet_s = use_dirichlet_s
@@ -161,7 +181,16 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
     MAX_DEPTH = 0
     iter = 0
 
-    while iter < config.MAX_ITER:
+    max_iterations = None
+    if config.use_playout_cap_randomization and config.is_training:
+        if random.random() < config.playout_cap_chance:
+            max_iterations = math.ceil(config.playout_cap_mult * (config.MAX_ITER / (config.playout_cap_chance(config.playout_cap_mult - 1) + 1)))
+        else:
+            max_iterations = math.ceil(config.MAX_ITER / (config.playout_cap_chance(config.playout_cap_mult - 1) + 1))
+    else:
+        max_iterations = config.MAX_ITER
+
+    while iter < max_iterations:
         iter += 1
 
         # Begin at the root node
@@ -235,6 +264,7 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
                 for policy, move in move_list:
                     new_state = NodeState(game=None, move=move)
                     new_state.policy = policy / policy_sum
+                    new_state.value_avg = config.default_value
 
                     tree.create_node(data=new_state, parent=node.identifier)
         
@@ -1137,8 +1167,6 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
 
         # The challenger network will be trained and then battled against the prior network
         challenger_network = load_best_model()
-
-        best_network_version = highest_model_number(MODEL_VERSION)
 
         # Play a training set and train the network on past sets.
         for i in range(TRAINING_LOOPS):

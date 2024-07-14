@@ -10,11 +10,13 @@ from mover import Mover
 import cProfile
 import pstats
 
+import random
+
 # Load neural network
 model = load_best_model()
 interpreter = get_interpreter(model)
 
-DefaultConfig = Config()
+DefaultConfig = Config(MAX_ITER=1600)
 
 class Main:
 
@@ -32,8 +34,8 @@ class Main:
 
         game.setup()
 
-        game.players[0].garbage_to_receive = [1 for i in range(18)]
-        game.players[1].garbage_to_receive = [1 for i in range(18)]
+        game.players[0].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
+        game.players[1].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
 
         while True:
             game.show(screen)
