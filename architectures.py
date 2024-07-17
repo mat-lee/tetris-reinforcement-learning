@@ -104,7 +104,7 @@ def gen_alphastack_nn(config) -> keras.Model:
     stacked_grids = keras.layers.Dropout(config.dropout)(stacked_grids)
 
     # n residual layers
-    for _ in range(config.layers):
+    for _ in range(config.blocks):
         stacked_grids = ResidualLayer()(stacked_grids)
     
     # 1x1 Kernel
@@ -155,7 +155,7 @@ def gen_alphasplit_nn(config) -> keras.Model:
     o_grid = keras.layers.Dropout(config.dropout)(o_grid)
 
     # 10 residual layers
-    for _ in range(config.layers):
+    for _ in range(config.blocks):
         a_grid = ResidualLayer()(a_grid)
         o_grid = ResidualLayer()(o_grid)
     
@@ -224,7 +224,7 @@ def gen_alphasame_nn(config) -> keras.Model:
     o_grid = dropout_1(relu_1(batch_1(conv_1(o_grid))))
 
     # 10 residual layers
-    for _ in range(config.layers):
+    for _ in range(config.blocks):
         residual_layer = ResidualLayer()
         a_grid, o_grid = residual_layer(a_grid, o_grid)
     

@@ -2,6 +2,7 @@ from architectures import *
 from const import *
 from game import Game
 
+import copy
 from collections import deque
 import gc
 #import json
@@ -33,7 +34,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 4.4
+MODEL_VERSION = 4.6
 DATA_VERSION = 1.0
 
 # Where data and models are saved
@@ -57,9 +58,10 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Architecture:           alphasplit
 # - MAX_ITER:               * Inconclusive
 # - DIRICHLET_ALPHA: 
-# - Dirichlet S: 
+# - Dirichlet S: 25 > 500
 # - Use Dirichlet S with Alpha=0.01 and S=50: 
 # - Changing alpha values:  
+# - FpuValue: 0.4 = 0.2 > 0.0
 # - CPUCT:                  
 #
 # - Global pooling
@@ -82,7 +84,7 @@ class Config():
         l1_neurons=256, # Fishlike
         l2_neurons=32,
 
-        layers=10, # Alphalike
+        blocks=10, # Alphalike
         filters=16, 
         dropout=0.4,
         kernels=1,
@@ -90,7 +92,6 @@ class Config():
         value_head_neurons=16,
 
         use_tanh=False, # Affects data saving and model activation
-        default_value=0.4,
 
         # Training Parameters
         augment_data=True,
@@ -99,42 +100,48 @@ class Config():
         epochs=1, 
 
         # MCTS Parameters
-        is_training=False, # Set to true to use playout cap randomization
+        training=False, # Set to true to use playout cap randomization
 
         MAX_ITER=160, # 1600 ##########
         use_playout_cap_randomization=False,
         playout_cap_chance=0.25,
         playout_cap_mult=5,
 
+        use_dirichlet_noise=True,
         DIRICHLET_ALPHA=0.01,
-        DIRICHLET_S=500,
+        DIRICHLET_S=25,
         use_dirichlet_s=True,
+
+        FpuStrategy='reduction', # 'reduction' subtracts FpuValue from parent eval, 'absolute' uses FpuValue
+        FpuValue=0.4,
         
         DIRICHLET_EXPLORATION=0.25, 
         CPUCT=0.75
     ):
         self.l1_neurons = l1_neurons
         self.l2_neurons = l2_neurons
-        self.layers = layers
+        self.blocks = blocks
         self.filters = filters
         self.dropout = dropout
         self.kernels = kernels
         self.o_side_neurons = o_side_neurons
         self.value_head_neurons = value_head_neurons
         self.use_tanh = use_tanh
-        self.default_value = default_value
         self.augment_data = augment_data
         self.learning_rate = learning_rate
         self.loss_weights = loss_weights
         self.epochs = epochs
-        self.is_training = is_training
+        self.training = training
         self.MAX_ITER = MAX_ITER
         self.use_playout_cap_randomization = use_playout_cap_randomization
         self.playout_cap_chance = playout_cap_chance
         self.playout_cap_mult = playout_cap_mult
+        self.use_dirichlet_noise = use_dirichlet_noise
         self.DIRICHLET_ALPHA = DIRICHLET_ALPHA
         self.DIRICHLET_S = DIRICHLET_S
         self.use_dirichlet_s = use_dirichlet_s
+        self.FpuStrategy = FpuStrategy
+        self.FpuValue = FpuValue
         self.DIRICHLET_EXPLORATION = DIRICHLET_EXPLORATION
         self.CPUCT = CPUCT
 
@@ -161,7 +168,7 @@ class NodeState():
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss'):
+def MCTS(config, game, network, move_algorithm='faster-but-loss'):
     global total_branch, number_branch
     # Picks a move for the AI to make 
     # Initialize the search tree
@@ -182,13 +189,19 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
     iter = 0
 
     max_iterations = None
-    if config.use_playout_cap_randomization and config.is_training:
+    fast_iter = False # Used to disable dirichlet noise for fast iterations
+
+    if config.training and config.use_playout_cap_randomization:
         if random.random() < config.playout_cap_chance:
-            max_iterations = math.ceil(config.playout_cap_mult * (config.MAX_ITER / (config.playout_cap_chance(config.playout_cap_mult - 1) + 1)))
+            max_iterations = math.ceil(config.playout_cap_mult * (config.MAX_ITER / (config.playout_cap_chance * (config.playout_cap_mult - 1) + 1)))
         else:
-            max_iterations = math.ceil(config.MAX_ITER / (config.playout_cap_chance(config.playout_cap_mult - 1) + 1))
+            max_iterations = math.floor(config.MAX_ITER / (config.playout_cap_chance * (config.playout_cap_mult - 1) + 1))
+            fast_iter = True
     else:
         max_iterations = config.MAX_ITER
+
+    if config.FpuStrategy == 'reduction':
+        total_expanded_policy = 0
 
     while iter < max_iterations:
         iter += 1
@@ -248,6 +261,10 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
             node_state.game = game_copy
             node_state.game.make_move(node_state.move, add_bag=False, add_history=False)
 
+            # Root node has no policy prior
+            if config.FpuStrategy == 'reduction':
+                total_expanded_policy += node_state.policy
+
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
             value, policy = evaluate_from_tflite(node_state.game, network)
@@ -264,7 +281,16 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
                 for policy, move in move_list:
                     new_state = NodeState(game=None, move=move)
                     new_state.policy = policy / policy_sum
-                    new_state.value_avg = config.default_value
+
+                    # Set First Play Urgency value
+                    if config.FpuStrategy == 'absolute':
+                        new_state.value_avg = config.FpuValue
+                    elif config.FpuStrategy == 'reduction':
+                        # value is the parent node's value
+                        new_state.value_avg = max(0, value - config.FpuValue * math.sqrt(total_expanded_policy)) # Lower bound of 0
+
+                        # In the paper it sets FpuValue to 0 at the root node when dirichlet noise is enabled
+                        # However, at the root node the policy total is always 0 for my mcts so that's reduntant
 
                     tree.create_node(data=new_state, parent=node.identifier)
         
@@ -281,7 +307,7 @@ def MCTS(config, game, network, add_noise=False, move_algorithm='faster-but-loss
                 value = (0 if config.use_tanh else 0.5)
 
         # If root node and in self play, add exploration noise to children
-        if (add_noise == True and node.is_root()):
+        if (config.training and not fast_iter and config.use_dirichlet_noise and node.is_root()):
             child_ids = node.successors(tree.identifier)
             number_of_children = len(child_ids)
             d_alpha = config.DIRICHLET_ALPHA
@@ -599,6 +625,7 @@ def get_move_matrix(player, algo=None):
             else:
                 raise Exception("Invalid algorithm type")
 
+            # Convert queue of placements to new policy format
             for x, y, o in place_location_queue:
                 rotation_index = o % len(policy_pieces[piece.type])
                 policy_index = policy_piece_to_index[piece.type][rotation_index]
@@ -970,7 +997,7 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         # with cProfile.Profile() as pr:
-        move, tree = MCTS(config, game, network, add_noise=True) # Add training noise
+        move, tree = MCTS(config, game, network) # Add training noise
         search_matrix = search_statistics(tree) # Moves that the network looked at
         
         # Get data
@@ -1158,6 +1185,10 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
     best_network = load_best_model()
     best_interpreter = get_interpreter(best_network)
 
+    training_config = copy.deepcopy(config)
+    # Setting training to true enables a variety of training features
+    training_config.training = True
+
     del best_network
 
     iter = 0
@@ -1172,7 +1203,8 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         for i in range(TRAINING_LOOPS):
             # Make data file
             if not skip_first_set:
-                make_training_set(config, best_interpreter, TRAINING_GAMES, show_game=show_games, screen=screen)
+                # Use Training Config
+                make_training_set(training_config, best_interpreter, TRAINING_GAMES, show_game=show_games, screen=screen)
                 print("Finished set")
 
         # Load data

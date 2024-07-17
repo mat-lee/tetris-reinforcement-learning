@@ -2,7 +2,7 @@ from ai import *
 
 ### File for running the simulation commands
 
-DefaultConfig = Config(layers=1)
+DefaultConfig = Config()
 
 # Create a network if none exist already
 if highest_model_number(MODEL_VERSION) == -1:

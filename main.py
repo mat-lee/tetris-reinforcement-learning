@@ -16,7 +16,7 @@ import random
 model = load_best_model()
 interpreter = get_interpreter(model)
 
-DefaultConfig = Config(MAX_ITER=1600)
+DefaultConfig = Config(MAX_ITER=160)
 
 class Main:
 

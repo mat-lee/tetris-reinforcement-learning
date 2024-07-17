@@ -296,6 +296,7 @@ def test_architectures(
 def test_data_parameters(
     var: str, 
     values: list,
+    learning_rate: float,
     num_training_loops: int,
     num_training_games: int,
     num_battle_games: int,
@@ -308,7 +309,8 @@ def test_data_parameters(
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
     
     # Configs
-    configs = [Config() for _ in range(len(values))]
+    # Set training to true
+    configs = [Config(training=True, learning_rate=learning_rate) for _ in range(len(values))]
     for value, config in zip(values, configs):
         setattr(config, var, value)
 
@@ -338,6 +340,8 @@ def test_data_parameters(
                         [str(value) for value in values], 
                         num_battle_games,
                         visual=visual))
+    
+    print(var)
 
 def test_older_vs_newer_networks():
     # Making sure that the newest iteration of a network is better than earlier versions
@@ -376,8 +380,9 @@ DefaultConfig=Config()
 
 # test_data_parameters("use_dirichlet_s", values=[0, 1], num_training_loops=1, num_training_games=100, num_battle_games=200, load_from_best_model=True, visual=True)
 # test_data_parameters("DIRICHLET_ALPHA", values=[0.01, 0.03, 0.1], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
-# test_data_parameters("DIRICHLET_S", values=[250, 500, 1000], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
+# test_data_parameters("DIRICHLET_S", values=[25, 500], learning_rate=0.002, num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
 # test_parameters("CPUCT", [0.5, 1, 2], 200, load_from_best_model=True, visual=True)
+# test_parameters("FpuValue", [0, 0.2, 0.4], 200, load_from_best_model=True, visual=True)
 
 # test_parameters("loss_weights", [[1, 0.33], [1, 1], [1, 3]], 200, data=data, load_from_best_model=False, visual=True)
 # test_parameters("learning_rate", [1e-4, 1e-3, 1e-2], 200, data=data, load_from_best_model=True)
@@ -387,15 +392,12 @@ DefaultConfig=Config()
 # instantiate_network(DefaultConfig, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False)
 # profile_game()
 
-pygame.init()
-
-screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-play_game(DefaultConfig, get_interpreter(load_best_model()), 666, show_game=True, screen=screen)
-
 # time_architectures("filters", [1, 2, 4, 8, 16, 32, 64, 128, 256, 512])
 # test_data_parameters("DIRICHLET_ALPHA", values=[250, 500, 750], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
 
-# test_parameters("default_value", [0.2, 0.4, 0.6], num_games=200, load_from_best_model=True)
+# test_data_parameters('use_dirichlet_noise', [False, True], 0.002, 1, 400, 200, True, True)
+# test_data_parameters('use_playout_cap_randomization', [False, True], 0.002, 1, 400, 200, True, True)
+# test_data_parameters('FpuStrategy', ['absolute', 'reduction'], 0.002, 1, 400, 200, True, True)
 
 # Command for running python files
 # This is for running many tests at the same time
