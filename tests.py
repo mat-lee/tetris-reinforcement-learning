@@ -398,6 +398,8 @@ DefaultConfig=Config()
 # test_data_parameters('use_dirichlet_noise', [False, True], 0.002, 1, 400, 200, True, True)
 # test_data_parameters('use_playout_cap_randomization', [False, True], 0.002, 1, 400, 200, True, True)
 # test_data_parameters('FpuStrategy', ['absolute', 'reduction'], 0.002, 1, 400, 200, True, True)
+# test_data_parameters('use_forced_playouts_and_policy_target_pruning', [False, True], 0.004, 1, 100, 200, True, True)
+test_data_parameters("use_root_softmax", [True, False], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
 
 # Command for running python files
 # This is for running many tests at the same time

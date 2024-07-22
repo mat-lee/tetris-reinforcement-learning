@@ -103,19 +103,25 @@ class Config():
         training=False, # Set to true to use playout cap randomization
 
         MAX_ITER=160, # 1600 ##########
-        use_playout_cap_randomization=False,
+        use_playout_cap_randomization=True,
         playout_cap_chance=0.25,
         playout_cap_mult=5,
 
         use_dirichlet_noise=True,
         DIRICHLET_ALPHA=0.01,
         DIRICHLET_S=25,
+        DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
 
         FpuStrategy='reduction', # 'reduction' subtracts FpuValue from parent eval, 'absolute' uses FpuValue
         FpuValue=0.4,
+
+        use_forced_playouts_and_policy_target_pruning=True,
+        CForcedPlayout=2,
+
+        use_root_softmax=False,
+        RootSoftmaxTemp=1.03,
         
-        DIRICHLET_EXPLORATION=0.25, 
         CPUCT=0.75
     ):
         self.l1_neurons = l1_neurons
@@ -139,10 +145,14 @@ class Config():
         self.use_dirichlet_noise = use_dirichlet_noise
         self.DIRICHLET_ALPHA = DIRICHLET_ALPHA
         self.DIRICHLET_S = DIRICHLET_S
+        self.DIRICHLET_EXPLORATION = DIRICHLET_EXPLORATION
         self.use_dirichlet_s = use_dirichlet_s
         self.FpuStrategy = FpuStrategy
         self.FpuValue = FpuValue
-        self.DIRICHLET_EXPLORATION = DIRICHLET_EXPLORATION
+        self.use_forced_playouts_and_policy_target_pruning = use_forced_playouts_and_policy_target_pruning
+        self.CForcedPlayout = CForcedPlayout
+        self.use_root_softmax = use_root_softmax
+        self.RootSoftmaxTemp = RootSoftmaxTemp
         self.CPUCT = CPUCT
 
 class NodeState():
@@ -171,6 +181,7 @@ class NodeState():
 def MCTS(config, game, network, move_algorithm='faster-but-loss'):
     global total_branch, number_branch
     # Picks a move for the AI to make 
+
     # Initialize the search tree
     tree = treelib.Tree()
     game_copy = game.copy()
@@ -191,6 +202,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
     max_iterations = None
     fast_iter = False # Used to disable dirichlet noise for fast iterations
 
+    # Randomly assigns moves to higher and lower playouts
     if config.training and config.use_playout_cap_randomization:
         if random.random() < config.playout_cap_chance:
             max_iterations = math.ceil(config.playout_cap_mult * (config.MAX_ITER / (config.playout_cap_chance * (config.playout_cap_mult - 1) + 1)))
@@ -213,7 +225,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
         DEPTH = 0
 
         # Go down the tree using formula Q+U until you get to a leaf node
-        # Looking at promising moves for both players
+        # However, if using forced playouts, select a node if it has fewer than the forced playouts amount
         while not node.is_leaf():
             child_ids = node.successors(tree.identifier)
             max_child_score = -1
@@ -222,10 +234,11 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
 
             number_branch += 1
             
-            # Info to help me debug
+            # Debuging
             Qs = []
             Us = []
 
+            # Look through each child
             for child_id in child_ids:
                 
                 total_branch += 1
@@ -233,7 +246,18 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
                 # For each child calculate a score
                 # Polynomial upper confidence trees (PUCT)
                 child_data = tree.get_node(child_id).data
+
                 child_score = child_data.value_avg + config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
+
+                # Check forced playouts
+                if config.use_forced_playouts_and_policy_target_pruning:
+                    if node.is_root(): # Only use for the root
+                        if not (config.use_playout_cap_randomization == True and fast_iter == True):
+                            if child_data.visit_count >= 1:
+                                n_forced = math.sqrt(config.CForcedPlayout * child_data.policy * parent_visits)
+
+                                if child_data.visit_count < n_forced:
+                                    child_score = float('inf')
 
                 Qs.append(child_data.value_avg)
                 Us.append(config.CPUCT* child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count))
@@ -275,12 +299,22 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
                 move_list = get_move_list(move_matrix, policy)
 
                 # Generate new leaves
+
+                # Calculate softmax if root
+                if node.is_root() and config.use_root_softmax:
+                    softmax_denominator = sum(math.exp(policy / config.RootSoftmaxTemp) for policy, move in move_list)
+
                 # Normalize policy values
-                policy_sum = sum(policy for policy, move in move_list)
+                else:
+                    policy_sum = sum(policy for policy, move in move_list)
 
                 for policy, move in move_list:
                     new_state = NodeState(game=None, move=move)
-                    new_state.policy = policy / policy_sum
+
+                    if node.is_root() and config.use_root_softmax: # Softmax
+                        new_state.policy = math.exp(policy / config.RootSoftmaxTemp) / softmax_denominator
+                    else: # Normal
+                        new_state.policy = policy / policy_sum
 
                     # Set First Play Urgency value
                     if config.FpuStrategy == 'absolute':
@@ -293,6 +327,24 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
                         # However, at the root node the policy total is always 0 for my mcts so that's reduntant
 
                     tree.create_node(data=new_state, parent=node.identifier)
+                
+
+                pn = []
+                ps = []
+
+                pn_s = sum(policy for policy, move in move_list)
+                ps_s = sum(math.exp(policy / config.RootSoftmaxTemp) for policy, move in move_list)
+
+                for policy, move in move_list:
+                    pn.append(policy / pn_s)   
+                    ps.append(math.exp(policy / config.RootSoftmaxTemp) / ps_s)
+                
+                fig, axs = plt.subplots(2)
+                fig.suptitle('Policy before and after softmax')
+                axs[0].plot(pn)
+                axs[1].plot(ps)
+                plt.savefig(f"{directory_path}/softmax_policy_{MODEL_VERSION}.png")
+                print("saved")
         
         # Node is terminal
         # Update weights based on winner
@@ -389,6 +441,38 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
 
     data = tree.get_node(max_id).data
     move = data.move
+
+    # Check policy target pruning
+    if config.use_forced_playouts_and_policy_target_pruning:
+        post_prune_n_list = []
+
+        most_playouts_child = tree.get_node(max_id)
+        most_playouts_CPUCT = most_playouts_child.data.value_avg + config.CPUCT * most_playouts_child.data.policy * math.sqrt(root.data.visit_count) / (1 + most_playouts_child.data.visit_count)
+        
+        for root_child_id in root_children_id:
+            if root_child_id != max_id:
+                root_child = tree.get_node(root_child_id)
+                if root_child.data.visit_count > 0:
+                    # Calculate n_forced_playouts
+                    root_child_n_forced = math.sqrt(config.CForcedPlayout * root_child.data.policy * root.data.visit_count)
+                    count = 0
+
+                    while True:
+                        if root_child.data.visit_count == 1:
+                            # Prune children with one playout
+                            root_child.data.visit_count = 0
+                            break
+
+                        # Subtract up to n playouts so that the CPUCT value is smaller than the max playout CPUCT
+                        root_child_CPUCT_minus = root_child.data.value_avg + config.CPUCT * root_child.data.policy * math.sqrt(root.data.visit_count) / (root.data.visit_count) # No +1
+
+                        if count < root_child_n_forced and root_child_CPUCT_minus < most_playouts_CPUCT:
+                            count += 1
+                            root_child.data.visit_count -= 1
+                        
+                        else: break
+        
+            post_prune_n_list.append(tree.get_node(root_child_id).data.visit_count)
 
     return move, tree
 

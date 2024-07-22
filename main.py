@@ -16,7 +16,7 @@ import random
 model = load_best_model()
 interpreter = get_interpreter(model)
 
-DefaultConfig = Config(MAX_ITER=160)
+DefaultConfig = Config(use_root_softmax=True)
 
 class Main:
 
@@ -34,8 +34,8 @@ class Main:
 
         game.setup()
 
-        game.players[0].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
-        game.players[1].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
+        # game.players[0].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
+        # game.players[1].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
 
         while True:
             game.show(screen)
