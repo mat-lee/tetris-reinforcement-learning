@@ -255,6 +255,7 @@ def test_parameters(
             train_network(config, network, data)
         
         del data
+        gc.collect()
 
     # Networks -> interpreters
     interpreters = [get_interpreter(network) for network in networks]
@@ -284,14 +285,15 @@ def test_architectures(
         train_network(configs[0], network, data)
 
     del data
+    gc.collect()
 
     interpreters = [get_interpreter(network) for network in networks]
 
     print(battle_royale(interpreters, 
                         configs, 
                         [str(nn_gen) for nn_gen in nn_gens],
-                        num_games=num_games), 
-                        visual=visual)
+                        num_games=num_games, 
+                        visual=visual))
 
 def test_data_parameters(
     var: str, 
@@ -328,6 +330,7 @@ def test_data_parameters(
             train_network(config, network, [set])
 
             del set
+            gc.collect()
 
     # Networks -> interpreters
     interpreters = [get_interpreter(network) for network in networks]
@@ -357,7 +360,7 @@ def test_older_vs_newer_networks():
 
 def test_if_changes_improved_model():
     config = Config()
-    network = instantiate_network(config, nn_generator=gen_alphasplit_nn, show_summary=False, save_network=False, plot_model=False)
+    network = instantiate_network(config, nn_generator=gen_alphasame_nn, show_summary=False, save_network=False, plot_model=False)
     data = load_data(last_n_sets=20)
 
     train_network(config, network, data)
@@ -399,7 +402,8 @@ DefaultConfig=Config()
 # test_data_parameters('use_playout_cap_randomization', [False, True], 0.002, 1, 400, 200, True, True)
 # test_data_parameters('FpuStrategy', ['absolute', 'reduction'], 0.002, 1, 400, 200, True, True)
 # test_data_parameters('use_forced_playouts_and_policy_target_pruning', [False, True], 0.004, 1, 100, 200, True, True)
-test_data_parameters("use_root_softmax", [True, False], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
+# test_data_parameters("use_root_softmax", [True, False], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
+# test_architectures([gen_alphasame_nn, test_1], data, num_games=200, visual=True)
 
 # Command for running python files
 # This is for running many tests at the same time

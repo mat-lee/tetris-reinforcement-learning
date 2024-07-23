@@ -73,118 +73,6 @@ def PolicyHead():
         return x
     return inside
 
-
-def gen_alphastack_nn(config) -> keras.Model:
-    # This network stacks the grids from both players then applies convolutions
-    def ResidualLayer():
-        # Uses skip conections
-        def inside(x):
-            y = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(x)
-            y = keras.layers.BatchNormalization()(y)
-            y = keras.layers.Activation('relu')(y)
-            y = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(y)
-            y = keras.layers.BatchNormalization()(y)
-            y = keras.layers.Activation('relu')(y)
-            z = keras.layers.Add()([x, y]) # Skip connection
-
-            z = keras.layers.Dropout(config.dropout)(z)
-
-            return z
-        return inside
-
-    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
-
-    stacked_grids = keras.layers.Concatenate(axis=-1)([a_grid, o_grid])
-    # stacked_grids = a_grid
-
-    # Apply a convolution
-    stacked_grids = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(stacked_grids)
-    stacked_grids = keras.layers.BatchNormalization()(stacked_grids)
-    stacked_grids = keras.layers.Activation('relu')(stacked_grids)
-    stacked_grids = keras.layers.Dropout(config.dropout)(stacked_grids)
-
-    # n residual layers
-    for _ in range(config.blocks):
-        stacked_grids = ResidualLayer()(stacked_grids)
-    
-    # 1x1 Kernel
-    x = keras.layers.Conv2D(config.kernels, (1, 1))(stacked_grids)
-    x = keras.layers.Flatten()(x)
-    x = keras.layers.BatchNormalization()(x)
-    x = keras.layers.Activation('relu')(x)
-
-    # Combine with other features
-    x = keras.layers.Concatenate()([x, *a_features, *o_features, *non_player_features])
-
-    value_output = ValueHead(config)(x)
-    policy_output = PolicyHead()(x)
-
-    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
-
-    return model
-
-def gen_alphasplit_nn(config) -> keras.Model:
-    # This network applies convolutions to each board separately
-    def ResidualLayer():
-        # Uses skip conections
-        def inside(x):
-            y = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(x)
-            y = keras.layers.BatchNormalization()(y)
-            y = keras.layers.Activation('relu')(y)
-            y = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(y)
-            y = keras.layers.BatchNormalization()(y)
-            y = keras.layers.Activation('relu')(y)
-            z = keras.layers.Add()([x, y]) # Skip connection
-
-            z = keras.layers.Dropout(config.dropout)(z)
-
-            return z
-        return inside
-
-    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
-
-    # Apply a convolution
-    a_grid = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(a_grid)
-    a_grid = keras.layers.BatchNormalization()(a_grid)
-    a_grid = keras.layers.Activation('relu')(a_grid)
-    a_grid = keras.layers.Dropout(config.dropout)(a_grid)
-
-    o_grid = keras.layers.Conv2D(config.filters, (3, 3), padding="same")(o_grid)
-    o_grid = keras.layers.BatchNormalization()(o_grid)
-    o_grid = keras.layers.Activation('relu')(o_grid)
-    o_grid = keras.layers.Dropout(config.dropout)(o_grid)
-
-    # 10 residual layers
-    for _ in range(config.blocks):
-        a_grid = ResidualLayer()(a_grid)
-        o_grid = ResidualLayer()(o_grid)
-    
-    # 1x1 Kernel
-    a_grid = keras.layers.Conv2D(config.kernels, (1, 1))(a_grid)
-    a_grid = keras.layers.Flatten()(a_grid)
-    a_grid = keras.layers.BatchNormalization()(a_grid)
-    a_grid = keras.layers.Activation('relu')(a_grid)
-
-    o_grid = keras.layers.Conv2D(config.kernels, (1, 1))(o_grid)
-    o_grid = keras.layers.Flatten()(o_grid)
-    o_grid = keras.layers.BatchNormalization()(o_grid)
-    o_grid = keras.layers.Activation('relu')(o_grid)
-
-    # Shrink opponent grid info
-    o_grid = keras.layers.Dense(config.o_side_neurons)(o_grid)
-    o_grid = keras.layers.BatchNormalization()(o_grid)
-    o_grid = keras.layers.Activation('relu')(o_grid)
-
-    # Combine with other features
-    x = keras.layers.Concatenate()([a_grid, o_grid, *a_features, *o_features, *non_player_features])
-
-    value_output = ValueHead(config)(x)
-    policy_output = PolicyHead()(x)
-
-    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
-
-    return model
-
 def gen_alphasame_nn(config) -> keras.Model:
     # The network uses the same neural network to apply convolutions to both grids
     def ResidualLayer():
@@ -257,33 +145,225 @@ def gen_alphasame_nn(config) -> keras.Model:
 
     return model
 
+def test_1(config) -> keras.Model:
+    # The network uses the same neural network to apply convolutions to both grids
+    def ResidualLayer():
+        # Uses skip conections
+        def inside(in_1, in_2):
+            batch_1 = keras.layers.BatchNormalization()
+            relu_1 = keras.layers.Activation('relu')
+            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_2 = keras.layers.BatchNormalization()
+            dropout_1 = keras.layers.Dropout(config.dropout)
+            relu_2 = keras.layers.Activation('relu')
+            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
 
-# ------------------------- Archived Models -------------------------
-def gen_fishlike_nn(config) -> keras.Model:
-    # The network is designed to be fast and compatable with tflite
-    # Drawing inspiration from stockfish's NNUE architecture
+            out_1 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_1)))))))
+            out_2 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_2)))))))
+
+            out_1 = keras.layers.Add()([in_1, out_1])
+            out_2 = keras.layers.Add()([in_2, out_2])
+
+            return out_1, out_2
+        return inside
+
     inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
 
-    flat_a_grid = keras.layers.Flatten()(a_grid)
-    a_features = keras.layers.Concatenate()([flat_a_grid, *a_features])
-    side_a = keras.layers.Dense(config.l1_neurons)(a_features)
-    side_a = keras.layers.Activation('relu')(side_a)
+    # Start with a convolutional layer
+    # Because each grid needs the same network, use the same layers for each side
+    conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+    
+    a_grid = conv_1(a_grid)
+    o_grid = conv_1(o_grid)
 
-    flat_o_grid = keras.layers.Flatten()(o_grid)
-    o_features = keras.layers.Concatenate()([flat_o_grid, *o_features])
-    side_o = keras.layers.Dense(config.l1_neurons)(o_features)
-    side_o = keras.layers.Activation('relu')(side_o)
+    # 10 residual layers
+    for _ in range(config.blocks):
+        residual_layer = ResidualLayer()
+        a_grid, o_grid = residual_layer(a_grid, o_grid)
+    
+    batch_1 = keras.layers.BatchNormalization()
+    relu_1 = keras.layers.Activation('relu')
 
-    combined = keras.layers.Concatenate()([side_a, side_o, *non_player_features])
+    a_grid = relu_1(batch_1(a_grid))
+    o_grid = relu_1(batch_1(o_grid))
+    
+    # 1x1 Kernel
+    kernel_1 = keras.layers.Conv2D(config.kernels, (1, 1))
+    a_grid = kernel_1(a_grid)
+    o_grid = kernel_1(o_grid)
 
-    combined = keras.layers.Dense(config.l2_neurons)(combined)
-    combined = keras.layers.Activation('relu')(combined)
+    flatten_1 = keras.layers.Flatten()
+    a_grid = flatten_1(a_grid)
+    o_grid = flatten_1(o_grid)
 
-    combined = keras.layers.Dense(config.l2_neurons)(combined)
-    combined = keras.layers.Activation('relu')(combined)
+    batch_2 = keras.layers.BatchNormalization()
+    relu_2 = keras.layers.Activation('relu')
+    a_grid = relu_2(batch_2(a_grid))
+    o_grid = relu_2(batch_2(o_grid))
 
-    value_output = ValueHead(config)(combined)
-    policy_output = PolicyHead()(combined)
+    # Shrink opponent grid info
+    o_grid = keras.layers.Dense(config.o_side_neurons)(o_grid)
+    o_grid = keras.layers.BatchNormalization()(o_grid)
+    o_grid = keras.layers.Activation('relu')(o_grid)
+
+    # Combine with other features
+    x = keras.layers.Concatenate()([a_grid, o_grid, *a_features, *o_features, *non_player_features])
+
+    value_output = ValueHead(config)(x)
+    policy_output = PolicyHead()(x)
+
+    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+
+    return model
+
+def test_2(config) -> keras.Model:
+    # The network uses the same neural network to apply convolutions to both grids
+    def ResidualLayer():
+        # Uses skip conections
+        def inside(in_1, in_2):
+            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_1 = keras.layers.BatchNormalization()
+            relu_1 = keras.layers.Activation('relu')
+            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_2 = keras.layers.BatchNormalization()
+            relu_2 = keras.layers.Activation('relu')
+
+            out_1 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_1))))))
+            out_2 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_2))))))
+
+            out_1 = keras.layers.Add()([in_1, out_1])
+            out_2 = keras.layers.Add()([in_2, out_2])
+
+            dropout_1 = keras.layers.Dropout(config.dropout)
+
+            out_1 = dropout_1(out_1)
+            out_2 = dropout_1(out_2)
+
+            return out_1, out_2
+        return inside
+
+    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
+
+    # Start with a convolutional layer
+    # Because each grid needs the same network, use the same layers for each side
+    conv_1 = keras.layers.Conv2D(config.filters, (5, 5), padding="same")
+    batch_1 = keras.layers.BatchNormalization()
+    relu_1 = keras.layers.Activation('relu')
+    dropout_1 = keras.layers.Dropout(config.dropout)
+    
+    a_grid = dropout_1(relu_1(batch_1(conv_1(a_grid))))
+    o_grid = dropout_1(relu_1(batch_1(conv_1(o_grid))))
+
+    # 10 residual layers
+    for _ in range(config.blocks):
+        residual_layer = ResidualLayer()
+        a_grid, o_grid = residual_layer(a_grid, o_grid)
+    
+    # 1x1 Kernel
+    kernel_1 = keras.layers.Conv2D(config.kernels, (1, 1))
+    a_grid = kernel_1(a_grid)
+    o_grid = kernel_1(o_grid)
+
+    flatten_1 = keras.layers.Flatten()
+    a_grid = flatten_1(a_grid)
+    o_grid = flatten_1(o_grid)
+
+    batch_2 = keras.layers.BatchNormalization()
+    relu_2 = keras.layers.Activation('relu')
+    a_grid = relu_2(batch_2(a_grid))
+    o_grid = relu_2(batch_2(o_grid))
+
+    # Shrink opponent grid info
+    o_grid = keras.layers.Dense(config.o_side_neurons)(o_grid)
+    o_grid = keras.layers.BatchNormalization()(o_grid)
+    o_grid = keras.layers.Activation('relu')(o_grid)
+
+    # Combine with other features
+    x = keras.layers.Concatenate()([a_grid, o_grid, *a_features, *o_features, *non_player_features])
+
+    value_output = ValueHead(config)(x)
+    policy_output = PolicyHead()(x)
+
+    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+
+    return model
+
+def test_3(config) -> keras.Model:
+    # The network uses the same neural network to apply convolutions to both grids
+    def ResidualLayer():
+        # Uses skip conections
+        def inside(in_1, in_2):
+            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_1 = keras.layers.BatchNormalization()
+            relu_1 = keras.layers.Activation('relu')
+            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_2 = keras.layers.BatchNormalization()
+            relu_2 = keras.layers.Activation('relu')
+
+            out_1 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_1))))))
+            out_2 = relu_2(batch_2(conv_2(relu_1(batch_1(conv_1(in_2))))))
+
+            out_1 = keras.layers.Add()([in_1, out_1])
+            out_2 = keras.layers.Add()([in_2, out_2])
+
+            dropout_1 = keras.layers.Dropout(config.dropout)
+
+            out_1 = dropout_1(out_1)
+            out_2 = dropout_1(out_2)
+
+            return out_1, out_2
+        return inside
+
+    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
+
+    # Start with a convolutional layer
+    # Because each grid needs the same network, use the same layers for each side
+    conv_1 = keras.layers.Conv2D(config.filters, (3,3 ), padding="same")
+
+    game_state = keras.layers.Concatenate()([*a_features, *o_features, *non_player_features])
+    game_state = keras.layers.Dense(config.filters)(game_state)
+    game_state = keras.layers.Reshape((1, 1, config.filters))
+    
+
+
+
+
+    batch_1 = keras.layers.BatchNormalization()
+    relu_1 = keras.layers.Activation('relu')
+    dropout_1 = keras.layers.Dropout(config.dropout)
+    
+    a_grid = dropout_1(relu_1(batch_1(conv_1(a_grid))))
+    o_grid = dropout_1(relu_1(batch_1(conv_1(o_grid))))
+
+    # 10 residual layers
+    for _ in range(config.blocks):
+        residual_layer = ResidualLayer()
+        a_grid, o_grid = residual_layer(a_grid, o_grid)
+    
+    # 1x1 Kernel
+    kernel_1 = keras.layers.Conv2D(config.kernels, (1, 1))
+    a_grid = kernel_1(a_grid)
+    o_grid = kernel_1(o_grid)
+
+    flatten_1 = keras.layers.Flatten()
+    a_grid = flatten_1(a_grid)
+    o_grid = flatten_1(o_grid)
+
+    batch_2 = keras.layers.BatchNormalization()
+    relu_2 = keras.layers.Activation('relu')
+    a_grid = relu_2(batch_2(a_grid))
+    o_grid = relu_2(batch_2(o_grid))
+
+    # Shrink opponent grid info
+    o_grid = keras.layers.Dense(config.o_side_neurons)(o_grid)
+    o_grid = keras.layers.BatchNormalization()(o_grid)
+    o_grid = keras.layers.Activation('relu')(o_grid)
+
+    # Combine with other features
+    x = keras.layers.Concatenate()([a_grid, o_grid, *a_features, *o_features, *non_player_features])
+
+    value_output = ValueHead(config)(x)
+    policy_output = PolicyHead()(x)
 
     model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
 

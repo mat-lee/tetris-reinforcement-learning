@@ -250,7 +250,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
                 child_score = child_data.value_avg + config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
 
                 # Check forced playouts
-                if config.use_forced_playouts_and_policy_target_pruning:
+                if config.use_forced_playouts_and_policy_target_pruning and config.training:
                     if node.is_root(): # Only use for the root
                         if not (config.use_playout_cap_randomization == True and fast_iter == True):
                             if child_data.visit_count >= 1:
@@ -329,22 +329,22 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
                     tree.create_node(data=new_state, parent=node.identifier)
                 
 
-                pn = []
-                ps = []
+                # pn = []
+                # ps = []
 
-                pn_s = sum(policy for policy, move in move_list)
-                ps_s = sum(math.exp(policy / config.RootSoftmaxTemp) for policy, move in move_list)
+                # pn_s = sum(policy for policy, move in move_list)
+                # ps_s = sum(math.exp(policy / config.RootSoftmaxTemp) for policy, move in move_list)
 
-                for policy, move in move_list:
-                    pn.append(policy / pn_s)   
-                    ps.append(math.exp(policy / config.RootSoftmaxTemp) / ps_s)
+                # for policy, move in move_list:
+                #     pn.append(policy / pn_s)   
+                #     ps.append(math.exp(policy / config.RootSoftmaxTemp) / ps_s)
                 
-                fig, axs = plt.subplots(2)
-                fig.suptitle('Policy before and after softmax')
-                axs[0].plot(pn)
-                axs[1].plot(ps)
-                plt.savefig(f"{directory_path}/softmax_policy_{MODEL_VERSION}.png")
-                print("saved")
+                # fig, axs = plt.subplots(2)
+                # fig.suptitle('Policy before and after softmax')
+                # axs[0].plot(pn)
+                # axs[1].plot(ps)
+                # plt.savefig(f"{directory_path}/softmax_policy_{MODEL_VERSION}.png")
+                # print("saved")
         
         # Node is terminal
         # Update weights based on winner
@@ -443,7 +443,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
     move = data.move
 
     # Check policy target pruning
-    if config.use_forced_playouts_and_policy_target_pruning:
+    if config.use_forced_playouts_and_policy_target_pruning and config.training:
         post_prune_n_list = []
 
         most_playouts_child = tree.get_node(max_id)
@@ -762,7 +762,7 @@ def get_move_list(move_matrix, policy_matrix):
 #   Policy: (19 x 25 x 11) = 5225 (Hold x Rows x Columns x Rotations)
 #   Value: (1)
 
-def instantiate_network(config: Config, nn_generator=gen_alphasplit_nn, show_summary=True, save_network=True, plot_model=False):
+def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights
     # 1: For each grid, apply the same neural network, and then use 1x1 kernel and concatenate
     # 1 -> 2: For opponent grid, apply fully connected layer
@@ -1316,7 +1316,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         del challenger_network
         del challenger_interpreter
 
-        gc.collect
+        gc.collect()
 
 def load_best_model():
     max_ver = highest_model_number(MODEL_VERSION)
