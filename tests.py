@@ -361,9 +361,12 @@ def test_older_vs_newer_networks():
 def test_if_changes_improved_model():
     config = Config()
     network = instantiate_network(config, nn_generator=gen_alphasame_nn, show_summary=False, save_network=False, plot_model=False)
-    data = load_data(last_n_sets=20)
+    data = load_data(last_n_sets=5)
 
     train_network(config, network, data)
+
+    del data
+    gc.collect()
 
     best_nn = get_interpreter(load_best_model())
     chal_nn = get_interpreter(network)
@@ -371,14 +374,14 @@ def test_if_changes_improved_model():
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
     pygame.init()
 
-    if battle_networks(best_nn, config, chal_nn, config, 0.55, 200, "Best", "New", show_game=True, screen=screen):
-        network.save(f"{directory_path}/New.keras")
+    if battle_networks(chal_nn, config, best_nn, config, 0.55, 200, "New", "Best", show_game=True, screen=screen):
         print("Success")
     else:
         print("Failure")
+    network.save(f"{directory_path}/New.keras")
 
 
-# data = load_data(last_n_sets=10)
+# data = load_data(last_n_sets=5)
 DefaultConfig=Config()
 
 # test_data_parameters("use_dirichlet_s", values=[0, 1], num_training_loops=1, num_training_games=100, num_battle_games=200, load_from_best_model=True, visual=True)
@@ -403,7 +406,9 @@ DefaultConfig=Config()
 # test_data_parameters('FpuStrategy', ['absolute', 'reduction'], 0.002, 1, 400, 200, True, True)
 # test_data_parameters('use_forced_playouts_and_policy_target_pruning', [False, True], 0.004, 1, 100, 200, True, True)
 # test_data_parameters("use_root_softmax", [True, False], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
-# test_architectures([gen_alphasame_nn, test_1], data, num_games=200, visual=True)
+# test_architectures([test_5, test_4], data, num_games=200, visual=True)
+# test_architectures([test_4, gen_alphasame_nn], data, num_games=200, visual=True)
+test_if_changes_improved_model()
 
 # Command for running python files
 # This is for running many tests at the same time
