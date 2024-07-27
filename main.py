@@ -12,11 +12,11 @@ import pstats
 
 import random
 
-# Load neural network
-model = load_best_model()
-interpreter = get_interpreter(model)
+DefaultConfig = Config(use_root_softmax=True, model='keras', MAX_ITER=160)
 
-DefaultConfig = Config(use_root_softmax=True)
+# Load neural network
+model = load_best_model(DefaultConfig)
+interpreter = get_interpreter(model)
 
 class Main:
 

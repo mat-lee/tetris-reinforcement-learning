@@ -1,6 +1,186 @@
 # File for managing different neural networks architectures.
 from const import *
 
+import torch
+from torch import nn
+import torch.nn.functional as F
+
+input_shapes = [(1, ROWS, COLS), # Grid
+                (2 + PREVIEWS, len(MINOS)), # Pieces
+                (1,), # B2B
+                (1,), # Combo
+                (1,), # Lines cleared
+                (1,), # Lines sent
+                (1, ROWS, COLS), 
+                (2 + PREVIEWS, len(MINOS)), 
+                (1,), 
+                (1,), 
+                (1,),
+                (1,),
+                (1,), # Color (Whether you had first move or not)
+                (1,)] # Total pieces placed
+
+class ResidualBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        
+        self.conv_block1 = nn.Sequential(
+            nn.BatchNorm2d(num_features=config.filters),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=config.filters,
+                out_channels=config.filters,
+                kernel_size=3,
+                stride=1,
+                padding='same',
+                bias=False,
+            ),
+        )
+
+        self.conv_block2 = nn.Sequential(
+            nn.BatchNorm2d(num_features=config.filters),
+            nn.Dropout(p=config.dropout),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=config.filters,
+                out_channels=config.filters,
+                kernel_size=3,
+                stride=1,
+                padding='same',
+                bias=False,
+            ),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        out = self.conv_block1(x)
+        out = self.conv_block2(out)
+        out += residual
+        return out
+
+
+class AlphaSame(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(
+            in_channels=1,
+            out_channels=config.filters,
+            kernel_size=5,
+            stride=1,
+            padding='same',
+            bias=False
+        )
+
+        # Residual blocks
+        res_blocks = []
+        for _ in range(config.blocks):
+            res_blocks.append(ResidualBlock(config))
+        self.res_blocks = nn.Sequential(*res_blocks)
+
+        self.batchnorm1 = nn.BatchNorm2d(num_features=config.filters)
+        self.relu1 = nn.ReLU()
+
+        self.kernel1 = nn.Conv2d(
+            in_channels=config.filters,
+            out_channels=config.kernels,
+            kernel_size=1,
+            stride=1,
+            padding='same',
+            bias=False
+        )
+
+        self.flatten1 = nn.Flatten()
+
+        self.batchnorm2 = nn.BatchNorm2d(num_features=config.kernels)
+        self.relu2 = nn.ReLU()
+
+        self.osidedense = nn.Sequential(
+            nn.Linear(ROWS * COLS * config.kernels, config.o_side_neurons),
+            nn.BatchNorm1d(num_features=config.o_side_neurons),
+            nn.ReLU(),
+        )
+
+        head_inputs = ROWS * COLS * config.kernels + config.o_side_neurons + 2 * ((2 + PREVIEWS) * len(MINOS)) + 2 * 4 + 2
+
+        # Policy head
+        self.policy_head = nn.Sequential(
+            nn.Linear(head_inputs, POLICY_SIZE),
+            nn.Sigmoid()
+        )
+
+        # Value head
+        self.value_head = nn.Sequential(
+            nn.Linear(head_inputs, config.value_head_neurons),
+            nn.BatchNorm1d(num_features=config.value_head_neurons),
+            nn.ReLU(),
+            nn.Linear(config.value_head_neurons, 1),
+            nn.Dropout(config.dropout),
+            (nn.Tanh() if config.use_tanh else nn.Sigmoid()),
+        )
+
+    def forward(self, a_grid, a_pieces, a_b2b, a_combo, a_lines_cleared, a_lines_sent, o_grid, o_pieces, o_b2b, o_combo, o_lines_cleared, o_lines_sent, color, pieces_placed):
+        # 5x5 Convolution
+        a_grid_out = self.conv1(a_grid)
+        o_grid_out = self.conv1(o_grid)
+
+        # Residual blocks
+        a_grid_out = self.res_blocks(a_grid_out)
+        o_grid_out = self.res_blocks(o_grid_out)
+
+        # Batch norm -> Relu
+        a_grid_out = self.batchnorm1(a_grid_out)
+        o_grid_out = self.batchnorm1(o_grid_out)
+        a_grid_out = self.relu1(a_grid_out)
+        o_grid_out = self.relu1(o_grid_out)
+
+        # 1x1 Kernel
+        a_grid_out = self.kernel1(a_grid_out)
+        o_grid_out = self.kernel1(o_grid_out)
+
+        a_grid_out = self.batchnorm2(a_grid_out)
+        o_grid_out = self.batchnorm2(o_grid_out)
+        a_grid_out = self.relu2(a_grid_out)
+        o_grid_out = self.relu2(o_grid_out)
+
+        # Flatten
+        a_grid_out = self.flatten1(a_grid_out)
+        o_grid_out = self.flatten1(o_grid_out)
+
+        # Shrink opponent grid info
+        o_grid_out = self.osidedense(o_grid_out)
+
+        # Concatenate all features
+        a_pieces = self.flatten1(a_pieces)
+        o_pieces = self.flatten1(o_pieces)
+
+        a_b2b = a_b2b.unsqueeze(1)
+        a_combo = a_combo.unsqueeze(1)
+        a_lines_cleared = a_lines_cleared.unsqueeze(1)
+        a_lines_sent = a_lines_sent.unsqueeze(1)
+        o_b2b = o_b2b.unsqueeze(1)
+        o_combo = o_combo.unsqueeze(1)
+        o_lines_cleared = o_lines_cleared.unsqueeze(1)
+        o_lines_sent = o_lines_sent.unsqueeze(1)
+        color = color.unsqueeze(1)
+        pieces_placed = pieces_placed.unsqueeze(1)
+
+        x = torch.concat((a_grid_out, a_pieces, a_b2b, a_combo, a_lines_cleared, a_lines_sent, o_grid_out, o_pieces, o_b2b, o_combo, o_lines_cleared, o_lines_sent, color, pieces_placed), dim=1)
+
+        # Value and policy head
+        value_output = self.value_head(x)
+        policy_output = self.policy_head(x)
+
+        return value_output, policy_output
+        
+
+
+
+
+
+
+
+
 from tensorflow import keras
 
 

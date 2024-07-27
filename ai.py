@@ -30,12 +30,16 @@ from sklearn.model_selection import train_test_split
 # tf.get_logger().setLevel('ERROR')
 # tf.autograph.set_verbosity(0)
 
+from torch.utils.data import DataLoader
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 import cProfile
 import pstats
 
 # For naming data and models
 MODEL_VERSION = 4.6
-DATA_VERSION = 1.0
+DATA_VERSION = 2.0
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -80,6 +84,9 @@ class Config():
     def __init__(
         self, 
 
+        model='keras',
+        default_model=None,
+
         # Architecture Parameters
         l1_neurons=256, # Fishlike
         l2_neurons=32,
@@ -98,6 +105,7 @@ class Config():
         learning_rate=0.001, 
         loss_weights=[1, 1], 
         epochs=1, 
+        batch_size=64,
 
         # MCTS Parameters
         training=False, # Set to true to use playout cap randomization
@@ -124,6 +132,8 @@ class Config():
         
         CPUCT=0.75
     ):
+        self.model = model
+        self.default_model = default_model
         self.l1_neurons = l1_neurons
         self.l2_neurons = l2_neurons
         self.blocks = blocks
@@ -137,6 +147,7 @@ class Config():
         self.learning_rate = learning_rate
         self.loss_weights = loss_weights
         self.epochs = epochs
+        self.batch_size = batch_size
         self.training = training
         self.MAX_ITER = MAX_ITER
         self.use_playout_cap_randomization = use_playout_cap_randomization
@@ -291,7 +302,10 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
 
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
-            value, policy = evaluate_from_tflite(node_state.game, network)
+            if config.model == 'keras':
+                value, policy = evaluate_from_tflite(node_state.game, network)
+            elif config.model == 'pytorch':
+                value, policy = evaluate_pytorch(node_state.game, network)
             # value, policy = random_evaluate()
 
             if node_state.game.no_move == False:
@@ -313,8 +327,10 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
 
                     if node.is_root() and config.use_root_softmax: # Softmax
                         new_state.policy = math.exp(policy / config.RootSoftmaxTemp) / softmax_denominator
+                        assert math.exp(policy / config.RootSoftmaxTemp) / softmax_denominator > 0
                     else: # Normal
                         new_state.policy = policy / policy_sum
+                        assert policy / policy_sum
 
                     # Set First Play Urgency value
                     if config.FpuStrategy == 'absolute':
@@ -771,43 +787,96 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
 
     model = nn_generator(config)
 
-    if plot_model == True:
-        keras.utils.plot_model(model, to_file=f"{directory_path}/model_{MODEL_VERSION}_img.png", show_shapes=True)
+    if config.model == 'keras':
+        if plot_model == True:
+            keras.utils.plot_model(model, to_file=f"{directory_path}/model_{MODEL_VERSION}_img.png", show_shapes=True)
 
-    # Loss is the sum of MSE of values and Cross entropy of policies
-    model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
+        # Loss is the sum of MSE of values and Cross entropy of policies
+        model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
 
-    if show_summary: model.summary()
+        if show_summary: model.summary()
 
-    if save_network:
-        path = f"{directory_path}/models/{MODEL_VERSION}"
-        os.makedirs(path, exist_ok=True)
-        model.save(f"{path}/0.keras")
+        if save_network:
+            path = f"{directory_path}/models/{MODEL_VERSION}"
+            os.makedirs(path, exist_ok=True)
+            model.save(f"{path}/0.keras")
 
-    return model
+        return model
+    elif config.model == 'pytorch':
+        if show_summary: print(model)
 
-def train_network(config, model, data):
-    # Don't train over everything simultaneously
+        if save_network:
+            path = f"{directory_path}/pytorch_models/{MODEL_VERSION}"
+            os.makedirs(path, exist_ok=True)
+            torch.save(model.state_dict(), f"{path}/0")
+
+def train_network_keras(config, model, set):
     # Keras has 2GB limit (?)
-    for set in data:
-        # Fit the model
-        # Swap rows and columns
-        features = list(map(list, zip(*set)))
 
-        # Make features into np arrays
-        for i in range(len(features)):
-            features[i] = np.array(features[i])
+    # Fit the model
+    # Swap rows and columns
+    features = list(map(list, zip(*set)))
 
-        # Last two columns are value and policy
-        policies = features.pop()
-        values = features.pop()
+    # Make features into np arrays
+    for i in range(len(features)):
+        features[i] = np.array(features[i])
 
-        # Reshape policies
-        policies = np.array(policies).reshape((-1, POLICY_SIZE))
+    # Last two columns are value and policy
+    policies = features.pop()
+    values = features.pop()
 
-        # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
+    # Reshape policies
+    policies = np.array(policies).reshape((-1, POLICY_SIZE))
 
-        model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=True)
+    # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
+
+    model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=True)
+
+def train_network_pytorch(config, model, set):
+    features = list(map(list, zip(*set)))
+
+    for i in range(len(features)):
+        features[i] = torch.tensor(features[i])
+
+        if features[i].dim() == 3 and features[i].shape[1] == 26 and features[i].shape[2] == 10:
+            # Add channel for grids
+            features[i] = features[i].unsqueeze(dim=1)
+            # Convert to float
+            features[i] = features[i].type(torch.float)
+        
+    dataset = torch.utils.data.TensorDataset(*features)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+
+    loss_fn_1 = nn.MSELoss()
+    loss_fn_2 = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
+
+    for data_point in dataloader:
+        for feat in data_point:
+            feat = feat.to(device)
+
+        y_policy = data_point.pop()
+        y_value = data_point.pop().type(torch.float)
+
+        # Compute prediction error
+        pred_value, pred_policy = model(*data_point)
+
+        # Reshape policy and value
+        pred_value = torch.reshape(pred_value, (-1,))
+        pred_policy = torch.reshape(pred_policy, (-1, *POLICY_SHAPE))
+
+        loss_1 = loss_fn_1(pred_value, y_value)
+        loss_2 = loss_fn_2(pred_policy, y_policy)
+
+        loss = loss_1 + loss_2
+
+        # Backpropagation
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+    loss = loss.item()
+    print(f"loss: {loss:>7f}")
 
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
@@ -840,22 +909,34 @@ def evaluate_from_tflite(game, interpreter):
 
     value = interpreter.get_tensor(output_details[1]['index'])
     policies = interpreter.get_tensor(output_details[0]['index'])
-    
-    # input_details = interpreter.get_input_details()
-    # for i in range(len(X)):
-    #     idx = int(input_details[i]['name'][16:].split(":")[0])
-
-    # interpreter.set_tensor(interpreter.get_input_details()[i]["index"], X[idx])
-    # interpreter.invoke()
-    # result = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
-
-
-    # value, policies = signature_runner(inputs=X)
 
     # Both value and policies are returned as arrays
     policies = policies.reshape(POLICY_SHAPE)
     
     return value[0][0], policies
+
+def evaluate_pytorch(game, model):
+    # Use a neural network to return value and policy.
+    data = game_to_X(game)
+    X = []
+
+    with torch.no_grad():
+        for feature in data:
+            tensor = torch.tensor(feature)
+            if tensor.size() == (ROWS, COLS):
+                # Add channel for grids
+                tensor = tensor.unsqueeze(dim=0)
+                tensor = tensor.type(torch.float)
+            
+            # Add one dim
+            tensor = tensor.unsqueeze(dim=0)
+
+            tensor = tensor.to(device)
+            X.append(tensor)
+        
+        value, policies = model.forward(*X)
+
+    return value.item(), policies.numpy().reshape(POLICY_SHAPE)
 
 def random_evaluate():
     # For testing how fast the MCTS is
@@ -1219,6 +1300,30 @@ def load_data(last_n_sets=20):
     random.shuffle(data)
     return data
 
+def get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True):
+    filenames = []
+    max_set = highest_data_number()
+
+    sets, len_sets = 0, 0
+
+    path = f"{directory_path}/data/{DATA_VERSION}"
+
+    # Get n games
+    for filename in os.listdir(path):
+        data_number = int(filename.split('.')[0])
+        if data_number > max_set - SETS_TO_TRAIN_WITH:
+            # Load data
+            filenames.append(filename)
+
+            sets += 1
+    
+    print(sets)
+    # Shuffle data
+    if shuffle:
+        random.shuffle(filenames)
+    return filenames
+    
+
 def battle_networks(NN_1, config_1, NN_2, config_2, threshold, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
     # Battle two AI's with different networks.
     # Returns true if NN_1 wins, otherwise returns false
@@ -1266,14 +1371,14 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         pygame.init()
         screen = pygame.display.set_mode( (WIDTH, HEIGHT))
     # Given a network, generates training data, trains it, and checks if it improved.
-    best_network = load_best_model()
-    best_interpreter = get_interpreter(best_network)
+    best_network = load_best_model(config)
+
+    if config.model == 'keras':
+        best_interpreter = get_interpreter(best_network)
 
     training_config = copy.deepcopy(config)
     # Setting training to true enables a variety of training features
     training_config.training = True
-
-    del best_network
 
     iter = 0
 
@@ -1281,51 +1386,88 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         iter += 1
 
         # The challenger network will be trained and then battled against the prior network
-        challenger_network = load_best_model()
+        challenger_network = load_best_model(config)
 
         # Play a training set and train the network on past sets.
         for i in range(TRAINING_LOOPS):
             # Make data file
             if not skip_first_set:
                 # Use Training Config
-                make_training_set(training_config, best_interpreter, TRAINING_GAMES, show_game=show_games, screen=screen)
+                make_training_set(training_config, (best_interpreter if config.model == 'keras' else best_network), TRAINING_GAMES, show_game=show_games, screen=screen)
                 print("Finished set")
+            else:
+                # Skip and stop skipping in future
+                skip_first_set = False
 
         # Load data
-        data = load_data(SETS_TO_TRAIN_WITH)
+        filenames = get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True)
 
-        # Train challenger network
-        train_network(config, challenger_network, data)
+        path = f"{directory_path}/data/{DATA_VERSION}"
 
-        del data
+        for filename in filenames:
+            set = ujson.load(open(f"{path}/{filename}", 'r'))
 
-        challenger_interpreter = get_interpreter(challenger_network)
+            # Train challenger network
+            if config.model == 'keras':
+                train_network_keras(config, challenger_network, set)
+            elif config.model == 'pytorch':
+                train_network_pytorch(config, challenger_network, set)
+
+        del set
+
+        if config.model == 'keras':
+            challenger_interpreter = get_interpreter(challenger_network)
+
         print("Finished loop")
 
         # If new network is improved, save it and make it the default
         # Otherwise, repeat
-        if battle_networks(challenger_interpreter, config, best_interpreter, config, 0.55, BATTLE_GAMES, show_game=show_games, screen=screen):
+        if battle_networks(
+            (challenger_interpreter if config.model == 'keras' else challenger_network), 
+            config, 
+            (best_interpreter if config.model == 'keras' else best_network), 
+            config, 
+            0.55, 
+            BATTLE_GAMES, 
+            show_game=show_games, 
+            screen=screen
+        ):
             # Challenger network becomes next highest version
-            next_ver = highest_model_number(MODEL_VERSION) + 1
-            challenger_network.save(f"{directory_path}/models/{MODEL_VERSION}/{next_ver}.keras")
+            next_ver = highest_model_number(config, MODEL_VERSION) + 1
+
+            if config.model == 'keras':
+                challenger_network.save(f"{directory_path}/models/{MODEL_VERSION}/{next_ver}.keras")
+            if config.model == 'pytorch':
+                torch.save(challenger_network.state_dict(), f"{directory_path}/pytorch_models/{MODEL_VERSION}/{next_ver}")
 
             # The new network becomes the network to beat
             best_network = challenger_network
-            best_interpreter = get_interpreter(best_network)
+
+            if config.model == 'keras':
+                best_interpreter = get_interpreter(best_network)
         
         del challenger_network
-        del challenger_interpreter
+        if config.model == 'keras':
+            del challenger_interpreter
 
         gc.collect()
 
-def load_best_model():
-    max_ver = highest_model_number(MODEL_VERSION)
+def load_best_model(config):
+    max_ver = highest_model_number(config, MODEL_VERSION)
 
-    path = f"{directory_path}/models/{MODEL_VERSION}/{max_ver}.keras"
+    if config.model == 'keras':
+        path = f"{directory_path}/models/{MODEL_VERSION}/{max_ver}.keras"
+
+        model = keras.models.load_model(path)
+    elif config.model == 'pytorch':
+        path = f"{directory_path}/pytorch_models/{MODEL_VERSION}/{max_ver}"
+
+        model = config.default_model(config)
+        model.load_state_dict(torch.load(path))
+        model.to(device)
+        model.eval()
 
     print(path)
-
-    model = keras.models.load_model(path)
 
     return model
 
@@ -1348,17 +1490,28 @@ def get_interpreter(model):
 
     return interpreter
 
-def highest_model_number(ver):
+def highest_model_number(config, ver):
     max = -1
 
-    path = f"{directory_path}/models/{ver}"
+    if config.model == 'keras':
+        path = f"{directory_path}/models/{ver}"
 
-    os.makedirs(path, exist_ok=True)
+        os.makedirs(path, exist_ok=True)
 
-    for filename in os.listdir(path):
-        model_number = int(filename.split('.')[0])
-        if model_number > max:
-            max = model_number
+        for filename in os.listdir(path):
+            model_number = int(filename.split('.')[0])
+            if model_number > max:
+                max = model_number
+
+    elif config.model == 'pytorch':
+        path = f"{directory_path}/pytorch_models/{ver}"
+
+        os.makedirs(path, exist_ok=True)
+
+        for filename in os.listdir(path):
+            model_number = int(filename)
+            if model_number > max:
+                max = model_number
 
     return max
 
