@@ -132,7 +132,7 @@ class Config():
         CForcedPlayout=2,
 
         use_root_softmax=True,
-        RootSoftmaxTemp=1.03,
+        RootSoftmaxTemp=1.1,
         
         CPUCT=0.75
     ):
@@ -320,25 +320,36 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
                 move_list = get_move_list(move_matrix, policy)
 
                 # Generate new leaves
-
-                # Calculate softmax if root
-                if node.is_root() and config.use_root_softmax:
-                    softmax_denominator = sum(math.exp(policy / config.RootSoftmaxTemp) for policy, move in move_list)
-
                 # Normalize policy values
-                else:
-                    policy_sum = sum(policy for policy, move in move_list)
+                policies, moves = map(list, zip(*move_list))
 
-                for policy, move in move_list:
+
+                # pn = []
+                # ps = []
+                # pn_s = sum(policies)
+
+
+                # Softmax
+                if node.is_root() and config.use_root_softmax:
+                    # Formula taken from katago
+                    max_policy = max(policies)
+                    for i in range(len(policies)):
+                        # pn.append(policies[i])
+
+                        policies[i] = math.exp((math.log(policies[i]) - math.log(max_policy)) * 1 / config.RootSoftmaxTemp)
+                        
+                        # ps.append(policies[i])
+
+                policy_sum = sum(policies)
+
+                for policy, move in zip(policies, moves):
                     new_state = NodeState(game=None, move=move)
 
-                    if node.is_root() and config.use_root_softmax: # Softmax
-                        new_state.policy = math.exp(policy / config.RootSoftmaxTemp) / softmax_denominator
-                        assert math.exp(policy / config.RootSoftmaxTemp) / softmax_denominator > 0
-                    else: # Normal
-                        new_state.policy = policy / policy_sum
-                        assert policy / policy_sum
+                    # New node policy
+                    new_state.policy = policy / policy_sum
+                    assert new_state.policy > 0
 
+                    # New node value
                     # Set First Play Urgency value
                     if config.FpuStrategy == 'absolute':
                         new_state.value_avg = config.FpuValue
@@ -351,17 +362,8 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
 
                     tree.create_node(data=new_state, parent=node.identifier)
                 
-
-                # pn = []
-                # ps = []
-
-                # pn_s = sum(policy for policy, move in move_list)
-                # ps_s = sum(math.exp(policy / config.RootSoftmaxTemp) for policy, move in move_list)
-
-                # for policy, move in move_list:
-                #     pn.append(policy / pn_s)   
-                #     ps.append(math.exp(policy / config.RootSoftmaxTemp) / ps_s)
-                
+                # pn = [p/pn_s for p in pn]
+                # ps = [p/sum(ps) for p in ps]
                 # fig, axs = plt.subplots(2)
                 # fig.suptitle('Policy before and after softmax')
                 # axs[0].plot(pn)
