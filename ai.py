@@ -38,8 +38,8 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 4.6
-DATA_VERSION = 2.0
+MODEL_VERSION = 4.7
+DATA_VERSION = 1.0
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -75,6 +75,7 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - loss_weights:
 
 # With 10 layers, 16 filters is max number of filters before inference time scales
+# Bottleneck residuals were worse, with or without dropout than normal residuals (test_4 and test_5)
 
 
 total_branch = 0
@@ -92,7 +93,9 @@ class Config():
         l2_neurons=32,
 
         blocks=10, # Alphalike
+        pooling_blocks=2,
         filters=16, 
+        cpool=4,
         dropout=0.4,
         kernels=1,
         o_side_neurons=16,
@@ -106,6 +109,7 @@ class Config():
         loss_weights=[1, 1], 
         epochs=1, 
         batch_size=64,
+        shuffle=True,
 
         # MCTS Parameters
         training=False, # Set to true to use playout cap randomization
@@ -127,7 +131,7 @@ class Config():
         use_forced_playouts_and_policy_target_pruning=True,
         CForcedPlayout=2,
 
-        use_root_softmax=False,
+        use_root_softmax=True,
         RootSoftmaxTemp=1.03,
         
         CPUCT=0.75
@@ -137,7 +141,9 @@ class Config():
         self.l1_neurons = l1_neurons
         self.l2_neurons = l2_neurons
         self.blocks = blocks
+        self.pooling_blocks = pooling_blocks
         self.filters = filters
+        self.cpool = cpool
         self.dropout = dropout
         self.kernels = kernels
         self.o_side_neurons = o_side_neurons
@@ -148,6 +154,7 @@ class Config():
         self.loss_weights = loss_weights
         self.epochs = epochs
         self.batch_size = batch_size
+        self.shuffle = shuffle
         self.training = training
         self.MAX_ITER = MAX_ITER
         self.use_playout_cap_randomization = use_playout_cap_randomization
@@ -830,7 +837,7 @@ def train_network_keras(config, model, set):
 
     # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
-    model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=True)
+    model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
 
 def train_network_pytorch(config, model, set):
     features = list(map(list, zip(*set)))
@@ -845,7 +852,7 @@ def train_network_pytorch(config, model, set):
             features[i] = features[i].type(torch.float)
         
     dataset = torch.utils.data.TensorDataset(*features)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=config.shuffle)
 
     loss_fn_1 = nn.MSELoss()
     loss_fn_2 = nn.CrossEntropyLoss()
@@ -1304,14 +1311,14 @@ def get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True):
     filenames = []
     max_set = highest_data_number()
 
-    sets, len_sets = 0, 0
+    sets = 0
 
     path = f"{directory_path}/data/{DATA_VERSION}"
 
     # Get n games
     for filename in os.listdir(path):
         data_number = int(filename.split('.')[0])
-        if data_number > max_set - SETS_TO_TRAIN_WITH:
+        if data_number > max_set - last_n_sets:
             # Load data
             filenames.append(filename)
 
@@ -1389,15 +1396,14 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         challenger_network = load_best_model(config)
 
         # Play a training set and train the network on past sets.
-        for i in range(TRAINING_LOOPS):
-            # Make data file
-            if not skip_first_set:
-                # Use Training Config
+        if not skip_first_set:
+            for i in range(TRAINING_LOOPS):
+                # Make data file with trianing config
                 make_training_set(training_config, (best_interpreter if config.model == 'keras' else best_network), TRAINING_GAMES, show_game=show_games, screen=screen)
                 print("Finished set")
-            else:
-                # Skip and stop skipping in future
-                skip_first_set = False
+        else:
+            # Skip and stop skipping in future
+            skip_first_set = False
 
         # Load data
         filenames = get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True)

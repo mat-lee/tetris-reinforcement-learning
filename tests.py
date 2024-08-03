@@ -267,13 +267,14 @@ def test_parameters(
                         visual=visual))
 
 def test_architectures(
+    config,
     nn_gens: list, 
     data,
     num_games,
     visual=True
 ):
     # Configs aren't being changed here but the list is needed for battle royale
-    configs = [Config() for _ in range(len(nn_gens))]
+    configs = [copy.deepcopy(config) for _ in range(len(nn_gens))]
     
     networks = [instantiate_network(configs[0], 
                                     nn_generator=nn_gen, 
@@ -282,7 +283,11 @@ def test_architectures(
                                     plot_model=False) for nn_gen in nn_gens]
 
     for network in networks:
-        train_network(configs[0], network, data)
+        for set in data:
+            if config.model == 'keras':
+                train_network_keras(configs[0], network, set)
+            elif config.model == 'pytorch':
+                raise NotImplementedError
 
     del data
     gc.collect()
@@ -360,15 +365,16 @@ def test_older_vs_newer_networks():
 
 def test_if_changes_improved_model():
     config = Config()
-    network = instantiate_network(config, nn_generator=gen_alphasame_nn, show_summary=False, save_network=False, plot_model=False)
-    data = load_data(last_n_sets=5)
+    network = instantiate_network(config, nn_generator=test_7, show_summary=False, save_network=False, plot_model=False)
+    data = load_data(last_n_sets=10)
 
-    train_network(config, network, data)
+    for set in data:
+        train_network_keras(config, network, set)
 
-    del data
-    gc.collect()
+        del set
+        gc.collect()
 
-    best_nn = get_interpreter(load_best_model())
+    best_nn = get_interpreter(load_best_model(config))
     chal_nn = get_interpreter(network)
 
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
@@ -382,7 +388,9 @@ def test_if_changes_improved_model():
 
 
 # data = load_data(last_n_sets=5)
-DefaultConfig=Config()
+DefaultConfig=Config(model='keras', shuffle=True)
+
+# keras.utils.set_random_seed(937)
 
 # test_data_parameters("use_dirichlet_s", values=[0, 1], num_training_loops=1, num_training_games=100, num_battle_games=200, load_from_best_model=True, visual=True)
 # test_data_parameters("DIRICHLET_ALPHA", values=[0.01, 0.03, 0.1], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
@@ -395,7 +403,7 @@ DefaultConfig=Config()
 
 # test_parameters("dropout", [0.2, 0.3, 0.4], num_games=200, data=data,load_from_best_model=True)
 
-# instantiate_network(DefaultConfig, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False)
+# instantiate_network(DefaultConfig, nn_generator=test_7, show_summary=True, save_network=False, plot_model=False)
 # profile_game()
 
 # time_architectures("filters", [1, 2, 4, 8, 16, 32, 64, 128, 256, 512])
@@ -408,6 +416,8 @@ DefaultConfig=Config()
 # test_data_parameters("use_root_softmax", [True, False], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
 # test_architectures([test_5, test_4], data, num_games=200, visual=True)
 # test_architectures([test_4, gen_alphasame_nn], data, num_games=200, visual=True)
+# test_architectures(DefaultConfig, [gen_alphasame_nn, test_7], data, num_games=200, visual=True)
+
 test_if_changes_improved_model()
 
 # Command for running python files

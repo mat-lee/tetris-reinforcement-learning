@@ -2,7 +2,7 @@ from ai import *
 
 ### File for running the simulation commands
 
-DefaultConfig = Config(model='pytorch', default_model=AlphaSame)
+DefaultConfig = Config(model='keras', default_model=gen_alphasame_nn)
 
 # Create a network if none exist already
 if highest_model_number(DefaultConfig, MODEL_VERSION) == -1:
