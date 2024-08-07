@@ -12,7 +12,7 @@ import pstats
 
 import random
 
-DefaultConfig = Config(use_root_softmax=True, model='keras', MAX_ITER=160)
+DefaultConfig = Config(training=True, model='keras', MAX_ITER=160)
 
 # Load neural network
 model = load_best_model(DefaultConfig)
@@ -63,7 +63,7 @@ class Main:
                                 game.make_move(move)
                             elif event.key == k_make_ai_move:
                                 if game.players[1].game_over == False:
-                                    move, _ = MCTS(DefaultConfig, game, interpreter)
+                                    move, _, _ = MCTS(DefaultConfig, game, interpreter)
                                     game.make_move(move=move)
                             elif event.key == k_rotate_cw:
                                 game.human_player.try_wallkick(1)
@@ -121,7 +121,7 @@ class Main:
                     # stats.sort_stats(pstats.SortKey.TIME)
                     # stats.print_stats(20)
 
-                    move, _ = MCTS(DefaultConfig, game, interpreter)
+                    move, _, _= MCTS(DefaultConfig, game, interpreter)
                     game.make_move(move=move)
 
             pygame.display.update()

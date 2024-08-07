@@ -29,6 +29,9 @@ class Player:
         if len(self.queue.pieces) > 0:
             next_piece = self.queue.pieces.pop(0)
             self.create_piece(next_piece)
+        elif self.held_piece != None:
+            next_piece, self.held_piece = self.held_piece, None
+            self.create_piece(next_piece)
 
     def create_piece(self, piece_type):   
         piece = Piece(piece_dict[piece_type], type=piece_type)

@@ -25,9 +25,9 @@ def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_ti
         game.setup()
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
             if game.turn == 0:
-                move, _ = MCTS(config_1, game, NN_1)    
+                move, _, _ = MCTS(config_1, game, NN_1)    
             elif game.turn == 1:
-                move, _ = MCTS(config_2, game, NN_2)
+                move, _, _ = MCTS(config_2, game, NN_2)
                 
             game.make_move(move)
 
@@ -46,7 +46,6 @@ def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_ti
 def battle_royale(interpreters, configs, names, num_games, visual=True) -> dict:
     screen = None
     if visual == True:
-        pygame.init()
         screen = pygame.display.set_mode( (WIDTH, HEIGHT))
 
     scores={name: {} for name in names}
@@ -83,11 +82,11 @@ def test_dirichlet_noise() -> None:
         game.setup()
 
         for _ in range(10):
-            default_move, _ = MCTS(default_config, game, interpreter, add_noise=False)
+            default_move, _, _ = MCTS(default_config, game, interpreter, add_noise=False)
 
             for alpha_value in alpha_values:
                 config = Config(DIRICHLET_ALPHA=alpha_value)
-                move, _ = MCTS(config, game, interpreter, add_noise=True)
+                move, _, _ = MCTS(config, game, interpreter, add_noise=True)
 
                 if move == default_move:
                     alpha_values[alpha_value]['n_same'] += 1
@@ -131,7 +130,6 @@ def time_move_matrix() -> None:
     num_games = 10
 
     # Initialize pygame
-    pygame.init()
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
     pygame.display.set_caption(f'Profiling Get Move Matrix')
 
@@ -147,7 +145,7 @@ def time_move_matrix() -> None:
         game.setup()
 
         while game.is_terminal == False:
-            move, _ = MCTS(config, game, interpreter)
+            move, _, _ = MCTS(config, game, interpreter)
             game.make_move(move)
             moves += 1
 
@@ -184,7 +182,6 @@ def profile_game() -> None:
     config = Config()
     network = get_interpreter(load_best_model())
 
-    pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption(f'Testing algorithm accuracy')
 
@@ -202,7 +199,6 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     num_games = 10
 
     # Initialize pygame
-    pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption(f'Testing algorithm accuracy')
 
@@ -221,7 +217,7 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
             truth_moves += np.sum(get_move_matrix(game.players[game.turn], algo=truth_algo))
             test_moves += np.sum(get_move_matrix(game.players[game.turn], algo=test_algo))
 
-            move, _ = MCTS(config, game, interpreter, move_algorithm='brute-force')
+            move, _, _ = MCTS(config, game, interpreter, move_algorithm='brute-force')
             game.make_move(move)
 
             game.show(screen)
@@ -246,13 +242,14 @@ def test_parameters(
 
     # Networks
     if load_from_best_model:
-        networks = [load_best_model() for _ in range(len(values))]
+        networks = [load_best_model(config) for config in configs]
     else:
         networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
 
     if data != None:
         for config, network in zip(configs, networks):
-            train_network(config, network, data)
+            for set in data:
+                train_network_keras(config, network, set)
         
         del data
         gc.collect()
@@ -323,7 +320,7 @@ def test_data_parameters(
 
     # Networks
     if load_from_best_model:
-        networks = [load_best_model() for _ in range(len(values))]
+        networks = [load_best_model(config) for config in configs]
     else:
         networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
 
@@ -332,7 +329,7 @@ def test_data_parameters(
             interpreter = get_interpreter(network)
             set = make_training_set(config, interpreter, num_training_games, save_game=False, show_game=visual, screen=screen)
             
-            train_network(config, network, [set])
+            train_network_keras(config, network, set)
 
             del set
             gc.collect()
@@ -360,12 +357,11 @@ def test_older_vs_newer_networks():
 
     config = Config()
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-    pygame.init()
     battle_networks_win_loss(best_model, config, old_model, config, 200, "new", "old", True, screen)
 
 def test_if_changes_improved_model():
     config = Config()
-    network = instantiate_network(config, nn_generator=test_7, show_summary=False, save_network=False, plot_model=False)
+    network = instantiate_network(config, nn_generator=None, show_summary=False, save_network=False, plot_model=False)
     data = load_data(last_n_sets=10)
 
     for set in data:
@@ -378,7 +374,6 @@ def test_if_changes_improved_model():
     chal_nn = get_interpreter(network)
 
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-    pygame.init()
 
     if battle_networks(chal_nn, config, best_nn, config, 0.55, 200, "New", "Best", show_game=True, screen=screen):
         print("Success")
@@ -387,38 +382,24 @@ def test_if_changes_improved_model():
     network.save(f"{directory_path}/New.keras")
 
 
-# data = load_data(last_n_sets=5)
 DefaultConfig=Config(model='keras', shuffle=True)
 
-# keras.utils.set_random_seed(937)
+keras.utils.set_random_seed(937)
 
-# test_data_parameters("use_dirichlet_s", values=[0, 1], num_training_loops=1, num_training_games=100, num_battle_games=200, load_from_best_model=True, visual=True)
-# test_data_parameters("DIRICHLET_ALPHA", values=[0.01, 0.03, 0.1], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
-# test_data_parameters("DIRICHLET_S", values=[25, 500], learning_rate=0.002, num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
-# test_parameters("CPUCT", [0.5, 1, 2], 200, load_from_best_model=True, visual=True)
-# test_parameters("FpuValue", [0, 0.2, 0.4], 200, load_from_best_model=True, visual=True)
+data = load_data(last_n_sets=1)
 
-# test_parameters("loss_weights", [[1, 0.33], [1, 1], [1, 3]], 200, data=data, load_from_best_model=False, visual=True)
-# test_parameters("learning_rate", [1e-4, 1e-3, 1e-2], 200, data=data, load_from_best_model=True)
 
-# test_parameters("dropout", [0.2, 0.3, 0.4], num_games=200, data=data,load_from_best_model=True)
 
-# instantiate_network(DefaultConfig, nn_generator=test_7, show_summary=True, save_network=False, plot_model=False)
-# profile_game()
+# test_parameters("dropout", values=[0, 0.25, 0.5], num_games=200, data=data, load_from_best_model=True, visual=True)
 
-# time_architectures("filters", [1, 2, 4, 8, 16, 32, 64, 128, 256, 512])
-# test_data_parameters("DIRICHLET_ALPHA", values=[250, 500, 750], num_training_loops=1, num_training_games=200, num_battle_games=200, load_from_best_model=True, visual=True)
+# test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
+# test_parameters("learning_rate", [0.05, 0.1], num_games=200, data=data, load_from_best_model=True, visual=True)
+test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
-# test_data_parameters('use_dirichlet_noise', [False, True], 0.002, 1, 400, 200, True, True)
-# test_data_parameters('use_playout_cap_randomization', [False, True], 0.002, 1, 400, 200, True, True)
-# test_data_parameters('FpuStrategy', ['absolute', 'reduction'], 0.002, 1, 400, 200, True, True)
-# test_data_parameters('use_forced_playouts_and_policy_target_pruning', [False, True], 0.004, 1, 100, 200, True, True)
-# test_data_parameters("use_root_softmax", [True, False], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
-# test_architectures([test_5, test_4], data, num_games=200, visual=True)
-# test_architectures([test_4, gen_alphasame_nn], data, num_games=200, visual=True)
-# test_architectures(DefaultConfig, [gen_alphasame_nn, test_7], data, num_games=200, visual=True)
+# test_data_parameters("DIRICHLET_S", [10, 25, 50], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
+# test_data_parameters("FpuValue", [0.1, 0.2, 0.4], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
 
-test_if_changes_improved_model()
+
 
 # Command for running python files
 # This is for running many tests at the same time

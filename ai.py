@@ -34,12 +34,15 @@ from torch.utils.data import DataLoader
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+# Not sure where I'm importing pygame from but sure
+pygame.init()
+
 import cProfile
 import pstats
 
 # For naming data and models
 MODEL_VERSION = 4.7
-DATA_VERSION = 1.0
+DATA_VERSION = 1.2
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -58,7 +61,7 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Investigate hold issue (maybe search depth?)
 
 # Testing Results/Todo:
-# - augment_data:
+# - augment_data:           True > False
 # - Architecture:           alphasplit
 # - MAX_ITER:               * Inconclusive
 # - DIRICHLET_ALPHA: 
@@ -76,7 +79,7 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # With 10 layers, 16 filters is max number of filters before inference time scales
 # Bottleneck residuals were worse, with or without dropout than normal residuals (test_4 and test_5)
-
+# When training on a single set, learning rate 0.1 > 0.01 > 0.001
 
 total_branch = 0
 number_branch = 0
@@ -89,10 +92,12 @@ class Config():
         default_model=None,
 
         # Architecture Parameters
-        l1_neurons=256, # Fishlike
+        # Fishlike model
+        l1_neurons=256, 
         l2_neurons=32,
 
-        blocks=10, # Alphalike
+        # Alphalike model
+        blocks=10,
         pooling_blocks=2,
         filters=16, 
         cpool=4,
@@ -112,7 +117,8 @@ class Config():
         shuffle=True,
 
         # MCTS Parameters
-        training=False, # Set to true to use playout cap randomization
+        training=False, # Set to true to use a variety of features
+        save_all=False,
 
         MAX_ITER=160, # 1600 ##########
         use_playout_cap_randomization=True,
@@ -156,6 +162,7 @@ class Config():
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.training = training
+        self.save_all = save_all
         self.MAX_ITER = MAX_ITER
         self.use_playout_cap_randomization = use_playout_cap_randomization
         self.playout_cap_chance = playout_cap_chance
@@ -182,21 +189,15 @@ class NodeState():
         self.game = game
         self.move = move
 
-        # Save garbage statistics instead of spawning garbage
-        # Each list index corressponds to some amount of garbage
-        # spawning when placing that piece
-        self.garbage = [[0] * 7, [0] * 7]
-
         # Search tree variables
         # Would be stored in each edge, but this is essentially the same thing
 
         self.visit_count = 0
-        # self.visit_count = 1
         self.value_sum = 0
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(config, game, network, move_algorithm='faster-but-loss'):
+def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple, treelib.Tree, bool]:
     global total_branch, number_branch
     # Picks a move for the AI to make 
 
@@ -267,18 +268,18 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
 
                 child_score = child_data.value_avg + config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
 
+                Qs.append(child_data.value_avg)
+                Us.append(config.CPUCT* child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count))
+
                 # Check forced playouts
-                if config.use_forced_playouts_and_policy_target_pruning and config.training:
+                if config.use_forced_playouts_and_policy_target_pruning and config.training: # Only use during training/when configured
                     if node.is_root(): # Only use for the root
-                        if not (config.use_playout_cap_randomization == True and fast_iter == True):
+                        if not (config.use_playout_cap_randomization == True and fast_iter == True): # Don't use during fast iterations
                             if child_data.visit_count >= 1:
                                 n_forced = math.sqrt(config.CForcedPlayout * child_data.policy * parent_visits)
 
                                 if child_data.visit_count < n_forced:
                                     child_score = float('inf')
-
-                Qs.append(child_data.value_avg)
-                Us.append(config.CPUCT* child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count))
 
                 if child_score >= max_child_score:
                     max_child_score = child_score
@@ -303,6 +304,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
             node_state.game = game_copy
             node_state.game.make_move(node_state.move, add_bag=False, add_history=False)
 
+            # Keep track of total expanded policy
             # Root node has no policy prior
             if config.FpuStrategy == 'reduction':
                 total_expanded_policy += node_state.policy
@@ -319,24 +321,24 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn], algo=move_algorithm)
                 move_list = get_move_list(move_matrix, policy)
 
+                assert len(move_list) > 0 # There should always be a legal move, or the game would be over
+
                 # Generate new leaves
-                # Normalize policy values
                 policies, moves = map(list, zip(*move_list))
 
-
+                # Debugging
                 # pn = []
                 # ps = []
                 # pn_s = sum(policies)
 
-
-                # Softmax
+                # Apply softmax and temperature to policy of children of the root node
                 if node.is_root() and config.use_root_softmax:
                     # Formula taken from katago
                     max_policy = max(policies)
                     for i in range(len(policies)):
                         # pn.append(policies[i])
 
-                        policies[i] = math.exp((math.log(policies[i]) - math.log(max_policy)) * 1 / config.RootSoftmaxTemp)
+                        policies[i] = math.exp((math.log(policies[i]) - math.log(max_policy)) * 1 / config.RootSoftmaxTemp) # ???
                         
                         # ps.append(policies[i])
 
@@ -346,13 +348,13 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
                     new_state = NodeState(game=None, move=move)
 
                     # New node policy
-                    new_state.policy = policy / policy_sum
+                    new_state.policy = policy / policy_sum # Normalize
                     assert new_state.policy > 0
 
                     # New node value
                     # Set First Play Urgency value
                     if config.FpuStrategy == 'absolute':
-                        new_state.value_avg = config.FpuValue
+                        new_state.value_avg = max (0, config.FpuValue)
                     elif config.FpuStrategy == 'reduction':
                         # value is the parent node's value
                         new_state.value_avg = max(0, value - config.FpuValue * math.sqrt(total_expanded_policy)) # Lower bound of 0
@@ -467,8 +469,8 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
     data = tree.get_node(max_id).data
     move = data.move
 
-    # Check policy target pruning
-    if config.use_forced_playouts_and_policy_target_pruning and config.training:
+    # Prune policie
+    if config.use_forced_playouts_and_policy_target_pruning and config.training and not fast_iter:
         post_prune_n_list = []
 
         most_playouts_child = tree.get_node(max_id)
@@ -499,7 +501,10 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss'):
         
             post_prune_n_list.append(tree.get_node(root_child_id).data.visit_count)
 
-    return move, tree
+    # If the move was fast, don't save
+    save_move = not fast_iter
+
+    return move, tree, save_move
 
 def get_move_matrix(player, algo=None):
     # Returns a list of all possible moves that a player can make
@@ -508,8 +513,8 @@ def get_move_matrix(player, algo=None):
     # It encodes moves from -2 to 8 as indices 0 to 10
     #
     # Algorithm names:
-        # 'brute-force'
-        # 'faster-but-loss'
+        # 'brute-force': Slow but finds every move
+        # 'faster-but-loss' Faster but misses ~2% of moves
     # Possible locations needs to be larger to acount for blocks with negative x
     # O piece        0 to 8
     # Any 3x3 piece -1 to 8
@@ -734,7 +739,7 @@ def get_move_matrix(player, algo=None):
             else:
                 raise Exception("Invalid algorithm type")
 
-            # Convert queue of placements to new policy format
+            # Convert queue of placements to the policy grid
             for x, y, o in place_location_queue:
                 rotation_index = o % len(policy_pieces[piece.type])
                 policy_index = policy_piece_to_index[piece.type][rotation_index]
@@ -756,8 +761,8 @@ def get_move_matrix(player, algo=None):
     return new_policy
 
 def get_move_list(move_matrix, policy_matrix):
-    # # Returns list of possible moves with their policy
-    # # Removes buffer
+    # Returns list of possible moves with their policy
+    # Removes buffer
     mask = np.multiply(move_matrix, policy_matrix)
 
     move_list = np.argwhere(mask != 0)
@@ -778,13 +783,13 @@ def get_move_list(move_matrix, policy_matrix):
 # Use Model.predict_on_batch(X):           100 iter in 1.788 s
 # Use TFlite model + argwhere and full sd: 100 iter in 0.748 s
 
-# Rest of tests moved to tests file
+# Further tests moved to time_move_matrix
 
 ##### Neural Network #####
 # 
 # Player orientation: Active player, other player
 # y:
-#   Policy: (19 x 25 x 11) = 5225 (Hold x Rows x Columns x Rotations)
+#   Policy: (19 x 25 x 11) = 5225 (Hold x (Rows - 1) x (Columns + 1) x Rotations)
 #   Value: (1)
 
 def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False):
@@ -996,67 +1001,51 @@ def simplify_grid(grid):
                 grid[row][col] = 1
     return grid
 
+# Helper function to reverse data if needed
+def reverse_if_needed(data, condition):
+    return data[::-1] if condition else data
+
 # Methods for getting game data
 # All of them orient the info in the perspective of the active player
 def get_grids(game):
-    grids = [[], []]
+    grids = [[x[:] for x in player.board.grid] for player in game.players]
+    for grid in grids:
+        simplify_grid(grid)
+    return reverse_if_needed(grids, game.turn == 1)
 
-    for i, player in enumerate(game.players):
-        grids[i] = [x[:] for x in player.board.grid] # Copy
-        simplify_grid(grids[i])
-    
-    if game.turn == 1: grids = grids[::-1]
-    
-    return grids
-    
 def get_pieces(game):
     piece_table = np.zeros((2, 2 + PREVIEWS, len(MINOS)), dtype=int)
     for i, player in enumerate(game.players):
-        if player.piece != None: # Active piece: 0
+        if player.piece:  # Active piece: 0
             piece_table[i][0][MINOS.index(player.piece.type)] = 1
-        if player.held_piece != None: # Held piece: 1
+        if player.held_piece:  # Held piece: 1
             piece_table[i][1][MINOS.index(player.held_piece)] = 1
         # Limit previews
-        for j in range(min(len(player.queue.pieces), 5)): # Queue pieces: 2-6
-            piece_table[i][j + 2][MINOS.index(player.queue.pieces[j])] = 1
+        for j, piece in enumerate(player.queue.pieces[:PREVIEWS]):  # Queue pieces: 2-6
+            piece_table[i][j + 2][MINOS.index(piece)] = 1
+    return reverse_if_needed(piece_table, game.turn == 1)
 
-    if game.turn == 1: piece_table = piece_table[::-1]
-
-    return piece_table
-
-def get_b2b(game):
-    b2b = [player.stats.b2b for player in game.players]
-    if game.turn == 1: b2b = b2b[::-1]
-    return b2b
-
-def get_combo(game):
-    combo = [player.stats.combo for player in game.players]
-    if game.turn == 1: combo = combo[::-1]
-    return combo
-
-def get_lines_cleared(game):
-    lines_cleared = [player.stats.lines_cleared for player in game.players]
-    if game.turn == 1: lines_cleared = lines_cleared[::-1]
-    return lines_cleared
-
-def get_lines_sent(game):
-    lines_sent = [player.stats.lines_sent for player in game.players]
-    if game.turn == 1: lines_sent = lines_sent[::-1]
-    return lines_sent
+def get_stat(game, stat_name):
+    stats = [getattr(player.stats, stat_name) for player in game.players]
+    return reverse_if_needed(stats, game.turn == 1)
 
 def game_to_X(game):
     # Returns game information for the network.
     # Orient all info in perspective to the current player
     grids = get_grids(game)
     pieces = get_pieces(game)
-    b2b = get_b2b(game)
-    combo = get_combo(game)
-    lines_cleared = get_lines_cleared(game)
-    lines_sent = get_lines_sent(game)
+    b2b = get_stat(game, 'b2b')
+    combo = get_stat(game, 'combo')
+    lines_cleared = get_stat(game, 'lines_cleared')
+    lines_sent = get_stat(game, 'lines_sent')
     color = game.players[game.turn].color
     pieces_placed = game.players[game.turn].stats.pieces
 
-    return grids[0], pieces[0], b2b[0], combo[0], lines_cleared[0], lines_sent[0], grids[1], pieces[1], b2b[1], combo[1], lines_cleared[1], lines_sent[1], color, pieces_placed
+    return (
+        grids[0], pieces[0], b2b[0], combo[0], lines_cleared[0], lines_sent[0], 
+        grids[1], pieces[1], b2b[1], combo[1], lines_cleared[1], lines_sent[1], 
+        color, pieces_placed
+    )
 
 def reflect_grid(grid):
     # Return a grid flipped horizontally
@@ -1151,13 +1140,13 @@ def reflect_policy(policy_matrix):
     
     return reflected_policy_matrix
 
-def play_game(config, network, NUMBER, show_game=False, screen=None):
+def play_game(config, network, game_number=None, show_game=False, screen=None):
     # AI plays one game against itself
     # Returns the game data
     if show_game == True:
         if screen == None:
             screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-        pygame.display.set_caption(f'Training game {NUMBER}')
+        pygame.display.set_caption(f'Training game {game_number}')
 
         for event in pygame.event.get():
             pass
@@ -1171,60 +1160,61 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
         # with cProfile.Profile() as pr:
-        move, tree = MCTS(config, game, network) # Add training noise
-        search_matrix = search_statistics(tree) # Moves that the network looked at
-        
-        # Get data
-        move_data = [*game_to_X(game)] 
+        move, tree, save = MCTS(config, game, network) # Add training noise
+        if save or config.save_all:
+            search_matrix = search_statistics(tree) # Moves that the network looked at
+            
+            # Get data
+            move_data = [*game_to_X(game)] 
 
-        # Piece sizes are needed to know where a reflected piece ends up
-        reflected_search_matrix = reflect_policy(search_matrix)
-        
-        # Reflect each player for a total of 2 * 2 = 4 times more data
-        # When the other player is reflected, it shouldn't impact the piece of the active player
-        # When the active player is reflected, need to alter search stats
-        for active_player_idx in range(2): # 0: not reflected, 1: reflected
-            for other_player_idx in range(2):
-                # Copy move data
-                copied_data = []
-                for feature in move_data:
-                    if isinstance(feature, np.ndarray):
-                        copied_data.append(feature.copy())
-                    elif type(feature) == list:
-                        copied_data.append([x[:] for x in feature])
-                    else: # int or float
-                        copied_data.append(feature)
-
-                # Flip boards and pieces
-                if active_player_idx == 1:
-                    copied_data[0] = reflect_grid(copied_data[0])
-                    copied_data[1] = reflect_pieces(copied_data[1])
+            if config.augment_data:
+                # Piece sizes are needed to know where a reflected piece ends up
+                reflected_search_matrix = reflect_policy(search_matrix)
                 
-                if other_player_idx == 1:
-                    copied_data[6] = reflect_grid(copied_data[6])
-                    copied_data[7] = reflect_pieces(copied_data[7])
+                # Reflect each player for a total of 2 * 2 = 4 times more data
+                # When the other player is reflected, it shouldn't impact active player
+                # When the active player is reflected, the search placements need to be reflected as well
+                for active_player_idx in range(2): # 0: not reflected, 1: reflected
+                    for other_player_idx in range(2):
+                        # Copy move data
+                        copied_data = []
+                        for feature in move_data:
+                            if isinstance(feature, np.ndarray):
+                                copied_data.append(feature.copy())
+                            elif type(feature) == list:
+                                copied_data.append([x[:] for x in feature])
+                            else: # int or float
+                                copied_data.append(feature)
 
-                # Convert np arrays to regular lists
-                for i in range(len(copied_data)):
-                    if isinstance(copied_data[i], np.ndarray):
-                        copied_data[i] = copied_data[i].tolist()
+                        # Flip boards and pieces
+                        if active_player_idx == 1:
+                            copied_data[0] = reflect_grid(copied_data[0])
+                            copied_data[1] = reflect_pieces(copied_data[1])
+                        
+                        if other_player_idx == 1:
+                            copied_data[6] = reflect_grid(copied_data[6])
+                            copied_data[7] = reflect_pieces(copied_data[7])
 
-                # Flip search matrix
-                if active_player_idx == 0:
-                    copied_data.append(search_matrix)
-                else:
-                    copied_data.append(reflected_search_matrix)
+                        # Convert np arrays to regular lists
+                        for i in range(len(copied_data)):
+                            if isinstance(copied_data[i], np.ndarray):
+                                copied_data[i] = copied_data[i].tolist()
 
-                game_data[game.turn].append(copied_data)
+                        # Flip search matrix
+                        if active_player_idx == 0:
+                            copied_data.append(search_matrix)
+                        else:
+                            copied_data.append(reflected_search_matrix)
 
-        '''move_data = [*game_to_X(game)]
-        # Convert to regular lists
-        for i in range(len(move_data)):
-            if isinstance(move_data[i], np.ndarray):
-                move_data[i] = move_data[i].tolist()
-        
-        move_data.append(search_matrix)
-        game_data[game.turn].append(move_data)'''
+                        game_data[game.turn].append(copied_data)
+            else:
+                # Convert to regular lists
+                for i in range(len(move_data)):
+                    if isinstance(move_data[i], np.ndarray):
+                        move_data[i] = move_data[i].tolist()
+                
+                move_data.append(search_matrix)
+                game_data[game.turn].append(move_data)
 
         game.make_move(move)
 
@@ -1241,7 +1231,6 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
     for player_idx in range(len(game_data)):
         if winner == -1: # Draw
             value = (0 if config.use_tanh else 0.5)
-        # Set values to 1 and -1
         elif winner == player_idx:
             value = 1
         else:
@@ -1250,7 +1239,7 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
         for move_idx in range(len(game_data[player_idx])):
             game_data[player_idx][move_idx].insert(-1, value)
 
-    # Reformat data to stack moves into one list
+    # Reformat data to stack all moves into one continuous list
     data = game_data[0]
     data.extend(game_data[1])
 
@@ -1258,12 +1247,9 @@ def play_game(config, network, NUMBER, show_game=False, screen=None):
 
 def make_training_set(config, network, num_games, save_game=True, show_game=False, screen=None):
     # Creates a dataset of several AI games.
-    if show_game:
-        pygame.init()
-
     series_data = []
-    for i in range(1, num_games + 1):
-        data = play_game(config, network, i, show_game=show_game, screen=screen)
+    for idx in range(1, num_games + 1):
+        data = play_game(config, network, game_number=idx, show_game=show_game, screen=screen)
         series_data.extend(data)
 
     if save_game == True:
@@ -1278,7 +1264,7 @@ def make_training_set(config, network, num_games, save_game=True, show_game=Fals
     else:
         return series_data
 
-def load_data(last_n_sets=20):
+def load_data(last_n_sets=SETS_TO_TRAIN_WITH):
     data = []
     # Load data from the past n games
     # You can input model_ver or model_iter as None to load 
@@ -1350,9 +1336,9 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, games, network_1_
         game.setup()
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
             if game.turn == 0:
-                move, _ = MCTS(config_1, game, NN_1)    
+                move, _, _ = MCTS(config_1, game, NN_1)    
             elif game.turn == 1:
-                move, _ = MCTS(config_2, game, NN_2)
+                move, _, _ = MCTS(config_2, game, NN_2)
             game.make_move(move)
 
             if show_game == True:
@@ -1377,7 +1363,6 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, games, network_1_
 
 def self_play_loop(config, skip_first_set=False, show_games=False):
     if show_games == True:
-        pygame.init()
         screen = pygame.display.set_mode( (WIDTH, HEIGHT))
     # Given a network, generates training data, trains it, and checks if it improved.
     best_network = load_best_model(config)
@@ -1408,7 +1393,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
             skip_first_set = False
 
         # Load data
-        filenames = get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True)
+        filenames = get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=config.shuffle)
 
         path = f"{directory_path}/data/{DATA_VERSION}"
 
@@ -1568,7 +1553,6 @@ if __name__ == "__main__":
     '''
     # Testing if reflecting pieces, grids, and policy are accurate
     def visualize_piece_placements(game, moves):
-        pygame.init()
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption('Tetris')
         # Need to iterate through pygame events to initialize screen

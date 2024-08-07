@@ -296,12 +296,19 @@ def gen_alphasame_nn(config) -> keras.Model:
             out_2_pool = out_2[:, :, :, :config.cpool]
             out_2_rest = out_2[:, :, :, config.cpool:]
 
+            # Use batch norm and relu on pooling layers
+            pool_batch_1 = keras.layers.BatchNormalization()
+            pool_relu_1 = keras.layers.Activation('relu')
+
+            out_1_pool_act = pool_relu_1(pool_batch_1(out_1_pool))
+            out_2_pool_act = pool_relu_1(pool_batch_1(out_2_pool))
+
             # Global average and global pooling on the first cpool channels
             avg_pool_1 = keras.layers.GlobalAveragePooling2D()
             max_pool_1 = keras.layers.GlobalMaxPooling2D()
 
-            out_1_average_pooled = avg_pool_1(out_1_pool)
-            out_2_average_pooled = avg_pool_1(out_2_pool)
+            out_1_average_pooled = avg_pool_1(out_1_pool_act)
+            out_2_average_pooled = avg_pool_1(out_2_pool_act)
 
             out_1_max_pooled = max_pool_1(out_1_pool)
             out_2_max_pooled = max_pool_1(out_2_pool)
@@ -327,7 +334,7 @@ def gen_alphasame_nn(config) -> keras.Model:
             out_1 = keras.layers.Concatenate(axis=-1)([out_1_pool, out_1_biased])
             out_2 = keras.layers.Concatenate(axis=-1)([out_2_pool, out_2_biased])
 
-            # Resume residual block
+            # Resume second half of the standard residual block
             batch_2 = keras.layers.BatchNormalization()
             dropout_1 = keras.layers.Dropout(config.dropout)
             relu_2 = keras.layers.Activation('relu')
