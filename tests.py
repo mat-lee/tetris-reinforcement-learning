@@ -263,6 +263,38 @@ def test_parameters(
                         num_games,
                         visual=visual))
 
+def test_configs(
+    configs,
+    num_games: int,
+    data=None,
+    load_from_best_model: bool=False,
+    visual: bool=True
+):
+    ## Grid search battling different Configs
+
+    # Networks
+    if load_from_best_model:
+        networks = [load_best_model(config) for config in configs]
+    else:
+        networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
+
+    if data != None:
+        for config, network in zip(configs, networks):
+            for set in data:
+                train_network_keras(config, network, set)
+        
+        del data
+        gc.collect()
+
+    # Networks -> interpreters
+    interpreters = [get_interpreter(network) for network in networks]
+
+    print(battle_royale(interpreters, 
+                        configs, 
+                        [f"Config {i+1}" for i in range(len(configs))], 
+                        num_games,
+                        visual=visual))
+
 def test_architectures(
     config,
     nn_gens: list, 
@@ -386,18 +418,20 @@ DefaultConfig=Config(model='keras', shuffle=True)
 
 keras.utils.set_random_seed(937)
 
-data = load_data(last_n_sets=1)
+data = load_data(data_ver=1.3, last_n_sets=0)
+#### Setting learning rate DOES NOT WORK
 
+test_architectures(DefaultConfig, nn_gens=[gen_alphasame_nn, test_10], data=data, num_games=200, visual=True)
 
-
-# test_parameters("dropout", values=[0, 0.25, 0.5], num_games=200, data=data, load_from_best_model=True, visual=True)
+# test_parameters("dropout", values=[0.25, 0.4], num_games=200, data=data, load_from_best_model=False, visual=True)
+# test_configs([Config(default_model=test_8, l2_reg=1e-2), Config(default_model=test_8, l2_reg=1e-3)], num_games=200, data=data, load_from_best_model=False, visual=True)
 
 # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
-# test_parameters("learning_rate", [0.05, 0.1], num_games=200, data=data, load_from_best_model=True, visual=True)
-test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
+# test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
+# test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
-# test_data_parameters("DIRICHLET_S", [10, 25, 50], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
-# test_data_parameters("FpuValue", [0.1, 0.2, 0.4], 0.01, 1, 100, 200, load_from_best_model=True, visual=True)
+# test_data_parameters("DIRICHLET_S", [25, 2500], 0.1, 1, 50, 100, load_from_best_model=True, visual=True)
+# test_data_parameters("FpuValue", [0.1, 0.01], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
 
 
 

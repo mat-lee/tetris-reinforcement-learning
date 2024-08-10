@@ -22,6 +22,7 @@ import os
 
 
 from tensorflow import keras
+from keras import backend as K
 import tensorflow as tf
 from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
@@ -42,44 +43,84 @@ import pstats
 
 # For naming data and models
 MODEL_VERSION = 4.7
-DATA_VERSION = 1.2
+DATA_VERSION = 1.3
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # Areas of optimization:
 # - Generating move matrix
+# - Switching to pytorch (?)
 # - Load data faster
 
 # AI todo:
-# - Battle networks (Size/Speed) (L2, CNNs, adjust number of weights/layers, Dropout)
-# - Battle parameters (CPuct, Dirichlet noise, loss weights)
+# - Test parameters
+# - Finish pytorch merger, clean up merge code, test
 # - Encoding garbage into the neural network
-# - Shuffle loading data
-# - Change how data is savaed and loaded
-# - Read/implement paper on accelerating self play
 # - Investigate hold issue (maybe search depth?)
+# - Add changing learning rate
+# - Keep implementing katago strategies (read appendix)
+#     - Randomize first r moves
+#     - Changing board sizes
 
-# Testing Results/Todo:
-# - augment_data:           True > False
-# - Architecture:           alphasplit
-# - MAX_ITER:               * Inconclusive
-# - DIRICHLET_ALPHA: 
-# - Dirichlet S: 25 > 500
-# - Use Dirichlet S with Alpha=0.01 and S=50: 
-# - Changing alpha values:  
-# - FpuValue: 0.4 = 0.2 > 0.0
-# - CPUCT:                  
-#
-# - Global pooling
-# - Dropout: 0.2 = 0.3 = 0.4
-#
-# - learning_rate:
-# - loss_weights:
+'''
+# Testing results
 
-# With 10 layers, 16 filters is max number of filters before inference time scales
-# Bottleneck residuals were worse, with or without dropout than normal residuals (test_4 and test_5)
-# When training on a single set, learning rate 0.1 > 0.01 > 0.001
+l1_neurons
+l2_neurons
+
+# Alphalike model
+blocks
+pooling_blocks
+filters
+cpool
+dropout
+    - 0 < 0.25 > 0.4
+kernels=1,
+o_side_neurons=16,
+value_head_neurons=16,
+
+augment_data
+    - True > False
+learning_rate
+    - When training on a single set ??? (Don't know how to change in keras after initialization)
+loss_weights
+epochs
+batch_size
+
+save_all
+    - False > True
+
+use_playout_cap_randomization=
+playout_cap_chance=
+playout_cap_mult=
+
+use_dirichlet_noise
+DIRICHLET_ALPHA
+DIRICHLET_S
+    - 'DIRICHLET_ALPHA' == 0.01: 10 > 50
+DIRICHLET_EXPLORATION
+use_dirichlet_s
+
+FpuStrategy
+    'reduction' > absolute
+FpuValue
+    'reduction': 0.4 ~= 0.2 > 0.0
+
+use_forced_playouts_and_policy_target_pruning
+CForcedPlayout
+
+use_root_softmax
+RootSoftmaxTemp
+
+CPUCT
+
+Miscellaneous
+ - With 10 layers, 16 filters is max number of filters before inference time scales
+ - Bottleneck residuals were worse, with or without dropout than normal residuals (test_4 and test_5)
+ - test_data_paramemeters does work
+
+'''
 
 total_branch = 0
 number_branch = 0
@@ -101,7 +142,11 @@ class Config():
         pooling_blocks=2,
         filters=16, 
         cpool=4,
-        dropout=0.4,
+
+        # Only use one of dropout or l2_reg
+        dropout=0.25,
+        l2_reg=3e-5,
+
         kernels=1,
         o_side_neurons=16,
         value_head_neurons=16,
@@ -151,6 +196,7 @@ class Config():
         self.filters = filters
         self.cpool = cpool
         self.dropout = dropout
+        self.l2_reg = l2_reg
         self.kernels = kernels
         self.o_side_neurons = o_side_neurons
         self.value_head_neurons = value_head_neurons
@@ -844,6 +890,9 @@ def train_network_keras(config, model, set):
 
     # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
+    # Adjust learning rate HOW???
+    ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
+
     model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
 
 def train_network_pytorch(config, model, set):
@@ -1264,7 +1313,7 @@ def make_training_set(config, network, num_games, save_game=True, show_game=Fals
     else:
         return series_data
 
-def load_data(last_n_sets=SETS_TO_TRAIN_WITH):
+def load_data(data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH):
     data = []
     # Load data from the past n games
     # You can input model_ver or model_iter as None to load 
@@ -1277,7 +1326,7 @@ def load_data(last_n_sets=SETS_TO_TRAIN_WITH):
 
     sets, len_sets = 0, 0
 
-    path = f"{directory_path}/data/{DATA_VERSION}"
+    path = f"{directory_path}/data/{data_ver}"
 
     # Get n games
     for filename in os.listdir(path):
