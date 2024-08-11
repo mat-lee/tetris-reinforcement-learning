@@ -418,16 +418,17 @@ DefaultConfig=Config(model='keras', shuffle=True)
 
 keras.utils.set_random_seed(937)
 
-data = load_data(data_ver=1.3, last_n_sets=0)
+# data = load_data(data_ver=1.3, last_n_sets=0)
 #### Setting learning rate DOES NOT WORK
 
-test_architectures(DefaultConfig, nn_gens=[gen_alphasame_nn, test_10], data=data, num_games=200, visual=True)
+# test_architectures(DefaultConfig, nn_gens=[gen_alphasame_nn, test_10], data=data, num_games=200, visual=True)
 
 # test_parameters("dropout", values=[0.25, 0.4], num_games=200, data=data, load_from_best_model=False, visual=True)
 # test_configs([Config(default_model=test_8, l2_reg=1e-2), Config(default_model=test_8, l2_reg=1e-3)], num_games=200, data=data, load_from_best_model=False, visual=True)
 
 # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
 # test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
+test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
 # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
 # test_data_parameters("DIRICHLET_S", [25, 2500], 0.1, 1, 50, 100, load_from_best_model=True, visual=True)

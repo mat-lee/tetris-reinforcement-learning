@@ -163,6 +163,7 @@ class Config():
 
         # MCTS Parameters
         training=False, # Set to true to use a variety of features
+        use_experimental_features=False,
         save_all=False,
 
         MAX_ITER=160, # 1600 ##########
@@ -208,6 +209,7 @@ class Config():
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.training = training
+        self.use_experimental_features = use_experimental_features
         self.save_all = save_all
         self.MAX_ITER = MAX_ITER
         self.use_playout_cap_randomization = use_playout_cap_randomization
@@ -551,6 +553,23 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple
     save_move = not fast_iter
 
     return move, tree, save_move
+
+def pick_random_move_by_policy(tree: treelib.Tree) -> tuple:
+    # Sample a random move from the root node of the tree using the policy as probabilities
+    moves, policies = [], []
+
+    root = tree.get_node("root")
+
+    root_children_id = root.successors(tree.identifier)
+
+    for root_child_id in root_children_id:
+        root_child_data = tree.get_node(root_child_id).data
+
+        moves.append(root_child_data.move)
+        policies.append(root_child_data.policy)
+
+    move = random.choices(moves, policies)[0]
+    return move
 
 def get_move_matrix(player, algo=None):
     # Returns a list of all possible moves that a player can make
@@ -1207,9 +1226,29 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
     # Each player's move data will be stored in their respective list
     game_data = [[], []]
 
+    # Initialize the game with random moves
+    if config.use_experimental_features:
+        scale = 0.04 * COLS * ROWS
+        num_random_moves = np.random.exponential(scale=scale)
+
+        fast_config = copy.deepcopy(config)
+        fast_config.MAX_ITER = 1
+        fast_config.use_playout_cap_randomization = False
+        fast_config.use_dirichlet_noise = False
+        fast_config.use_forced_playouts_and_policy_target_pruning = False
+
+        while num_random_moves > 0 and game.is_terminal == False:
+            # Play random moves proportional to the raw policy distribution
+            _, temp_tree, _ = MCTS(fast_config, game, network)
+
+            move = pick_random_move_by_policy(temp_tree)
+            game.make_move(move)
+
+            num_random_moves -= 1
+
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
-        # with cProfile.Profile() as pr:
-        move, tree, save = MCTS(config, game, network) # Add training noise
+        move, tree, save = MCTS(config, game, network)
+
         if save or config.save_all:
             search_matrix = search_statistics(tree) # Moves that the network looked at
             
@@ -1270,10 +1309,6 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
         if show_game == True:
             game.show(screen)
             pygame.display.update()
-
-        # stats = pstats.Stats(pr)
-        # stats.sort_stats(pstats.SortKey.TIME)
-        # stats.print_stats(20)
 
     # After game ends update value
     winner = game.winner
