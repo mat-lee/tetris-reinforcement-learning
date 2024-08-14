@@ -163,7 +163,7 @@ class Config():
 
         # MCTS Parameters
         training=False, # Set to true to use a variety of features
-        use_experimental_features=False,
+        use_experimental_features=False, # Before setting to true, check if it's in use
         save_all=False,
 
         MAX_ITER=160, # 1600 ##########
@@ -1403,7 +1403,7 @@ def get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True):
     return filenames
     
 
-def battle_networks(NN_1, config_1, NN_2, config_2, threshold, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
+def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
     # Battle two AI's with different networks.
     # Returns true if NN_1 wins, otherwise returns false
     wins = np.zeros((2), dtype=int)
@@ -1435,12 +1435,22 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, games, network_1_
         else: wins[winner] += 1
 
         # End early if either player reaches the cutoff
-        if wins[0] >= threshold * games:
-            print(*wins)
-            return True
-        elif wins[1] > (1 - threshold) * games:
-            print(*wins)
-            return False
+        if threshold_type == 'more':
+            if wins[0] > threshold * games:
+                print(*wins)
+                return True
+            elif wins[1] >= (1 - threshold) * games:
+                print(*wins)
+                return False
+        elif threshold_type == 'moreorequal':
+            if wins[0] >= threshold * games:
+                print(*wins)
+                return True
+            elif wins[1] > (1 - threshold) * games:
+                print(*wins)
+                return False
+        else:
+            raise NotImplementedError
 
     # If neither side eaches a cutoff (which shouldn't happen) return false
     return False
@@ -1504,7 +1514,8 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
             config, 
             (best_interpreter if config.model == 'keras' else best_network), 
             config, 
-            0.55, 
+            GATING_THRESHOLD, 
+            GATING_THRESHOLD_TYPE,
             BATTLE_GAMES, 
             show_game=show_games, 
             screen=screen
@@ -1629,62 +1640,3 @@ if __name__ == "__main__":
     stats = pstats.Stats(pr)
     stats.sort_stats(pstats.SortKey.TIME)
     stats.print_stats(20)
-
-
-
-
-
-    '''
-    # Testing if reflecting pieces, grids, and policy are accurate
-    def visualize_piece_placements(game, moves):
-        screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption('Tetris')
-        # Need to iterate through pygame events to initialize screen
-        for event in pygame.event.get():
-            pass
-
-        for policy, move in moves:
-            game_copy = game.copy()
-            game_copy.make_move(move)
-
-            game_copy.show(screen)
-            pygame.display.update()
-
-            time.sleep(0.3)
-
-    game = Game()
-    game.setup()
-
-    # Place a piece to make it more interesting
-    for i in range(10):
-        piece = game.players[game.turn].piece
-        game.make_move((piece.type, piece.x_0, game.players[game.turn].ghost_y, 0))
-
-    move_matrix = get_move_matrix(game.players[game.turn])
-    moves = get_move_list(move_matrix, np.ones(shape=POLICY_SHAPE))
-
-    visualize_piece_placements(game, moves)
-
-    # Now, get the reflected moves
-    player = game.players[game.turn]
-    # Reflect board
-    player.board.grid = reflect_grid(player.board.grid)
-
-    # Reflect pieces
-    piece_table = get_pieces(game)[0]
-    reflected_piece_table = reflect_pieces(piece_table)
-    for idx, piece_row in enumerate(reflected_piece_table):
-        if idx == 0:
-            player.piece.type = MINOS[piece_row.tolist().index(1)]
-        elif idx == 1:
-            if player.held_piece != None: # Active piece: 0
-                player.held_piece.type = MINOS[piece_row.tolist().index(1)]
-        else:
-            player.queue.pieces[idx - 2] = MINOS[piece_row.tolist().index(1)]
-    
-    # Reflect the policy and see if it matches
-    reflected_move_matrix = reflect_policy(move_matrix)
-    reflected_moves = get_move_list(reflected_move_matrix, np.ones(shape=POLICY_SHAPE))
-
-    visualize_piece_placements(game, reflected_moves)
-    '''

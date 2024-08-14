@@ -12,7 +12,7 @@ import pstats
 
 import random
 
-DefaultConfig = Config(training=True, model='keras', MAX_ITER=160)
+DefaultConfig = Config(training=False, model='keras', MAX_ITER=160)
 
 # Load neural network
 model = load_best_model(DefaultConfig)

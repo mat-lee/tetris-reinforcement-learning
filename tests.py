@@ -226,6 +226,60 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     
     print(test_moves / truth_moves * 100)
 
+def test_reflected_policy():
+    # Testing if reflecting pieces, grids, and policy are accurate
+    def visualize_piece_placements(game, moves):
+        screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption('Tetris')
+        # Need to iterate through pygame events to initialize screen
+        for event in pygame.event.get():
+            pass
+
+        for policy, move in moves:
+            game_copy = game.copy()
+            game_copy.make_move(move)
+
+            game_copy.show(screen)
+            pygame.display.update()
+
+            time.sleep(0.3)
+
+    game = Game()
+    game.setup()
+
+    # Place a piece to make it more interesting
+    for i in range(10):
+        piece = game.players[game.turn].piece
+        game.make_move((piece.type, piece.x_0, game.players[game.turn].ghost_y, 0))
+
+    move_matrix = get_move_matrix(game.players[game.turn], algo='brute-force')
+    moves = get_move_list(move_matrix, np.ones(shape=POLICY_SHAPE))
+
+    visualize_piece_placements(game, moves)
+
+    # Now, get the reflected moves
+    player = game.players[game.turn]
+    # Reflect board
+    player.board.grid = reflect_grid(player.board.grid)
+
+    # Reflect pieces
+    piece_table = get_pieces(game)[0]
+    reflected_piece_table = reflect_pieces(piece_table)
+    for idx, piece_row in enumerate(reflected_piece_table):
+        if idx == 0:
+            player.piece.type = MINOS[piece_row.tolist().index(1)]
+        elif idx == 1:
+            if player.held_piece != None: # Active piece: 0
+                player.held_piece.type = MINOS[piece_row.tolist().index(1)]
+        else:
+            player.queue.pieces[idx - 2] = MINOS[piece_row.tolist().index(1)]
+    
+    # Reflect the policy and see if it matches
+    reflected_move_matrix = reflect_policy(move_matrix)
+    reflected_moves = get_move_list(reflected_move_matrix, np.ones(shape=POLICY_SHAPE))
+
+    visualize_piece_placements(game, reflected_moves)
+
 def test_parameters(
     var: str, 
     values: list,
@@ -407,16 +461,16 @@ def test_if_changes_improved_model():
 
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
 
-    if battle_networks(chal_nn, config, best_nn, config, 0.55, 200, "New", "Best", show_game=True, screen=screen):
+    if battle_networks(chal_nn, config, best_nn, config, 0.55, 'moreorequal', 200, "New", "Best", show_game=True, screen=screen):
         print("Success")
     else:
         print("Failure")
     network.save(f"{directory_path}/New.keras")
 
 
-DefaultConfig=Config(model='keras', shuffle=True)
+c=Config(model='keras', shuffle=True, MAX_ITER=1)
 
-keras.utils.set_random_seed(937)
+# keras.utils.set_random_seed(937)
 
 # data = load_data(data_ver=1.3, last_n_sets=0)
 #### Setting learning rate DOES NOT WORK
@@ -428,13 +482,13 @@ keras.utils.set_random_seed(937)
 
 # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
 # test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
-test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
+# test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
 # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
 # test_data_parameters("DIRICHLET_S", [25, 2500], 0.1, 1, 50, 100, load_from_best_model=True, visual=True)
 # test_data_parameters("FpuValue", [0.1, 0.01], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
 
-
+# test_reflected_policy()
 
 # Command for running python files
 # This is for running many tests at the same time
