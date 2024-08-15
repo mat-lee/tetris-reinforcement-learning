@@ -15,7 +15,9 @@ import random
 DefaultConfig = Config(training=False, model='keras', MAX_ITER=160)
 
 # Load neural network
-model = load_best_model(DefaultConfig)
+# model = load_best_model(DefaultConfig)
+import keras
+model = keras.models.load_model(f"{directory_path}/new.keras")
 interpreter = get_interpreter(model)
 
 class Main:

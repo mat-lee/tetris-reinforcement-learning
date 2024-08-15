@@ -5,6 +5,7 @@ from game import Game
 import copy
 from collections import deque
 import gc
+import itertools
 #import json
 import math
 import matplotlib.pyplot as plt
@@ -42,8 +43,8 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 4.7
-DATA_VERSION = 1.3
+MODEL_VERSION = 5.0
+DATA_VERSION = 2.0
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -140,8 +141,9 @@ class Config():
         # Alphalike model
         blocks=10,
         pooling_blocks=2,
-        filters=16, 
-        cpool=4,
+        filters=64, 
+        cpool=16,
+        head_filters=16,
 
         # Only use one of dropout or l2_reg
         dropout=0.25,
@@ -196,6 +198,7 @@ class Config():
         self.pooling_blocks = pooling_blocks
         self.filters = filters
         self.cpool = cpool
+        self.head_filters = head_filters
         self.dropout = dropout
         self.l2_reg = l2_reg
         self.kernels = kernels
@@ -759,7 +762,7 @@ def get_move_matrix(player, algo=None):
     # by harddropping, and then backtrack to find unfound moves
         # Issue of backtracking kicks
 
-    # Convert to new policy format (19, 25 x 11)
+    # Convert to new policy format (19, ROWS, COLS)
     new_policy = np.zeros(POLICY_SHAPE)
 
     # Load the state
@@ -811,17 +814,19 @@ def get_move_matrix(player, algo=None):
 
                 new_col = x
                 new_row = y
+
+                # For these pieces, only keep track of rotations 0 and 3 so the policy is bounded between -1 and 8
                 if piece.type in ["Z", "S", "I"]:
                     # For those pieces, rotation 2 is the same as rotation 0
                     # but moved one down
                     if o == 2:
                         new_row += 1
-                    # For those pieces, rotation 3 is the same as rotation 1
-                    # but moved one to the left
-                    if o == 3:
-                        new_col -= 1
+                    # For those pieces, rotation 1 is the same as rotation 3
+                    # but moved one to the right
+                    if o == 1:
+                        new_col += 1
 
-                new_policy[policy_index][new_row][new_col + 2] = 1 # Account for buffer        
+                new_policy[policy_index][new_row][new_col + BUFFER] = 1 # Account for buffer        
         
     return new_policy
 
@@ -832,10 +837,40 @@ def get_move_list(move_matrix, policy_matrix):
 
     move_list = np.argwhere(mask != 0)
 
-    # Formats moves from (policy index, row, col) to (value, (policy index, col - 2, row))
-    move_list = [(mask[move[0]][move[1]][move[2]], (move[0], move[2] - 2, move[1])) for move in move_list]
+    # Formats moves from (policy index, row, col) to (value, (policy index, col - BUFFER, row))
+    move_list = [(mask[move[0]][move[1]][move[2]], (move[0], move[2] - BUFFER, move[1])) for move in move_list]
 
     return move_list
+
+def convert_old_policy_to_new_policy(old_data):
+    # Old policy had 2 buffer
+    # New policy has 1 buffer, and SZI pieces are saved in rotations 0 and 3 instead of 0 and 1
+
+    # Horrible code but it doesn't raise any errors so hopefully it works
+    new_data = []
+    for set in old_data:
+        new_set = []
+        for move in set:
+            new_move = move
+            policy = np.array(new_move.pop(-1))
+
+            new_policy = np.zeros(POLICY_SHAPE)
+
+            # For I, Z, and S pieces, rotation was changed from 1 to 3
+            # So for rotation 1, move it one to the right to make it rotation 3
+            policy_entries = np.argwhere(policy != 0)
+            for idx, row, col in policy_entries:
+                piece, rotation = policy_index_to_piece[idx]
+                if piece in ["I", "Z", "S"] and rotation == 3:
+                    new_policy[idx][row][col - 1 + 1] = policy[idx][row][col]
+                else:
+                    new_policy[idx][row][col - 1] = policy[idx][row][col]
+            
+            new_policy = new_policy.tolist()
+            new_move.append(new_policy)
+            new_set.append(new_move)
+        new_data.append(new_set)
+    return new_data
 
 # Using deepcopy:                          100 iter in 36.911 s
 # Using copy functions in classes:         100 iter in 1.658 s
@@ -1056,7 +1091,7 @@ def search_statistics(tree):
             policy_index, col, row = root_child_move
 
             # ACCOUNT FOR BUFFER
-            probability_matrix[policy_index][row][col + 2] = round(root_child_n / total_n, 4)
+            probability_matrix[policy_index][row][col + BUFFER] = round(root_child_n / total_n, 4)
 
     return probability_matrix
 
@@ -1162,6 +1197,7 @@ def reflect_policy(policy_matrix):
 
     for policy_index in range(POLICY_SHAPE[0]):
         piece, rotation = policy_index_to_piece[policy_index]
+        # Z, S, and I have rotations 0 and 3
 
         # Save the piece size
         piece_size = len(piece_dict[piece])
@@ -1179,12 +1215,11 @@ def reflect_policy(policy_matrix):
         # If the new rotation is a redunant shape, adjust where the piece goes
         post_col_adjustment = 0
         if new_piece in ["Z", "S", "I"]:
-            # If the new rotation is 3, it needs to be shifted back after being flipped
-            if new_rotation == 3:
-                post_col_adjustment = -1
-                new_rotation -= 2
+            # If the new rotation is 1, it needs to be shifted back after being flipped
+            if new_rotation == 1:
+                post_col_adjustment = 1
 
-        new_policy_index = policy_piece_to_index[new_piece][new_rotation]
+        new_policy_index = policy_piece_to_index[new_piece][new_rotation] # This uses 1 instead of 3 for ZSI index
         for col in range(POLICY_SHAPE[2]):
             for row in range(POLICY_SHAPE[1]):
                 value = policy_matrix[policy_index][row][col]
@@ -1193,13 +1228,13 @@ def reflect_policy(policy_matrix):
                     new_col = col
 
                     # Remove buffer
-                    new_col += -2
+                    new_col -= BUFFER
 
                     # Flip column
                     new_col = 10 - new_col - piece_size # 9 - col - piece_size + 1
                     
                     # Add back buffer
-                    new_col += 2
+                    new_col += BUFFER
 
                     # Add column adjustment if needed
                     new_col += post_col_adjustment
@@ -1340,7 +1375,7 @@ def make_training_set(config, network, num_games, save_game=True, show_game=Fals
         json_data = ujson.dumps(series_data)
 
         # Increment set counter
-        next_set = highest_data_number() + 1
+        next_set = highest_data_number(DATA_VERSION) + 1
 
         with open(f"{directory_path}/data/{DATA_VERSION}/{next_set}.txt", 'w') as out_file:
             out_file.write(json_data)
@@ -1357,7 +1392,7 @@ def load_data(data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH):
 
     # Find highest set number
     # SHOULD ONLY BE USED IF model_ver AND model_iter are specified
-    max_set = highest_data_number()
+    max_set = highest_data_number(data_ver)
 
     sets, len_sets = 0, 0
 
@@ -1379,13 +1414,13 @@ def load_data(data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH):
     random.shuffle(data)
     return data
 
-def get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True):
+def get_data_filenames(data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True):
     filenames = []
-    max_set = highest_data_number()
+    max_set = highest_data_number(data_ver)
 
     sets = 0
 
-    path = f"{directory_path}/data/{DATA_VERSION}"
+    path = f"{directory_path}/data/{data_ver}"
 
     # Get n games
     for filename in os.listdir(path):
@@ -1603,10 +1638,10 @@ def highest_model_number(config, ver):
 
     return max
 
-def highest_data_number():
+def highest_data_number(data_ver):
     max = -1
 
-    path = f"{directory_path}/data/{DATA_VERSION}"
+    path = f"{directory_path}/data/{data_ver}"
 
     os.makedirs(path, exist_ok=True)
 

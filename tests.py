@@ -467,12 +467,33 @@ def test_if_changes_improved_model():
         print("Failure")
     network.save(f"{directory_path}/New.keras")
 
+def test_old_data(data):
+    # To see if the old policy size (i, r - 1, c + 1) could be converted to (i, r - 1, c)
+    for set in data:
+        for move in set:
+            policy = move[-1]
+            for idx in policy:
+                for row in idx:
+                    if row[-1] != 0:
+                        print("e")
+                        a = 'e'
 
-c=Config(model='keras', shuffle=True, MAX_ITER=1)
+
+c=Config(model='keras', shuffle=True, MAX_ITER=160, epochs=5)
 
 # keras.utils.set_random_seed(937)
 
-# data = load_data(data_ver=1.3, last_n_sets=0)
+new_nn = instantiate_network(c, test_11, show_summary=True, save_network=False, plot_model=False)
+
+data = load_data(data_ver=1.3, last_n_sets=13)
+
+new_data = convert_old_policy_to_new_policy(data)
+
+for set in new_data:
+    train_network_keras(c, new_nn, set)
+
+new_nn.save(f"{directory_path}/new.keras")
+
 #### Setting learning rate DOES NOT WORK
 
 # test_architectures(DefaultConfig, nn_gens=[gen_alphasame_nn, test_10], data=data, num_games=200, visual=True)

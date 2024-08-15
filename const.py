@@ -84,11 +84,11 @@ policy_pieces = {
 policy_index_to_piece = {
     0: ["O", 0],
     1: ["Z", 0],
-    2: ["Z", 1],
+    2: ["Z", 3], #
     3: ["S", 0],
-    4: ["S", 1],
+    4: ["S", 3], #
     5: ["I", 0],
-    6: ["I", 1],
+    6: ["I", 3], #
     7: ["L", 0],
     8: ["L", 1],
     9: ["L", 2],
@@ -103,10 +103,10 @@ policy_index_to_piece = {
     18: ["T", 3],
 }
 
-# Leftside buffer is 2
-# Can't place piece at the bottom most row
-POLICY_SHAPE = (len(policy_index_to_piece), ROWS - 1, COLS + 2 - 1)
+# Can't place piece at the bottom most row, so bottom row will always be 0
+POLICY_SHAPE = (len(policy_index_to_piece), ROWS, COLS)
 POLICY_SIZE = prod(POLICY_SHAPE)
+BUFFER = 1
 
 policy_piece_to_index = {
     "O": {0: 0},
