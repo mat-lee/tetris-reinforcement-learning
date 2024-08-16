@@ -141,9 +141,9 @@ class Config():
         # Alphalike model
         blocks=10,
         pooling_blocks=2,
-        filters=64, 
-        cpool=16,
-        head_filters=16,
+        filters=32, 
+        cpool=8,
+        head_filters=8,
 
         # Only use one of dropout or l2_reg
         dropout=0.25,

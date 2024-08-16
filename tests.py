@@ -479,13 +479,13 @@ def test_old_data(data):
                         a = 'e'
 
 
-c=Config(model='keras', shuffle=True, MAX_ITER=160, epochs=5)
+c=Config(model='keras', shuffle=True, MAX_ITER=160, epochs=1)
 
 # keras.utils.set_random_seed(937)
 
 new_nn = instantiate_network(c, test_11, show_summary=True, save_network=False, plot_model=False)
 
-data = load_data(data_ver=1.3, last_n_sets=13)
+data = load_data(data_ver=1.3, last_n_sets=1)
 
 new_data = convert_old_policy_to_new_policy(data)
 

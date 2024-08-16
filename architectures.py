@@ -447,7 +447,7 @@ def test_11(config) -> keras.Model:
     def PolicyHead():
         # Returns policy list; found at the end of the network
         def inside(x):
-            x = keras.layers.Conv2D(POLICY_SHAPE[0], (1, 1), padding="same")(x)
+            x = keras.layers.Conv2D(POLICY_SHAPE[0], (5, 5), padding="same")(x)
 
             # Generate probability distribution
             x = keras.layers.Flatten()(x)
