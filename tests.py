@@ -1,6 +1,7 @@
 from ai import *
 from const import *
 from game import Game
+from player import Player
 
 from collections import namedtuple
 import matplotlib.pyplot as plt
@@ -65,28 +66,88 @@ def battle_royale(interpreters, configs, names, num_games, visual=True) -> dict:
 
     return scores
 
+def make_piece_starting_row():
+    player = Player()
+    res = {}
+    for piece_type in mino_coords_dict:
+        top_row = []
+        player.create_piece(piece_type)
+        check_rotations = True
+        if piece_type == "O":
+            check_rotations = False
+
+        phase_2_queue = deque()
+
+        piece = player.piece
+
+        # Phase 1
+        location = (piece.x_0, piece.y_0, piece.rotation)
+        piece.coordinates = piece.get_self_coords
+
+        phase_2_queue.append((piece.x_0, piece.y_0, piece.rotation))
+
+        if check_rotations:
+            for i in range(1, 4):
+                player.try_wallkick(i)
+
+                x = piece.x_0
+                y = piece.y_0
+                o = piece.rotation
+
+                phase_2_queue.append((x, y, o))
+
+                if i != 3:
+                    piece.x_0, piece.y_0, piece.rotation = location
+
+        # Phase 2
+        while len(phase_2_queue) > 0:
+            location = phase_2_queue.popleft()
+            top_row.append(location)
+
+            for x_dir in [-1, 1]:
+                piece.x_0, piece.y_0, piece.rotation = location
+                piece.coordinates = piece.get_self_coords
+
+                while player.can_move(piece, x_offset=x_dir):
+                    x = piece.x_0 + x_dir
+                    y = piece.y_0
+                    o = piece.rotation
+
+                    piece.x_0 = x
+                    piece.coordinates = piece.get_self_coords
+
+                    top_row.append((x, y, o))
+        
+        res[piece_type] = top_row
+    
+    return res
+
+
 # ------------------------- Test Functions -------------------------
 
 def test_dirichlet_noise() -> None:
     # Finding different values of dirichlet alpha affect piece decisions
-    alpha_values = [1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
+    # alpha_values = [1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
+    alpha_values = [0.4, 0.3, 0.2, 0.1]
     alpha_values = {alpha: {'n_same': 0, 'n_total': 0} for alpha in alpha_values}
 
-    model = load_best_model()
-    interpreter = get_interpreter(model)
+    use_dirichlet_s=False
 
     default_config = Config()
 
-    for _ in range(100):
+    model = load_best_model(default_config)
+    interpreter = get_interpreter(model)
+
+    for _ in range(10):
         game = Game()
         game.setup()
 
-        for _ in range(10):
-            default_move, _, _ = MCTS(default_config, game, interpreter, add_noise=False)
+        while game.is_terminal == False:
+            default_move, _, _ = MCTS(default_config, game, interpreter)
 
             for alpha_value in alpha_values:
-                config = Config(DIRICHLET_ALPHA=alpha_value)
-                move, _, _ = MCTS(config, game, interpreter, add_noise=True)
+                config = Config(DIRICHLET_ALPHA=alpha_value, use_dirichlet_s=use_dirichlet_s, training=True, use_playout_cap_randomization=False)
+                move, _, _ = MCTS(config, game, interpreter)
 
                 if move == default_move:
                     alpha_values[alpha_value]['n_same'] += 1
@@ -103,14 +164,20 @@ def test_dirichlet_noise() -> None:
     ax.bar(range(len(percent_dict)), list(percent_dict.values()), align='center')
     ax.set_xticks(range(len(percent_dict)), list(percent_dict.keys()))
 
-    ax.set_xlabel("Dirichlet Alpha Values")
-    ax.set_ylabel("% of moves that were the same as without noise")
+    if use_dirichlet_s:
+        ax.set_xlabel(f"Dirichlet Alpha Values; Dirichlet S {default_config.DIRICHLET_S}")
+        ax.set_ylabel("% of moves that were the same as without noise")
 
-    plt.savefig(f"{directory_path}/tst_alpha_vals")
+        plt.savefig(f"{directory_path}/tst_alpha_vals_s")
+    else:
+        ax.set_xlabel("Dirichlet Alpha Values")
+        ax.set_ylabel("% of moves that were the same as without noise")
+
+        plt.savefig(f"{directory_path}/tst_alpha_vals")
 
     return percent_dict
 
-def time_move_matrix() -> None:
+def time_move_matrix(algo) -> None:
     # Test the game speed
     # Returns the average speed of each move over n games
 
@@ -120,22 +187,31 @@ def time_move_matrix() -> None:
     # Deque + set:                    0.310
     # Pop first:                      0.320
     # Don't use array                 0.297
-        # Using mp Queue              0.354
+    #   Using mp Queue                0.354
     
     # Default                         0.298
     # Don't check o rotations         0.280
     # Use single softdrop             0.339
     # Using fast algo                 0.194
 
-    num_games = 10
+    # Without quantization            0.338
+    # Random evaluation (no NN)       0.150
+    #   Dynamic range quantization    0.251
+    #     With harddrop algo          0.153
+    #   Float16 quantization          0.352
+    #   Experimental int16/int8       0.239
+
+    # Using lookup table for row      0.239
+
+    config = Config(MAX_ITER=100)
+
+    num_games = 3
 
     # Initialize pygame
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
     pygame.display.set_caption(f'Profiling Get Move Matrix')
 
-    interpreter = get_interpreter(load_best_model())
-
-    config = Config(MAX_ITER=100)
+    interpreter = get_interpreter(load_best_model(config))
 
     moves = 0
     START = time.time()
@@ -145,7 +221,7 @@ def time_move_matrix() -> None:
         game.setup()
 
         while game.is_terminal == False:
-            move, _, _ = MCTS(config, game, interpreter)
+            move, _, _ = MCTS(config, game, interpreter, move_algorithm=algo)
             game.make_move(move)
             moves += 1
 
@@ -202,9 +278,9 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption(f'Testing algorithm accuracy')
 
-    interpreter = get_interpreter(load_best_model())
-
     config = Config()
+
+    interpreter = get_interpreter(load_best_model(config))
 
     truth_moves = 0
     test_moves = 0
@@ -434,16 +510,17 @@ def test_data_parameters(
     
     print(var)
 
-def test_older_vs_newer_networks():
+def test_older_vs_newer_networks(old_ver, new_ver):
     # Making sure that the newest iteration of a network is better than earlier versions
-    best_model = get_interpreter(load_best_model())
+    old_path = f"{directory_path}/models/{MODEL_VERSION}/{old_ver}.keras"
+    old_model = get_interpreter(keras.models.load_model(old_path))
 
-    path = f"{directory_path}/models/{MODEL_VERSION}.0.keras"
-    old_model = get_interpreter(keras.models.load_model(path))
+    new_path = f"{directory_path}/models/{MODEL_VERSION}/{new_ver}.keras"
+    new_model = get_interpreter(keras.models.load_model(new_path))
 
     config = Config()
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-    battle_networks_win_loss(best_model, config, old_model, config, 200, "new", "old", True, screen)
+    battle_networks_win_loss(new_model, config, old_model, config, 200, f"new {new_ver}", f"old {old_ver}", True, screen)
 
 def test_if_changes_improved_model():
     config = Config()
@@ -489,6 +566,15 @@ c=Config(model='keras', shuffle=True, MAX_ITER=1)
 # test_data_parameters("FpuValue", [0.1, 0.01], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
 
 # test_reflected_policy()
+
+# test_algorithm_accuracy(test_algo='harddrop')
+# time_move_matrix('faster-but-loss')
+
+
+# test_dirichlet_noise()
+test_older_vs_newer_networks(108, 137)
+
+
 
 # Command for running python files
 # This is for running many tests at the same time

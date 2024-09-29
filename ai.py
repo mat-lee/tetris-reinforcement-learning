@@ -48,6 +48,12 @@ DATA_VERSION = 1.3
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
+# Bugs
+# - Add delayed garbage when you clear a line
+# - Fix fake t spins
+# - Fix fake garbage sends
+# - Fix game ending once
+
 # Areas of optimization:
 # - Generating move matrix
 # - Switching to pytorch (?)
@@ -55,13 +61,17 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # AI todo:
 # - Test parameters
+# - Switch player color during matches
 # - Finish pytorch merger, clean up merge code, test
-# - Encoding garbage into the neural network
+# - Encoding garbage into the neural network/MCTS
 # - Investigate hold issue (maybe search depth?)
 # - Add changing learning rate
 # - Keep implementing katago strategies (read appendix)
 #     - Randomize first r moves
 #     - Changing board sizes
+# - Figure out why it stays at the top
+# - Have AI switch sides
+# - Change how data is loaded
 
 '''
 # Testing results
@@ -172,7 +182,7 @@ class Config():
         playout_cap_mult=5,
 
         use_dirichlet_noise=True,
-        DIRICHLET_ALPHA=0.01,
+        DIRICHLET_ALPHA=0.1,
         DIRICHLET_S=25,
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
@@ -291,6 +301,9 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple
 
         DEPTH = 0
 
+        if iter == config.MAX_ITER - 1:
+            pass
+
         # Go down the tree using formula Q+U until you get to a leaf node
         # However, if using forced playouts, select a node if it has fewer than the forced playouts amount
         while not node.is_leaf():
@@ -340,9 +353,6 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple
             DEPTH += 1
             if DEPTH > MAX_DEPTH:
                 MAX_DEPTH = DEPTH
-            
-            if iter == config.MAX_ITER - 1:
-                pass
 
         # If not the root node, place piece in node
         if not node.is_root():
@@ -364,14 +374,26 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple
             elif config.model == 'pytorch':
                 value, policy = evaluate_pytorch(node_state.game, network)
             # value, policy = random_evaluate()
+                
+            # Make sure that no values of the policy are below 0
+            policy[policy<=0] = 1e-25
 
             if node_state.game.no_move == False:
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn], algo=move_algorithm)
                 move_list = get_move_list(move_matrix, policy)
 
-                assert len(move_list) > 0 # There should always be a legal move, or the game would be over
+                assert len(move_list) > 0, [node_state.game.players[node_state.game.turn].board.grid, 
+                                            node_state.game.players[1 - node_state.game.turn].board.grid,
+                                            node_state.game.players[node_state.game.turn].piece.type,
+                                            node_state.game.players[node_state.game.turn].queue.pieces,
+                                            node_state.game.players[node_state.game.turn].held_piece,
+                                            iter,
+                                            DEPTH,
+                                            MAX_DEPTH,
+                                            np.sum(move_matrix),
+                                            np.min(policy)] # There should always be a legal move, or the game would be over
 
-                # Generate new leaves
+                # Calculate policy for new leaves
                 policies, moves = map(list, zip(*move_list))
 
                 # Debugging
@@ -392,6 +414,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple
 
                 policy_sum = sum(policies)
 
+                # Generate leaf nodes
                 for policy, move in zip(policies, moves):
                     new_state = NodeState(game=None, move=move)
 
@@ -579,7 +602,8 @@ def get_move_matrix(player, algo=None):
     #
     # Algorithm names:
         # 'brute-force': Slow but finds every move
-        # 'faster-but-loss' Faster but misses ~2% of moves
+        # 'faster-but-loss' Faster, 98% accuracy
+        # 'harddrop' No spins, just harddrops, 
     # Possible locations needs to be larger to acount for blocks with negative x
     # O piece        0 to 8
     # Any 3x3 piece -1 to 8
@@ -675,53 +699,65 @@ def get_move_matrix(player, algo=None):
                 # Move each of those all the way down, marking each spot on the way down
             # Phase 4:
                 # Do the normal move gen
-        # If the maxheight is above the piece spawn height:
-            # Do normal move gen
+        # If the maxheight is below the piece spawn height:
+            # Skip phases 1 and 2 and use the table
+        '''
+        if piece.type == "O":
+            spawn_height = 1
+        elif piece.type == "I":
+            spawn_height = 3
+        else:
+            spawn_height = 2
 
-        phase_2_queue = deque()
+        if highest_row > ROWS - SPAWN_ROW + spawn_height:
+            phase_3_queue = deque(piece_hover_coordinates[piece.type])
+        '''
+        if False: pass
+        else:
+            phase_2_queue = deque()
 
-        # Phase 1
-        location = next_location_queue.popleft()
-        piece.x_0, piece.y_0, piece.rotation = location
-        piece.coordinates = piece.get_self_coords
+            # Phase 1
+            location = next_location_queue.popleft()
+            piece.x_0, piece.y_0, piece.rotation = location
+            piece.coordinates = piece.get_self_coords
 
-        phase_2_queue.append((piece.x_0, piece.y_0, piece.rotation))
+            phase_2_queue.append((piece.x_0, piece.y_0, piece.rotation))
 
-        if check_rotations:
-            for i in range(1, 4):
-                sim_player.try_wallkick(i)
+            if check_rotations:
+                for i in range(1, 4):
+                    sim_player.try_wallkick(i)
 
-                x = piece.x_0
-                y = piece.y_0
-                o = piece.rotation
-
-                phase_2_queue.append((x, y, o))
-                check_set.add((x, y, o))
-
-                if i != 3:
-                    piece.x_0, piece.y_0, piece.rotation = location
-        
-        phase_3_queue = deque()
-
-        # Phase 2
-        while len(phase_2_queue) > 0:
-            location = phase_2_queue.popleft()
-            phase_3_queue.append(location)
-
-            for x_dir in [-1, 1]:
-                piece.x_0, piece.y_0, piece.rotation = location
-                piece.coordinates = piece.get_self_coords
-
-                while sim_player.can_move(piece, x_offset=x_dir):
-                    x = piece.x_0 + x_dir
+                    x = piece.x_0
                     y = piece.y_0
                     o = piece.rotation
 
-                    piece.x_0 = x
+                    phase_2_queue.append((x, y, o))
+                    check_set.add((x, y, o))
+
+                    if i != 3:
+                        piece.x_0, piece.y_0, piece.rotation = location
+            
+            phase_3_queue = deque()
+
+            # Phase 2
+            while len(phase_2_queue) > 0:
+                location = phase_2_queue.popleft()
+                phase_3_queue.append(location)
+
+                for x_dir in [-1, 1]:
+                    piece.x_0, piece.y_0, piece.rotation = location
                     piece.coordinates = piece.get_self_coords
 
-                    phase_3_queue.append((x, y, o))
-                    check_set.add((x, y, o))
+                    while sim_player.can_move(piece, x_offset=x_dir):
+                        x = piece.x_0 + x_dir
+                        y = piece.y_0
+                        o = piece.rotation
+
+                        piece.x_0 = x
+                        piece.coordinates = piece.get_self_coords
+
+                        phase_3_queue.append((x, y, o))
+                        check_set.add((x, y, o))
 
         # Phase 3
         while len(phase_3_queue) > 0:
@@ -752,6 +788,73 @@ def get_move_matrix(player, algo=None):
 
         # Phase 4 is the regular algorithm
         algo_1(check_rotations)
+
+    def algo_3(check_rotations):
+        # Only harddrops
+
+        phase_2_queue = deque()
+
+        # Phase 1
+        location = next_location_queue.popleft()
+        piece.x_0, piece.y_0, piece.rotation = location
+        piece.coordinates = piece.get_self_coords
+
+        phase_2_queue.append((piece.x_0, piece.y_0, piece.rotation))
+
+        if check_rotations:
+            for i in range(1, 4):
+                sim_player.try_wallkick(i)
+
+                x = piece.x_0
+                y = piece.y_0
+                o = piece.rotation
+
+                phase_2_queue.append((x, y, o))
+
+                if i != 3:
+                    piece.x_0, piece.y_0, piece.rotation = location
+        
+        phase_3_queue = deque()
+
+        # Phase 2
+        while len(phase_2_queue) > 0:
+            location = phase_2_queue.popleft()
+            phase_3_queue.append(location)
+
+            for x_dir in [-1, 1]:
+                piece.x_0, piece.y_0, piece.rotation = location
+                piece.coordinates = piece.get_self_coords
+
+                while sim_player.can_move(piece, x_offset=x_dir):
+                    x = piece.x_0 + x_dir
+                    y = piece.y_0
+                    o = piece.rotation
+
+                    piece.x_0 = x
+                    piece.coordinates = piece.get_self_coords
+
+                    phase_3_queue.append((x, y, o))
+
+        # Phase 3
+        while len(phase_3_queue) > 0:
+            location = phase_3_queue.popleft()
+            piece.x_0, piece.y_0, piece.rotation = location
+            piece.coordinates = piece.get_self_coords
+
+            x = piece.x_0
+            y = piece.y_0
+            o = piece.rotation
+
+            while sim_player.can_move(piece, y_offset=1):
+                x = piece.x_0
+                y = piece.y_0 + 1
+                o = piece.rotation
+
+                piece.y_0 = y
+                piece.coordinates = piece.get_self_coords
+
+            # These are all hardroppable piece locations
+            place_location_queue.append((x, y, o))
 
 
     # Other ideas:
@@ -801,6 +904,8 @@ def get_move_matrix(player, algo=None):
                 algo_1(check_rotations)
             elif algo == 'faster-but-loss':
                 algo_2(check_rotations)
+            elif algo == 'harddrop':
+                algo_3(check_rotations)
             else:
                 raise Exception("Invalid algorithm type")
 
@@ -1570,6 +1675,18 @@ def get_interpreter(model):
         tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
         tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
     ]
+
+    converter.optimizations = [tf.lite.Optimize.DEFAULT] # Quantization
+    # converter.target_spec.supported_types = [tf.float16] # Float quantization
+    '''
+    def representative_dataset():
+        for data in load_data(last_n_sets=1)[0][:100]:
+            yield data
+
+    converter.optimizations = [tf.lite.Optimize.OPTIMIZE_FOR_SIZE]
+    converter.representative_dataset = representative_dataset
+    '''
+    # converter.target_spec.supported_ops = [tf.lite.OpsSet.EXPERIMENTAL_TFLITE_BUILTINS_ACTIVATIONS_INT16_WEIGHTS_INT8]
 
     tflite_model = converter.convert()
 
