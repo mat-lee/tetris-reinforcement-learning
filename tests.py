@@ -13,23 +13,36 @@ import time
 def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None) -> list[int, int]:
     # Battle two AI's with different networks, and returns the wins and losses for each network
     wins = np.zeros((2), dtype=int)
+    flip_color = False
+
     for i in range(games):
         if show_game == True:
-            if screen != None:
+            if screen == None:
                 screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-            pygame.display.set_caption(f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}')
+
+            if not flip_color:
+                title = f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}'
+            else:
+                title = f'{network_2_title} | {wins[1]} vs {wins[0]} | {network_1_title}'
+            pygame.display.set_caption(title)
 
             for event in pygame.event.get():
                 pass
 
         game = Game()
         game.setup()
+
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
-            if game.turn == 0:
-                move, _, _ = MCTS(config_1, game, NN_1)    
-            elif game.turn == 1:
-                move, _, _ = MCTS(config_2, game, NN_2)
-                
+            if not flip_color:
+                if game.turn == 0:
+                    move, _, _ = MCTS(config_1, game, NN_1)    
+                elif game.turn == 1:
+                    move, _, _ = MCTS(config_2, game, NN_2)
+            else:
+                if game.turn == 1:
+                    move, _, _ = MCTS(config_1, game, NN_1)    
+                elif game.turn == 0:
+                    move, _, _ = MCTS(config_2, game, NN_2)
             game.make_move(move)
 
             if show_game == True:
@@ -39,7 +52,12 @@ def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_ti
         winner = game.winner
         if winner == -1:
             wins += 0.5
-        else: wins[winner] += 1
+        else: 
+            if flip_color:
+                winner = 1 - winner
+            wins[winner] += 1
+
+        flip_color = not flip_color
 
     print(network_1_title, wins, network_2_title)
     return wins
@@ -572,7 +590,7 @@ c=Config(model='keras', shuffle=True, MAX_ITER=1)
 
 
 # test_dirichlet_noise()
-test_older_vs_newer_networks(108, 137)
+test_older_vs_newer_networks(1, 137)
 
 
 

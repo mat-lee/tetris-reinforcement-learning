@@ -67,7 +67,6 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 #     - Randomize first r moves
 #     - Changing board sizes
 # - Figure out why it stays at the top
-# - Have AI switch sides
 # - Change how data is loaded
 
 '''
@@ -1509,22 +1508,36 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
     # Battle two AI's with different networks.
     # Returns true if NN_1 wins, otherwise returns false
     wins = np.zeros((2), dtype=int)
+    flip_color = False
+
     for i in range(games):
         if show_game == True:
             if screen == None:
                 screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-            pygame.display.set_caption(f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}')
+
+            if not flip_color:
+                title = f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}'
+            else:
+                title = f'{network_2_title} | {wins[1]} vs {wins[0]} | {network_1_title}'
+            pygame.display.set_caption(title)
 
             for event in pygame.event.get():
                 pass
 
         game = Game()
         game.setup()
+
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
-            if game.turn == 0:
-                move, _, _ = MCTS(config_1, game, NN_1)    
-            elif game.turn == 1:
-                move, _, _ = MCTS(config_2, game, NN_2)
+            if not flip_color:
+                if game.turn == 0:
+                    move, _, _ = MCTS(config_1, game, NN_1)    
+                elif game.turn == 1:
+                    move, _, _ = MCTS(config_2, game, NN_2)
+            else:
+                if game.turn == 1:
+                    move, _, _ = MCTS(config_1, game, NN_1)    
+                elif game.turn == 0:
+                    move, _, _ = MCTS(config_2, game, NN_2)
             game.make_move(move)
 
             if show_game == True:
@@ -1535,6 +1548,8 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
         if winner == -1:
             wins += 0.5
         else: wins[winner] += 1
+
+        flip_color = not flip_color
 
         # End early if either player reaches the cutoff
         if threshold_type == 'more':
