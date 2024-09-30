@@ -129,9 +129,9 @@ class Player:
         self.piece.y_0 = y
         self.piece.rotation = o
         self.piece.coordinates = self.piece.get_self_coords
-        self.place_piece()
+        return self.place_piece()
 
-    def place_piece(self):
+    def place_piece(self) -> tuple:
         piece = self.piece
         grid = self.board.grid
         stats = self.stats
@@ -207,8 +207,7 @@ class Player:
             self.garbage_to_send.extend([column] * attack)
 
         # Help the AI figure out which move the player made
-        location_placed = (piece.x_0, place_y, piece.rotation)
-        return location_placed
+        return rows_cleared
         
     def hold_piece(self):
         if self.held_piece == None:
@@ -223,18 +222,10 @@ class Player:
                 self.held_piece = self.piece.type
             self.create_piece(temp)
     
-    def spawn_garbage(self, send_garbage):
+    def spawn_garbage(self):
         # In MCTS, don't spawn garbage but store it in a variable
-        lines = 0
-
-        if send_garbage == True:
-            self.board.create_garbage(self.garbage_to_receive)
-            self.garbage_to_receive = []
-        else: 
-            lines = len(self.garbage_to_receive)
-            self.garbage_to_receive = []
-        
-        return lines
+        self.board.create_garbage(self.garbage_to_receive)
+        self.garbage_to_receive = []
     
     def reset(self):
         self.board = Board()

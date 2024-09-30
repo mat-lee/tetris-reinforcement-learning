@@ -12,7 +12,7 @@ import pstats
 
 import random
 
-DefaultConfig = Config(training=False, model='keras', MAX_ITER=1600)
+DefaultConfig = Config(training=False, model='keras', MAX_ITER=16)
 
 # Load neural network
 model = load_best_model(DefaultConfig)
@@ -49,8 +49,23 @@ class Main:
             game.show(screen)
 
             # Player's move:
-            if game.turn == 0 or game.ai_player.game_over == True:
-                for event in pygame.event.get():
+            # Keyboard inputs
+            for event in pygame.event.get():
+                # Pressable at any time
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+
+                if event.type == pygame.KEYDOWN:
+                    if event.key == k_undo:
+                        game.undo()
+                    elif event.key == k_redo:
+                        game.redo()
+                    elif event.key == k_restart:
+                        game.restart()
+
+                # Only for player 1
+                if game.turn == 0 and not game.is_terminal:
                     if game.human_player.piece != None:
                         # On key down
                         if event.type == pygame.KEYDOWN:
@@ -81,12 +96,6 @@ class Main:
                                 game.human_player.try_wallkick(3)
                             elif event.key == k_hold:
                                 game.human_player.hold_piece()
-                            elif event.key == k_undo:
-                                game.undo()
-                            elif event.key == k_redo:
-                                game.redo()
-                            elif event.key == k_restart:
-                                game.restart()
 
                         # On key release
                         elif event.type == pygame.KEYUP:
@@ -98,30 +107,27 @@ class Main:
                             elif event.key == k_soft_drop:
                                 mover.stop_down()
 
-                    if event.type == pygame.QUIT:
-                        pygame.quit()
-                        sys.exit()
+            # DAS, ARR, and Softdrop
+            current_time = time.time()
 
-                # DAS, ARR, and Softdrop
-                current_time = time.time()
+            # This makes das limited by FPS
+            if mover.can_lr_das:
+                if mover.lr_das_start_time != None:
+                    if current_time - mover.lr_das_start_time > mover.lr_das_counter:
+                        if mover.lr_das_direction == "L":
+                            game.human_player.move_left()
+                        elif mover.lr_das_direction == "R":
+                            game.human_player.move_right()      
+                        mover.lr_das_counter += ARR/1000
 
-                # This makes das limited by FPS
-                if mover.can_lr_das:
-                    if mover.lr_das_start_time != None:
-                        if current_time - mover.lr_das_start_time > mover.lr_das_counter:
-                            if mover.lr_das_direction == "L":
-                                game.human_player.move_left()
-                            elif mover.lr_das_direction == "R":
-                                game.human_player.move_right()      
-                            mover.lr_das_counter += ARR/1000
+            if mover.can_sd_das:
+                if mover.sd_start_time != None:
+                    if current_time - mover.sd_start_time > mover.sd_counter:
+                        game.human_player.move_down()
+                        mover.sd_counter += (1 / SDF) / 1000
 
-                if mover.can_sd_das:
-                    if mover.sd_start_time != None:
-                        if current_time - mover.sd_start_time > mover.sd_counter:
-                            game.human_player.move_down()
-                            mover.sd_counter += (1 / SDF) / 1000
-
-            elif game.turn == 1:
+            # AI's turn
+            if game.turn == 1 and not game.is_terminal:
                 if game.players[0].game_over == False:
                     # with cProfile.Profile() as pr:
                     #     move, _ = MCTS(game, interpreter)

@@ -51,7 +51,6 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # Bugs
 # - Add delayed garbage when you clear a line
 # - Fix fake t spins
-# - Fix fake garbage sends
 # - Fix game ending once
 
 # Areas of optimization:

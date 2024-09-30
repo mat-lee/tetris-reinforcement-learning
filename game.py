@@ -26,7 +26,7 @@ class Game:
             bag = player.queue.generate_bag()
             player.queue.add_bag(bag)
 
-    def make_move(self, move, add_bag=True, add_history=True, send_garbage=True):
+    def make_move(self, move, add_bag=True, add_history=True):
         player = self.players[self.turn]
 
         # Move: (Piece type, col, row, rotation) or (Policy index, col, row)
@@ -53,9 +53,13 @@ class Game:
             elif piece != player.piece.type:
                 player.hold_piece()
 
-            player.force_place_piece(col, row, rotation)
+            rows_cleared = player.force_place_piece(col, row, rotation)
+            if rows_cleared > 0:
+                is_last_move_line_clear = True
+            else:
+                is_last_move_line_clear = False
 
-            lines = self.check_garbage(send_garbage)
+            self.check_garbage(is_last_move_line_clear)
 
             player.create_next_piece()
 
@@ -63,33 +67,30 @@ class Game:
                 self.add_bag_to_all()
 
             # Add history after placing piece
-            if (add_history == True and self.human_player.game_over == False and self.turn == 1): # IN MCTS don't add history
+            if (add_history == True and self.turn == 1): # IN MCTS don't add history
                 self.add_history()
 
             self.turn = 1 - self.turn # 1 to 0
 
-            return lines
-
-    def check_garbage(self, send_garbage):
+    def check_garbage(self, is_last_move_line_clear):
         active_player = self.players[self.turn]
         other_player = self.players[1 - self.turn]
 
         # Checks for sending garbage, sends garbage, and canceling
+        # If cancelling, don't receive garbage
         while len(active_player.garbage_to_send) > 0 and len(active_player.garbage_to_receive) > 0: # Cancel garbage
             # Remove first elements
             active_player.garbage_to_send.pop(0)
             active_player.garbage_to_receive.pop(0)
-        
+
+        # If the active player didn't make a line clear, give it the garbage
+        if len(active_player.garbage_to_receive) > 0 and not is_last_move_line_clear:
+            active_player.spawn_garbage()
+
         if len(active_player.garbage_to_send) > 0:
             other_player.garbage_to_receive += active_player.garbage_to_send # Send garbage
             active_player.garbage_to_send = [] # Stop sending garbage
-        
-        lines = 0
-        
-        if len(active_player.garbage_to_receive) > 0:
-            lines = active_player.spawn_garbage(send_garbage)
 
-        return lines
 
     def add_history(self):
         # If placing a piece after undoing, get rid of future history
