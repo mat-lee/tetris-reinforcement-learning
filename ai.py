@@ -49,9 +49,7 @@ DATA_VERSION = 1.3
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
 # Bugs
-# - Add delayed garbage when you clear a line
 # - Fix fake t spins
-# - Fix game ending once
 
 # Areas of optimization:
 # - Generating move matrix
