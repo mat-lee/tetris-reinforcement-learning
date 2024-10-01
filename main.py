@@ -34,8 +34,8 @@ class Main:
 
         game.setup()
 
-        game.players[0].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
-        game.players[1].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
+        # game.players[0].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
+        # game.players[1].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
         '''
         # game.players[0].board.grid[2] = [0, 0, 1, 1, 1, 1, 1, 0, 0, 0]
         # game.players[0].board.grid[3] = [0, 0, 1, 1, 0, 0, 1, 0, 0, 0]

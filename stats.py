@@ -73,7 +73,7 @@ class Stats:
             else: attack += math.floor((1 + 0.25 * self.combo) * 
                                         (2 * rows_cleared * is_tspin * (-3/4 * is_mini + 1)
                                             + 2**(rows_cleared-2) * (1 - is_tspin)
-                                            + self.b2b_level)) # General formula for 2-4 rows cleared
+                                            + self.b2b_level * (is_tspin or rows_cleared == 4))) # General formula for 2-4 rows cleared
 
             self.combo += 1
 
@@ -176,7 +176,7 @@ class Stats:
     # don't look please
     # it does work though
 
-'''    def make_chart(self):
+    def make_chart(self):
         combo_max = 5
         types = [
             [1, False, False, 0],
@@ -215,4 +215,4 @@ class Stats:
 
 if __name__ == "__main__":
     test = Stats()
-    test.make_chart()'''
+    test.make_chart()

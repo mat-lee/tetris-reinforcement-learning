@@ -57,14 +57,13 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Load data faster
 
 # AI todo:
+# - Add replays of high depth games
 # - Test parameters
-# - Switch player color during matches
 # - Finish pytorch merger, clean up merge code, test
 # - Encoding garbage into the neural network/MCTS
 # - Investigate hold issue (maybe search depth?)
 # - Add changing learning rate
 # - Keep implementing katago strategies (read appendix)
-#     - Randomize first r moves
 #     - Changing board sizes
 # - Figure out why it stays at the top
 # - Change how data is loaded
@@ -169,7 +168,7 @@ class Config():
 
         # MCTS Parameters
         training=False, # Set to true to use a variety of features
-        use_experimental_features=False, # Before setting to true, check if it's in use
+        use_experimental_features=True, # Before setting to true, check if it's in use
         save_all=False,
 
         MAX_ITER=160, # 1600 ##########

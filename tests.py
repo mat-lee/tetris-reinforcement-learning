@@ -563,6 +563,46 @@ def test_if_changes_improved_model():
     network.save(f"{directory_path}/New.keras")
 
 
+def test_high_depth_replay(network, max_iter):
+    # Battle an AI against itself at high depth, and then analyze it with undo and redo
+    c=Config(MAX_ITER=max_iter)
+
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption(f"Search Amount {max_iter} Replay Game")
+    pygame.event.get() # Required for visuals?
+
+    game = Game()
+    game.setup()
+
+    while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
+        move, _, _ = MCTS(c, game, network)
+        game.make_move(move)
+
+        game.show(screen)
+        pygame.display.update()
+
+    while True:
+        game.show(screen)
+
+        # Player's move:
+        # Keyboard inputs
+        for event in pygame.event.get():
+            # Pressable at any time
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == k_undo:
+                    game.undo()
+                elif event.key == k_redo:
+                    game.redo()
+                elif event.key == k_restart:
+                    game.restart()
+
+        pygame.display.update()
+
+
 c=Config(model='keras', shuffle=True, MAX_ITER=1)
 
 # keras.utils.set_random_seed(937)
@@ -590,7 +630,10 @@ c=Config(model='keras', shuffle=True, MAX_ITER=1)
 
 
 # test_dirichlet_noise()
-test_older_vs_newer_networks(1, 137)
+# test_older_vs_newer_networks(1, 137)
+
+
+test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=16000)
 
 
 
