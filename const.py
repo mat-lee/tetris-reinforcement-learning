@@ -32,6 +32,7 @@ k_hold =        pygame.K_c
 k_undo =        pygame.K_1
 k_redo =        pygame.K_2
 k_restart =     pygame.K_r
+k_add_garbage = pygame.K_g
 
 # graphics break when ARR = 0
 # idc

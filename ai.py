@@ -57,15 +57,12 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Load data faster
 
 # AI todo:
-# - Add replays of high depth games
+# - It not understanding garbage means it will learn incorrectly
 # - Test parameters
-# - Finish pytorch merger, clean up merge code, test
-# - Encoding garbage into the neural network/MCTS
-# - Investigate hold issue (maybe search depth?)
-# - Add changing learning rate
+# - Finish pytorch merger, clean up merge code
+# - Encoding garbage into the neural network/MCTS (Open loop MCTS)
 # - Keep implementing katago strategies (read appendix)
 #     - Changing board sizes
-# - Figure out why it stays at the top
 # - Change how data is loaded
 
 '''

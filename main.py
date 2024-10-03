@@ -12,7 +12,7 @@ import pstats
 
 import random
 
-DefaultConfig = Config(training=False, model='keras', MAX_ITER=16)
+DefaultConfig = Config(training=False, model='keras')
 
 # Load neural network
 model = load_best_model(DefaultConfig)
@@ -34,17 +34,6 @@ class Main:
 
         game.setup()
 
-        # game.players[0].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
-        # game.players[1].garbage_to_receive = [random.randint(0, 9) for i in range(18)]
-        '''
-        # game.players[0].board.grid[2] = [0, 0, 1, 1, 1, 1, 1, 0, 0, 0]
-        # game.players[0].board.grid[3] = [0, 0, 1, 1, 0, 0, 1, 0, 0, 0]
-        # game.players[0].board.grid[4] = [0, 0, 1, 1, 0, 0, 1, 0, 0, 0]
-        # game.players[0].board.grid[5] = [0, 0, 1, 1, 1, 1, 1, 0, 0, 0]
-
-        game.players[0].board.grid = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 'L', 'L', 'L', 0, 0, 0, 0], ['O', 'O', 0, 'L', 'S', 'S', 'S', 0, 0, 'T'], [1, 1, 1, 1, 1, 1, 1, 1, 1, 0], [1, 1, 1, 1, 1, 1, 1, 0, 1, 1], [1, 0, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [0, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 0, 1, 1], [1, 1, 1, 1, 1, 1, 1, 0, 1, 1], [1, 1, 0, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 0, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 0, 1, 1, 1], [0, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 0, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 0]]
-        game.players[1].board.grid = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 'L', 0, 0], ['S', 0, 'O', 'O', 0, 'L', 'L', 'L', 0, 0], [1, 1, 1, 1, 1, 1, 1, 1, 0, 1], [1, 0, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 0, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [0, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 0, 1, 1, 1, 1, 1, 1, 1], [1, 1, 0, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 0, 1], [1, 1, 0, 1, 1, 1, 1, 1, 1, 1], [1, 0, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1, 0, 1], [1, 1, 1, 1, 1, 1, 1, 0, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1]]
-        '''
         while True:
             game.show(screen)
 
@@ -63,6 +52,9 @@ class Main:
                         game.redo()
                     elif event.key == k_restart:
                         game.restart()
+                    elif event.key == k_add_garbage:
+                        game.players[0].garbage_to_receive.append(random.randint(0, 9))
+                        game.players[1].garbage_to_receive.append(random.randint(0, 9))
 
                 # Only for player 1
                 if game.turn == 0 and not game.is_terminal:
