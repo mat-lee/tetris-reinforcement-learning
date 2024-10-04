@@ -9,16 +9,13 @@ input_shapes = [(1, ROWS, COLS), # Grid
                 (2 + PREVIEWS, len(MINOS)), # Pieces
                 (1,), # B2B
                 (1,), # Combo
-                (1,), # Lines cleared
-                (1,), # Lines sent
+                (1,), # Garbage
                 (1, ROWS, COLS), 
                 (2 + PREVIEWS, len(MINOS)), 
                 (1,), 
                 (1,), 
                 (1,),
-                (1,),
-                (1,), # Color (Whether you had first move or not)
-                (1,)] # Total pieces placed
+                (1,)] # Color (Whether you had first move or not)
 
 class ResidualBlock(nn.Module):
     def __init__(self, config):
@@ -101,7 +98,7 @@ class AlphaSame(nn.Module):
             nn.ReLU(),
         )
 
-        head_inputs = ROWS * COLS * config.kernels + config.o_side_neurons + 2 * ((2 + PREVIEWS) * len(MINOS)) + 2 * 4 + 2
+        head_inputs = ROWS * COLS * config.kernels + config.o_side_neurons + 2 * ((2 + PREVIEWS) * len(MINOS)) + 2 * 3 + 1
 
         # Policy head
         self.policy_head = nn.Sequential(
@@ -119,7 +116,7 @@ class AlphaSame(nn.Module):
             (nn.Tanh() if config.use_tanh else nn.Sigmoid()),
         )
 
-    def forward(self, a_grid, a_pieces, a_b2b, a_combo, a_lines_cleared, a_lines_sent, o_grid, o_pieces, o_b2b, o_combo, o_lines_cleared, o_lines_sent, color, pieces_placed):
+    def forward(self, a_grid, a_pieces, a_b2b, a_combo, a_garbage, o_grid, o_pieces, o_b2b, o_combo, o_garbage, color):
         # 5x5 Convolution
         a_grid_out = self.conv1(a_grid)
         o_grid_out = self.conv1(o_grid)
@@ -156,16 +153,14 @@ class AlphaSame(nn.Module):
 
         a_b2b = a_b2b.unsqueeze(1)
         a_combo = a_combo.unsqueeze(1)
-        a_lines_cleared = a_lines_cleared.unsqueeze(1)
-        a_lines_sent = a_lines_sent.unsqueeze(1)
+        a_garbage = a_garbage.unsqueeze(1)
         o_b2b = o_b2b.unsqueeze(1)
         o_combo = o_combo.unsqueeze(1)
-        o_lines_cleared = o_lines_cleared.unsqueeze(1)
-        o_lines_sent = o_lines_sent.unsqueeze(1)
+        o_garbage = o_garbage.unsqueeze(1)
         color = color.unsqueeze(1)
         pieces_placed = pieces_placed.unsqueeze(1)
 
-        x = torch.concat((a_grid_out, a_pieces, a_b2b, a_combo, a_lines_cleared, a_lines_sent, o_grid_out, o_pieces, o_b2b, o_combo, o_lines_cleared, o_lines_sent, color, pieces_placed), dim=1)
+        x = torch.concat((a_grid_out, a_pieces, a_b2b, a_combo, a_garbage, o_grid_out, o_pieces, o_b2b, o_combo, o_garbage, color, pieces_placed), dim=1)
 
         # Value and policy head
         value_output = self.value_head(x)
@@ -190,16 +185,13 @@ def create_input_layers():
               (2 + PREVIEWS, len(MINOS)), # Pieces
               (1,), # B2B
               (1,), # Combo
-              (1,), # Lines cleared
-              (1,), # Lines sent
+              (1,), # Garbage
               (ROWS, COLS, 1), 
               (2 + PREVIEWS, len(MINOS)), 
               (1,), 
               (1,), 
               (1,),
-              (1,),
-              (1,), # Color (Whether you had first move or not)
-              (1,)] # Total pieces placed
+              (1,)] # Color (Whether you had first move or not)
 
     inputs = []
     active_features = []
@@ -216,13 +208,13 @@ def create_input_layers():
 
         num_inputs = len(shapes)
         # Active player's features
-        if i < (num_inputs - 2) / 2: # Ignore last two inputs, and take the first half
+        if i < (num_inputs - 1) / 2: # Ignore last two inputs, and take the first half
             if shape == shapes[0]:
                 active_grid = input
             else:
                 active_features.append(keras.layers.Flatten()(input))
         # Other player's features
-        elif i < (num_inputs - 2): # Ignore last two inputs, take remaining half
+        elif i < (num_inputs - 1): # Ignore last two inputs, take remaining half
             if shape == shapes[0]:
                 opponent_grid = input
             else:

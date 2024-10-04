@@ -42,8 +42,8 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 4.7
-DATA_VERSION = 1.3
+MODEL_VERSION = 4.8
+DATA_VERSION = 1.4
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -57,7 +57,6 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Load data faster
 
 # AI todo:
-# - It not understanding garbage means it will learn incorrectly
 # - Test parameters
 # - Finish pytorch merger, clean up merge code
 # - Encoding garbage into the neural network/MCTS (Open loop MCTS)
@@ -1194,6 +1193,10 @@ def get_stat(game, stat_name):
     stats = [getattr(player.stats, stat_name) for player in game.players]
     return reverse_if_needed(stats, game.turn == 1)
 
+def get_garbage(game):
+    garbage = [len(player.garbage_to_receive) for player in game.players]
+    return reverse_if_needed(garbage, game.turn == 1)
+
 def game_to_X(game):
     # Returns game information for the network.
     # Orient all info in perspective to the current player
@@ -1201,16 +1204,22 @@ def game_to_X(game):
     pieces = get_pieces(game)
     b2b = get_stat(game, 'b2b')
     combo = get_stat(game, 'combo')
-    lines_cleared = get_stat(game, 'lines_cleared')
-    lines_sent = get_stat(game, 'lines_sent')
+    garbage = get_garbage(game)
     color = game.players[game.turn].color
-    pieces_placed = game.players[game.turn].stats.pieces
 
+    return (
+        grids[0], pieces[0], b2b[0], combo[0], garbage[0],
+        grids[1], pieces[1], b2b[1], combo[1], garbage[1],
+        color
+    )
+
+    '''
     return (
         grids[0], pieces[0], b2b[0], combo[0], lines_cleared[0], lines_sent[0], 
         grids[1], pieces[1], b2b[1], combo[1], lines_cleared[1], lines_sent[1], 
         color, pieces_placed
     )
+    '''
 
 def reflect_grid(grid):
     # Return a grid flipped horizontally
@@ -1377,8 +1386,8 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
                             copied_data[1] = reflect_pieces(copied_data[1])
                         
                         if other_player_idx == 1:
-                            copied_data[6] = reflect_grid(copied_data[6])
-                            copied_data[7] = reflect_pieces(copied_data[7])
+                            copied_data[5] = reflect_grid(copied_data[5])
+                            copied_data[6] = reflect_pieces(copied_data[6])
 
                         # Convert np arrays to regular lists
                         for i in range(len(copied_data)):
