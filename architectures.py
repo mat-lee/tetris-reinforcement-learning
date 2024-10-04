@@ -5,18 +5,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-input_shapes = [(1, ROWS, COLS), # Grid
-                (2 + PREVIEWS, len(MINOS)), # Pieces
-                (1,), # B2B
-                (1,), # Combo
-                (1,), # Garbage
-                (1, ROWS, COLS), 
-                (2 + PREVIEWS, len(MINOS)), 
-                (1,), 
-                (1,), 
-                (1,),
-                (1,)] # Color (Whether you had first move or not)
-
 class ResidualBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -208,13 +196,13 @@ def create_input_layers():
 
         num_inputs = len(shapes)
         # Active player's features
-        if i < (num_inputs - 1) / 2: # Ignore last two inputs, and take the first half
+        if i < (num_inputs - 1) / 2: # Ignore last input, and take the first half
             if shape == shapes[0]:
                 active_grid = input
             else:
                 active_features.append(keras.layers.Flatten()(input))
         # Other player's features
-        elif i < (num_inputs - 1): # Ignore last two inputs, take remaining half
+        elif i < (num_inputs - 1): # Ignore last input, take remaining half
             if shape == shapes[0]:
                 opponent_grid = input
             else:
