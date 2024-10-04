@@ -602,6 +602,48 @@ def test_high_depth_replay(network, max_iter):
 
         pygame.display.update()
 
+def test_convert_data_and_train_4_7_to_4_8():
+    config = Config(epochs=2)
+    new_network = instantiate_network(config, show_summary=True, save_network=False)
+
+    filenames = get_data_filenames(200, shuffle=False)
+
+    path = f"{directory_path}/data/{DATA_VERSION}"
+
+    i = 0
+
+    for filename in filenames:
+        i += 1
+        set = ujson.load(open(f"{path}/{filename}", 'r'))
+        # Manipulate the set
+        '''
+            grids[0], pieces[0], b2b[0], combo[0], garbage[0],
+            grids[1], pieces[1], b2b[1], combo[1], garbage[1],
+            color
+
+            grids[0], pieces[0], b2b[0], combo[0], lines_cleared[0], lines_sent[0], 
+            grids[1], pieces[1], b2b[1], combo[1], lines_cleared[1], lines_sent[1], 
+            color, pieces_placed
+        '''
+
+        for move in set:
+            move[4] = 0
+            move[10] = 0
+            move.pop(5)
+            move.pop(10)
+            move.pop(11)
+    
+        # Train challenger network
+        if config.model == 'keras':
+            train_network_keras(config, new_network, set)
+        elif config.model == 'pytorch':
+            train_network_pytorch(config, new_network, set)
+        
+        if i % 10 == 0:
+            new_network.save(f"{directory_path}/models/TESTS/{i}.keras")
+        
+    new_network.save(f"{directory_path}/models/TESTS/{i}.keras")
+    
 
 c=Config(model='keras', shuffle=True, MAX_ITER=1)
 
@@ -633,8 +675,8 @@ c=Config(model='keras', shuffle=True, MAX_ITER=1)
 # test_older_vs_newer_networks(1, 137)
 
 
-test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=16000)
-
+# test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=16000)
+test_convert_data_and_train_4_7_to_4_8()
 
 
 # Command for running python files
