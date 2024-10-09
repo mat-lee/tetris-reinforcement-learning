@@ -57,12 +57,12 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Load data faster
 
 # AI todo:
+# - Change how/how much data is used for training
 # - Test parameters
 # - Finish pytorch merger, clean up merge code
 # - Encoding garbage into the neural network/MCTS (Open loop MCTS)
 # - Keep implementing katago strategies (read appendix)
 #     - Changing board sizes
-# - Change how data is loaded
 
 '''
 # Testing results

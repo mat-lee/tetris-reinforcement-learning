@@ -99,18 +99,19 @@ class Main:
                             elif event.key == k_soft_drop:
                                 mover.stop_down()
 
-            # DAS, ARR, and Softdrop
-            current_time = time.time()
+            if game.turn == 0 and not game.is_terminal:
+                # DAS, ARR, and Softdrop
+                current_time = time.time()
 
-            # This makes das limited by FPS
-            if mover.can_lr_das:
-                if mover.lr_das_start_time != None:
-                    if current_time - mover.lr_das_start_time > mover.lr_das_counter:
-                        if mover.lr_das_direction == "L":
-                            game.human_player.move_left()
-                        elif mover.lr_das_direction == "R":
-                            game.human_player.move_right()      
-                        mover.lr_das_counter += ARR/1000
+                # This makes das limited by FPS
+                if mover.can_lr_das:
+                    if mover.lr_das_start_time != None:
+                        if current_time - mover.lr_das_start_time > mover.lr_das_counter:
+                            if mover.lr_das_direction == "L":
+                                game.human_player.move_left()
+                            elif mover.lr_das_direction == "R":
+                                game.human_player.move_right()      
+                            mover.lr_das_counter += ARR/1000
 
             if mover.can_sd_das:
                 if mover.sd_start_time != None:
