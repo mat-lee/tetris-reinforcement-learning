@@ -57,6 +57,7 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Load data faster
 
 # AI todo:
+# - Investigate combo not sending the correct number of lines
 # - Change how/how much data is used for training
 # - Test parameters
 # - Finish pytorch merger, clean up merge code
@@ -155,6 +156,7 @@ class Config():
         use_tanh=False, # Affects data saving and model activation
 
         # Training Parameters
+        data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
         augment_data=True,
         learning_rate=0.001, 
         loss_weights=[1, 1], 
@@ -203,6 +205,7 @@ class Config():
         self.o_side_neurons = o_side_neurons
         self.value_head_neurons = value_head_neurons
         self.use_tanh = use_tanh
+        self.data_loading_style = data_loading_style
         self.augment_data = augment_data
         self.learning_rate = learning_rate
         self.loss_weights = loss_weights
@@ -985,6 +988,12 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
             os.makedirs(path, exist_ok=True)
             torch.save(model.state_dict(), f"{path}/0")
 
+def train_network(config, model, set):
+    if config.model == 'keras':
+        train_network_keras(config, model, set)
+    elif config.model == 'pytorch':
+        train_network_pytorch(config, model, set)
+
 def train_network_keras(config, model, set):
     # Keras has 2GB limit (?)
 
@@ -1454,44 +1463,82 @@ def make_training_set(config, network, num_games, save_game=True, show_game=Fals
     else:
         return series_data
 
-def load_data(data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH):
-    data = []
-    # Load data from the past n games
-    # You can input model_ver or model_iter as None to load 
-    # all iterations from one version OR load all data files
-    # under past last_n
+def load_data_and_train_model(config, model, data=None):
+    path = f"{directory_path}/data/{DATA_VERSION}"
 
-    # Find highest set number
-    # SHOULD ONLY BE USED IF model_ver AND model_iter are specified
-    max_set = highest_data_number()
+    if config.data_loading_style == "merge":
+        if data == None:
+            data = []
+            filenames = get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH)
+
+            for filename in filenames:
+                set = ujson.load(open(f"{path}/{filename}", 'r'))
+
+                data.extend(set)
+        else:
+            data = [[].extend(set) for set in data]
+
+        if config.shuffle == True:
+            random.shuffle(data)
+
+        print(len(data))
+        train_network(config, model, data)
+
+        del data
+        gc.collect()
+
+    elif config.data_loading_style == 'distinct':
+        if data == None:
+            filenames = get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH)
+
+            for filename in filenames:
+                set = ujson.load(open(f"{path}/{filename}", 'r'))
+
+                print(len(set))
+                train_network(config, model, set)
+
+                del set
+        else:
+            if config.shuffle == True:
+                random.shuffle(data)
+            for set in data:
+                print(len(set))
+                train_network(config, model, set)
+
+                del set
+        gc.collect()
+    
+    else: raise NotImplementedError
+
+def load_data(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
+    # Load data from the past n games
+    # Returns a list where each indice is a set
+
+    data = []
 
     sets, len_sets = 0, 0
 
     path = f"{directory_path}/data/{data_ver}"
 
-    # Get n games
-    for filename in os.listdir(path):
-        data_number = int(filename.split('.')[0])
-        if data_number > max_set - last_n_sets:
-            # Load data
-            set = ujson.load(open(f"{path}/{filename}", 'r'))
-            data.append(set)
+    # Get filenames and load them
+    for filename in get_data_filenames(config, data_ver=data_ver, last_n_sets=last_n_sets):
+        set = ujson.load(open(f"{path}/{filename}", 'r'))
+        data.append(set)
 
-            sets += 1
-            len_sets += len(set)
+        sets += 1
+        len_sets += len(set)
     
     print(sets, len_sets)
-    # Shuffle data
-    random.shuffle(data)
     return data
 
-def get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True):
+def get_data_filenames(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
+    # Returns a list of data filenames
     filenames = []
     max_set = highest_data_number()
 
     sets = 0
 
-    path = f"{directory_path}/data/{DATA_VERSION}"
+    path = f"{directory_path}/data/{data_ver}"
 
     # Get n games
     for filename in os.listdir(path):
@@ -1504,7 +1551,7 @@ def get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=True):
     
     print(sets)
     # Shuffle data
-    if shuffle:
+    if config.shuffle:
         random.shuffle(filenames)
     return filenames
     
@@ -1608,21 +1655,8 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
             # Skip and stop skipping in future
             skip_first_set = False
 
-        # Load data
-        filenames = get_data_filenames(last_n_sets=SETS_TO_TRAIN_WITH, shuffle=config.shuffle)
-
-        path = f"{directory_path}/data/{DATA_VERSION}"
-
-        for filename in filenames:
-            set = ujson.load(open(f"{path}/{filename}", 'r'))
-
-            # Train challenger network
-            if config.model == 'keras':
-                train_network_keras(config, challenger_network, set)
-            elif config.model == 'pytorch':
-                train_network_pytorch(config, challenger_network, set)
-
-        del set
+        # Load data and train
+        load_data_and_train_model(config, challenger_network, data=None)
 
         if config.model == 'keras':
             challenger_interpreter = get_interpreter(challenger_network)
