@@ -672,10 +672,10 @@ c=Config(model='keras', shuffle=True, MAX_ITER=1)
 
 
 # test_dirichlet_noise()
-# test_older_vs_newer_networks(0, 10)
+test_older_vs_newer_networks(20, 100)
 
 
-test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=80000)
+# test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=80000)
 # test_convert_data_and_train_4_7_to_4_8()
 
 
