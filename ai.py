@@ -43,7 +43,7 @@ import pstats
 
 # For naming data and models
 MODEL_VERSION = 4.8
-DATA_VERSION = 1.4
+DATA_VERSION = 1.5
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -57,13 +57,16 @@ directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 # - Load data faster
 
 # AI todo:
-# - Investigate combo not sending the correct number of lines
+# - Add chance nodes
+# - Investigate combo not sending the correct number of lines (?)
+# - Update model architecture
 # - Change how/how much data is used for training
 # - Test parameters
 # - Finish pytorch merger, clean up merge code
 # - Encoding garbage into the neural network/MCTS (Open loop MCTS)
 # - Keep implementing katago strategies (read appendix)
-#     - Changing board sizes
+#     - Variable board sizes
+#     - Use monte carlo graph search
 
 '''
 # Testing results
@@ -153,11 +156,11 @@ class Config():
         o_side_neurons=16,
         value_head_neurons=16,
 
-        use_tanh=False, # Affects data saving and model activation
+        use_tanh=False, # If false means using sigmoid; affects data saving and model activation
 
         # Training Parameters
         data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
-        augment_data=True,
+        augment_data=False,
         learning_rate=0.001, 
         loss_weights=[1, 1], 
         epochs=1, 
@@ -402,7 +405,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple
                     for i in range(len(policies)):
                         # pn.append(policies[i])
 
-                        policies[i] = math.exp((math.log(policies[i]) - math.log(max_policy)) * 1 / config.RootSoftmaxTemp) # ???
+                        policies[i] = math.exp((math.log(policies[i]) - math.log(max_policy)) * 1 / config.RootSoftmaxTemp) # ??? katago formula
                         
                         # ps.append(policies[i])
 
@@ -1343,7 +1346,10 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
 
     # Initialize the game with random moves
     if config.use_experimental_features:
-        scale = 0.04 * COLS * ROWS
+        # Because dirichlet alpha is scaled with dirichlet_s and not the
+        # board size, use dirichlet_s as a general scaling factor proportional
+        # to the action space
+        scale = 0.04 * config.DIRICHLET_S
         num_random_moves = np.random.exponential(scale=scale)
 
         fast_config = copy.deepcopy(config)
@@ -1370,8 +1376,7 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
             # Get data
             move_data = [*game_to_X(game)] 
 
-            if config.augment_data:
-                # Piece sizes are needed to know where a reflected piece ends up
+            if config.augment_data: 
                 reflected_search_matrix = reflect_policy(search_matrix)
                 
                 # Reflect each player for a total of 2 * 2 = 4 times more data
@@ -1382,9 +1387,10 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
                         # Copy move data
                         copied_data = []
                         for feature in move_data:
-                            if isinstance(feature, np.ndarray):
+                            # Copy data
+                            if isinstance(feature, np.ndarray): # queue array
                                 copied_data.append(feature.copy())
-                            elif type(feature) == list:
+                            elif type(feature) == list: # board
                                 copied_data.append([x[:] for x in feature])
                             else: # int or float
                                 copied_data.append(feature)
@@ -1476,7 +1482,7 @@ def load_data_and_train_model(config, model, data=None):
 
                 data.extend(set)
         else:
-            data = [[].extend(set) for set in data]
+            data = [x for set in data for x in set] # Flatten list
 
         if config.shuffle == True:
             random.shuffle(data)
