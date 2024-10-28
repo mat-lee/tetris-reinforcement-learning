@@ -1,25 +1,25 @@
 **Bugs**
  - Fix fake t spins
 
-**Areas of optimization:**
- - Generating move matrix
- - Switching to pytorch (?)
- - Load data faster
-
-**AI todo:**
- - Add chance nodes
+**Todo:**
+ - To main, add switch boards and visualize AI moves
+ - Add chance nodes/address randomness in MCTS
  - Investigate combo not sending the correct number of lines (?)
- - Update model architecture
- - Change how/how much data is used for training
  - Test parameters
  - Finish pytorch merger, clean up merge code
  - Encoding garbage into the neural network/MCTS (Open loop MCTS)
  - Keep implementing katago strategies (read appendix)
      - Variable board sizes
      - Use monte carlo graph search
+ - Update model architecture
+ - Change how/how much data is used for training
+
+**Areas of optimization:**
+ - Generating move matrix
+ - Switching to pytorch (?)
+ - Load data faster
 
 **Testing results**
-
 l1_neurons
 l2_neurons
 
