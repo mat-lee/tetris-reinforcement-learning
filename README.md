@@ -1,12 +1,12 @@
-Bugs
+**Bugs**
  - Fix fake t spins
 
-Areas of optimization:
+**Areas of optimization:**
  - Generating move matrix
  - Switching to pytorch (?)
  - Load data faster
 
-AI todo:
+**AI todo:**
  - Add chance nodes
  - Investigate combo not sending the correct number of lines (?)
  - Update model architecture
@@ -18,7 +18,7 @@ AI todo:
      - Variable board sizes
      - Use monte carlo graph search
 
-Testing results
+**Testing results**
 
 l1_neurons
 l2_neurons
@@ -76,7 +76,7 @@ Miscellaneous
 
 
 
-Data and Model Versions
+**Data and Model Versions**
 
 Data:
 1.5 - Doubled training data, removed augment data
