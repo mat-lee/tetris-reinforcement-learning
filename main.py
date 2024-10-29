@@ -52,11 +52,8 @@ class Main:
                         game.redo()
                     elif event.key == k_restart:
                         game.restart()
-                    elif event.key == k_add_garbage:
-                        game.players[0].garbage_to_receive.append(random.randint(0, 9))
-                        game.players[1].garbage_to_receive.append(random.randint(0, 9))
 
-                # Only for player 1
+                # Only for first player
                 if game.turn == 0 and not game.is_terminal:
                     if game.human_player.piece != None:
                         # On key down
@@ -88,6 +85,13 @@ class Main:
                                 game.human_player.try_wallkick(3)
                             elif event.key == k_hold:
                                 game.human_player.hold_piece()
+
+                            # Helper keybinds
+                            elif event.key == k_add_garbage:
+                                game.players[0].garbage_to_receive.append(random.randint(0, 9))
+                                game.players[1].garbage_to_receive.append(random.randint(0, 9))
+                            elif event.key == k_switch:
+                                game.players[0].board, game.players[1].board = game.players[1].board, game.players[0].board
 
                         # On key release
                         elif event.type == pygame.KEYUP:
