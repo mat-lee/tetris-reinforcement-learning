@@ -13,6 +13,7 @@
      - Use monte carlo graph search
  - Update model architecture
  - Change how/how much data is used for training
+ - Stop tensorflow prints
 
 **Areas of optimization:**
  - Generating move matrix

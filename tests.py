@@ -145,8 +145,8 @@ def make_piece_starting_row():
 
 def test_dirichlet_noise() -> None:
     # Finding different values of dirichlet alpha affect piece decisions
-    # alpha_values = [1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
-    alpha_values = [0.4, 0.3, 0.2, 0.1]
+    alpha_values = [1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001]
+    # alpha_values = [0.4, 0.3, 0.2, 0.1]
     alpha_values = {alpha: {'n_same': 0, 'n_total': 0} for alpha in alpha_values}
 
     use_dirichlet_s=False
@@ -671,8 +671,8 @@ c=Config(model='keras', shuffle=True, MAX_ITER=1)
 # time_move_matrix('faster-but-loss')
 
 
-# test_dirichlet_noise()
-test_older_vs_newer_networks(20, 100)
+test_dirichlet_noise()
+# test_older_vs_newer_networks(14, 28)
 
 
 # test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=80000)
