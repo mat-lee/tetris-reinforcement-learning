@@ -43,7 +43,7 @@ import pstats
 
 # For naming data and models
 MODEL_VERSION = 5.2
-DATA_VERSION = 1.7
+DATA_VERSION = 1.8
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
