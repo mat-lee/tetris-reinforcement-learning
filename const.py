@@ -12,7 +12,7 @@ COLS = 10
 # AI settings
 MAX_MOVES = 1000
 
-TRAINING_GAMES = 200
+TRAINING_GAMES = 100
 TRAINING_LOOPS = 1
 SETS_TO_TRAIN_WITH = 10
 BATTLE_GAMES = 200
@@ -30,6 +30,7 @@ k_rotate_cw    = pygame.K_UP
 k_rotate_180   = pygame.K_a
 k_hold         = pygame.K_c
 
+k_print_board  = pygame.K_p
 k_undo         = pygame.K_1
 k_redo         = pygame.K_2
 k_restart      = pygame.K_r
@@ -108,7 +109,7 @@ policy_index_to_piece = {
 
 # Leftside buffer is 2
 # Can't place piece at the bottom most row
-POLICY_SHAPE = (len(policy_index_to_piece), ROWS - 1, COLS + 2 - 1)
+POLICY_SHAPE = (len(policy_index_to_piece), 2, ROWS - 1, COLS + 2 - 1)
 POLICY_SIZE = prod(POLICY_SHAPE)
 
 policy_piece_to_index = {

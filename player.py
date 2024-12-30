@@ -8,10 +8,10 @@ import random
 
 class Player:
     """Parent class for both human and AI players."""
-    def __init__(self) -> None:
+    def __init__(self, ruleset) -> None:
         self.board = Board()
         self.queue = Queue()
-        self.stats = Stats()
+        self.stats = Stats(ruleset)
 
         self.game_over = False
         self.garbage_to_receive = [] # index 0 spawns first
@@ -23,6 +23,8 @@ class Player:
         self.held_piece = None
 
         self.draw_coords = None
+
+        self.ruleset = ruleset # Specifies tetr.io s1 or s2 spins
 
     # Game methods    
     def create_next_piece(self):
@@ -88,14 +90,17 @@ class Player:
     def move_right(self):
         if self.can_move(self.piece, x_offset=1):
             self.piece.move(x_offset=1)
+            self.piece.was_just_rotated = False
 
     def move_left(self):
         if self.can_move(self.piece, x_offset=-1):
             self.piece.move(x_offset=-1)
+            self.piece.was_just_rotated = False
 
     def move_down(self):
         if self.can_move(self.piece, y_offset=1):
             self.piece.move(y_offset=1)
+            self.piece.was_just_rotated = False
 
     def try_wallkick(self, dir):
         piece = self.piece
@@ -122,14 +127,8 @@ class Player:
                 piece.y_0 += -kick[1]
                 piece.rotation = final_rotation
                 piece.coordinates = [[col + kick[0], row - kick[1]] for col, row in rotated_piece_coordinates]
+                self.piece.was_just_rotated = True
                 return
-
-    def force_place_piece(self, x, y, o):
-        self.piece.x_0 = x
-        self.piece.y_0 = y
-        self.piece.rotation = o
-        self.piece.coordinates = self.piece.get_self_coords
-        return self.place_piece()
 
     def place_piece(self) -> tuple:
         piece = self.piece
@@ -145,24 +144,36 @@ class Player:
         is_mini = False
         is_all_clear = False
 
-        # Check for a t-spin
-        if piece.type == "T":
-            corners = [[0, 0], [2, 0], [2, 2], [0,  2]]
-            corner_filled = 4 * [False]
+        # Spins
+        if piece.was_just_rotated:
+            # Check for t-spins
+            if piece.type == "T":
+                corners = [[0, 0], [2, 0], [2, 2], [0,  2]]
+                corner_filled = 4 * [False]
 
-            for i in range(4):
-                row = corners[i][1] + place_y
-                col = corners[i][0] + piece.x_0 
-                if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
-                    corner_filled[i] = True
-                elif grid[row][col] != 0:
-                    corner_filled[i] = True
+                for i in range(4):
+                    row = corners[i][1] + place_y
+                    col = corners[i][0] + piece.x_0 
+                    if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
+                        corner_filled[i] = True
+                    elif grid[row][col] != 0:
+                        corner_filled[i] = True
 
-            if sum(corner_filled) >= 3:
-                is_tspin = True
-            
-            if not (corner_filled[piece.rotation] and corner_filled[(piece.rotation + 1) % 4]):
-                is_mini = True
+                if sum(corner_filled) >= 3:
+                    is_tspin = True
+                
+                if not (corner_filled[piece.rotation] and corner_filled[(piece.rotation + 1) % 4]):
+                    is_mini = True
+        
+            # Check for s2 all spins:
+            elif self.ruleset == 's2':
+                # If a piece can't move in any direction it is a mini
+                offsets = [[-1, 0], [1, 0], [0, -1], [0, 1]]
+                for x_offset, y_offset in offsets:
+                    if self.can_move(piece, x_offset=x_offset, y_offset=y_offset):
+                        break
+                else:
+                    is_mini = True
 
         # Place the pieces and check rows that minos will be placed
         for col, row in piece.get_mino_coords(piece.x_0, place_y, piece.rotation, piece.type):
@@ -230,7 +241,7 @@ class Player:
     def reset(self):
         self.board = Board()
         self.queue = Queue()
-        self.stats = Stats()
+        self.stats = Stats(self.ruleset)
         self.piece = None
         self.held_piece = None
         self.garbage_to_receive = []
@@ -238,7 +249,7 @@ class Player:
 
     # AI methods
     def copy(self):
-        new_player = Player()
+        new_player = Player(self.ruleset)
         
         new_player.board = self.board.copy()
         new_player.queue = self.queue.copy()
@@ -383,14 +394,14 @@ class Player:
                             self.draw_coords[1] + N_BUFFER + (ROWS - GRID_ROWS) * MINO_SIZE + stat['location'][1]))
 
 class Human(Player):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, config) -> None:
+        super().__init__(config)
         self.draw_coords = (0, 0)
         self.color = 0
 
 class AI(Player):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, config) -> None:
+        super().__init__(config)
         self.draw_coords = (WIDTH/2, 0)
         self.color = 1
 

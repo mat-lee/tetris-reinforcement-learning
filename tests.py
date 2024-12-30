@@ -15,6 +15,9 @@ def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_ti
     wins = np.zeros((2), dtype=int)
     flip_color = False
 
+    if config_1.ruleset != config_2.ruleset:
+        raise NotImplementedError("Ruleset's aren't equal")
+
     for i in range(games):
         if show_game == True:
             if screen == None:
@@ -25,11 +28,9 @@ def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_ti
             else:
                 title = f'{network_2_title} | {wins[1]} vs {wins[0]} | {network_1_title}'
             pygame.display.set_caption(title)
+            pygame.event.get()
 
-            for event in pygame.event.get():
-                pass
-
-        game = Game()
+        game = Game(config_1.ruleset)
         game.setup()
 
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
@@ -52,10 +53,10 @@ def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_ti
         winner = game.winner
         if winner == -1:
             wins += 0.5
-        else: 
-            if flip_color:
-                winner = 1 - winner
+        elif not flip_color: # ARGGHGHHHH
             wins[winner] += 1
+        else: # If the color is flipped, nn_1 is playing for player 2, and nn_2 is playing for player 1
+            wins[1 - winner] += 1
 
         flip_color = not flip_color
 
@@ -145,8 +146,9 @@ def make_piece_starting_row():
 
 def test_dirichlet_noise() -> None:
     # Finding different values of dirichlet alpha affect piece decisions
-    alpha_values = [1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001]
+    # alpha_values = [0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
     # alpha_values = [0.4, 0.3, 0.2, 0.1]
+    alpha_values = [0.0001]
     alpha_values = {alpha: {'n_same': 0, 'n_total': 0} for alpha in alpha_values}
 
     use_dirichlet_s=False
@@ -157,7 +159,7 @@ def test_dirichlet_noise() -> None:
     interpreter = get_interpreter(model)
 
     for _ in range(10):
-        game = Game()
+        game = Game(default_config.ruleset)
         game.setup()
 
         while game.is_terminal == False:
@@ -235,7 +237,7 @@ def time_move_matrix(algo) -> None:
     START = time.time()
 
     for _ in range(num_games):
-        game = Game()
+        game = Game(config.ruleset)
         game.setup()
 
         while game.is_terminal == False:
@@ -259,7 +261,7 @@ def time_architectures(var, values) -> None:
         setattr(config, var, value)
         network = get_interpreter(instantiate_network(config,show_summary=False, save_network=False))
 
-        game = Game()
+        game = Game(config.ruleset)
         game.setup()
 
         START = time.time()
@@ -270,7 +272,7 @@ def time_architectures(var, values) -> None:
     print(scores)
 
 def profile_game() -> None:
-    game = Game()
+    game = Game(Config().ruleset)
     game.setup()
 
     config = Config()
@@ -304,7 +306,7 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     test_moves = 0
 
     for _ in range(num_games):
-        game = Game()
+        game = Game(config.ruleset)
         game.setup()
 
         while game.is_terminal == False:
@@ -320,25 +322,82 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     
     print(test_moves / truth_moves * 100)
 
+def visualize_piece_placements(game=None, moves=None):
+    if moves == None:
+        game = Game(Config().ruleset)
+        game.setup()
+
+        # Place a piece to make it more interesting
+        for i in range(10):
+            piece = game.players[game.turn].piece
+            game.make_move((policy_piece_to_index[piece.type][0], 0, piece.x_0, game.players[game.turn].ghost_y))
+        
+        game.players[0].board.grid = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 'Z', 'Z', 0, 0, 0],
+[0, 0, 0, 0, 0, 0, 'Z', 'Z', 0, 0],
+[0, 0, 0, 0, 0, 'S', 'S', 0, 0, 0],
+[0, 0, 0, 0, 'S', 'S', 0, 0, 0, 0],
+[0, 0, 0, 0, 0, 'I', 'I', 'I', 'I', 0],
+[0, 0, 'O', 'O', 0, 0, 0, 0, 'Z', 0],
+['J', 0, 'O', 'O', 0, 'L', 0, 'Z', 'Z', 0],
+['J', 'J', 'J', 'L', 'L', 'L', 0, 'Z', 0, 0]]
+
+        game.players[0].queue.pieces = ["T"]
+        game.players[0].create_piece("J")
+
+        move_matrix = get_move_matrix(game.players[game.turn], algo='brute-force')
+        moves = get_move_list(move_matrix, np.ones(shape=POLICY_SHAPE))
+
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption('Tetris')
+    # Need to iterate through pygame events to initialize screen
+    pygame.event.get()
+
+    moves_0 = [move for move in moves if move[1][1] == 0]
+    moves_1 = [move for move in moves if move[1][1] == 1]
+
+    for _, move in moves_0:
+        game_copy = game.copy()
+        game_copy.make_move(move)
+
+        game_copy.show(screen)
+        pygame.display.update()
+
+        time.sleep(0.3)
+        print("z")
+    
+    time.sleep(1.5)
+
+    for _, move in moves_1:
+        game_copy = game.copy()
+        game_copy.make_move(move)
+
+        game_copy.show(screen)
+        pygame.display.update()
+
+        time.sleep(1.0)
+        print("o")
+
 def test_reflected_policy():
     # Testing if reflecting pieces, grids, and policy are accurate
-    def visualize_piece_placements(game, moves):
-        screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption('Tetris')
-        # Need to iterate through pygame events to initialize screen
-        for event in pygame.event.get():
-            pass
-
-        for policy, move in moves:
-            game_copy = game.copy()
-            game_copy.make_move(move)
-
-            game_copy.show(screen)
-            pygame.display.update()
-
-            time.sleep(0.3)
-
-    game = Game()
+    game = Game(Config().ruleset)
     game.setup()
 
     # Place a piece to make it more interesting
@@ -571,7 +630,7 @@ def test_high_depth_replay(network, max_iter):
     pygame.display.set_caption(f"Search Amount {max_iter} Replay Game")
     pygame.event.get() # Required for visuals?
 
-    game = Game()
+    game = Game(c.ruleset)
     game.setup()
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
@@ -617,13 +676,15 @@ def test_convert_data_and_train_4_7_to_4_8():
         set = ujson.load(open(f"{path}/{filename}", 'r'))
         # Manipulate the set
         '''
-            grids[0], pieces[0], b2b[0], combo[0], garbage[0],
-            grids[1], pieces[1], b2b[1], combo[1], garbage[1],
-            color
-
             grids[0], pieces[0], b2b[0], combo[0], lines_cleared[0], lines_sent[0], 
             grids[1], pieces[1], b2b[1], combo[1], lines_cleared[1], lines_sent[1], 
             color, pieces_placed
+
+            to
+
+            grids[0], pieces[0], b2b[0], combo[0], garbage[0],
+            grids[1], pieces[1], b2b[1], combo[1], garbage[1],
+            color
         '''
 
         for move in set:
@@ -645,11 +706,12 @@ def test_convert_data_and_train_4_7_to_4_8():
     new_network.save(f"{directory_path}/models/TESTS/{i}.keras")
     
 
-c=Config(model='keras', shuffle=True, MAX_ITER=1)
+c=Config(MAX_ITER=1)
 
 # keras.utils.set_random_seed(937)
 
-# data = load_data(data_ver=1.3, last_n_sets=0)
+data = load_data(c)
+
 #### Setting learning rate DOES NOT WORK
 
 # test_architectures(DefaultConfig, nn_gens=[gen_alphasame_nn, test_10], data=data, num_games=200, visual=True)
@@ -659,6 +721,7 @@ c=Config(model='keras', shuffle=True, MAX_ITER=1)
 
 # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
 # test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
+test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 0]], num_games=200, data=data, load_from_best_model=False, visual=True)
 # test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
 # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
@@ -671,13 +734,16 @@ c=Config(model='keras', shuffle=True, MAX_ITER=1)
 # time_move_matrix('faster-but-loss')
 
 
-test_dirichlet_noise()
+# test_dirichlet_noise()
 # test_older_vs_newer_networks(14, 28)
 
 
-# test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=80000)
+# test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=16000)
 # test_convert_data_and_train_4_7_to_4_8()
 
+# visualize_piece_placements()
+# test_dirichlet_noise()
+# test_parameters("FpuStrategy", ['reduction', 'absolute'], num_games=200, data=data, load_from_best_model=True, visual=True)
 
 # Command for running python files
 # This is for running many tests at the same time

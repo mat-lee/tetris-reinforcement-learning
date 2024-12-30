@@ -2,7 +2,7 @@
 import math
 
 class Stats:
-    def __init__(self):
+    def __init__(self, ruleset):
         self.pieces = 0
         self.lines_cleared = 0
         self.b2b = -1
@@ -11,8 +11,10 @@ class Stats:
         self.lines_sent = 0
         self.attack_text = ''
 
+        self.ruleset = ruleset
+
     def copy(self):
-        new_stats = Stats()
+        new_stats = Stats(self.ruleset)
         new_stats.pieces = self.pieces
         new_stats.lines_cleared = self.lines_cleared
         new_stats.b2b = self.b2b
@@ -42,43 +44,87 @@ class Stats:
         # Returns attack + functions as update stats for now
         attack = 0
 
-        # I can get a general formula for attacks larger than 1 row
-        if rows_cleared == 0:
-            self.combo = 0
-        else:
-            is_b2b = False
-            if rows_cleared == 4 or is_tspin == True:
-                is_b2b = True
-            
-            if is_b2b == True:
-                self.b2b += 1
+        if self.ruleset == 's1':
+            # I can get a general formula for attacks larger than 1 row
+            if rows_cleared == 0:
+                self.combo = 0
             else:
-                self.b2b = -1
-            
-            self.update_b2b_level()
-
-            if rows_cleared == 1:
-                if is_tspin == False:
-                    self.b2b = -1
-                    attack = math.floor(0.5 + 0.25 * self.combo) ### formula exception
+                is_b2b = False
+                if rows_cleared == 4 or is_tspin == True:
+                    is_b2b = True
+                
+                if is_b2b == True:
+                    self.b2b += 1
                 else:
-                    if is_mini == True:
-                        if self.b2b <= 0 and self.b2b_level <= 0:
-                            attack = math.floor(0.5 + 0.25 * self.combo) ### formula exception
-                        else:
-                            attack = math.floor(self.b2b_level * (1 + 0.25 * self.combo)) ### formula exception
+                    self.b2b = -1
+                
+                self.update_b2b_level()
+
+                if rows_cleared == 1:
+                    if is_tspin == False:
+                        self.b2b = -1
+                        attack += math.floor(0.5 + 0.25 * self.combo) ### formula exception
                     else:
-                        attack = math.floor((2 + self.b2b_level) * (1 + 0.25 * self.combo))
-            
-            else: attack += math.floor((1 + 0.25 * self.combo) * 
-                                        (2 * rows_cleared * is_tspin * (-3/4 * is_mini + 1)
-                                            + 2**(rows_cleared-2) * (1 - is_tspin)
-                                            + self.b2b_level * (is_tspin or rows_cleared == 4))) # General formula for 2-4 rows cleared
+                        if is_mini == True:
+                            if self.b2b <= 0 and self.b2b_level <= 0:
+                                attack += math.floor(0.5 + 0.25 * self.combo) ### formula exception
+                            else:
+                                attack += math.floor(self.b2b_level * (1 + 0.25 * self.combo)) ### formula exception
+                        else:
+                            attack += math.floor((2 + self.b2b_level) * (1 + 0.25 * self.combo))
+                
+                else: attack += math.floor((1 + 0.25 * self.combo) * 
+                                            (2 * rows_cleared * is_tspin * (-3/4 * is_mini + 1)
+                                                + 2**(rows_cleared-2) * (1 - is_tspin)
+                                                + self.b2b_level * (is_tspin or rows_cleared == 4))) # General formula for 2-4 rows cleared
 
-            self.combo += 1
+                self.combo += 1
 
-            if is_all_clear:
-                attack += 10
+                if is_all_clear:
+                    attack += 10
+        
+        elif self.ruleset == 's2':
+            # I can get a general formula for attacks larger than 1 row
+            if rows_cleared == 0:
+                self.combo = 0
+            else:
+                is_b2b = False
+                if is_tspin == True or is_mini == True or rows_cleared == 4:
+                    is_b2b = True
+                
+                if is_b2b == True:
+                    self.b2b += 1
+
+                elif is_all_clear: # Don't lower b2b if all clear
+                    attack += 5
+                    self.b2b += 1
+
+                else:
+                    # Surge
+                    if self.b2b >= 4:
+                        attack += self.b2b
+                    self.b2b = -1
+                
+                self.update_b2b_level()
+
+                if rows_cleared == 1:
+                    if is_tspin == False:
+                        attack += math.floor(0.5 + 0.25 * self.combo) ### formula exception
+                    else:
+                        if is_mini == True:
+                            if self.b2b <= 0 and self.b2b_level <= 0:
+                                attack += math.floor(0.5 + 0.25 * self.combo) ### formula exception
+                            else:
+                                attack += math.floor(min(max(self.b2b_level, 0), 1) * (1 + 0.25 * self.combo)) ### formula exception
+                        else:
+                            attack += math.floor(2 + min(max(self.b2b_level, 0), 1) * (1 + 0.25 * self.combo))
+                
+                else: attack += math.floor((1 + 0.25 * self.combo) * 
+                                            (2 * rows_cleared * is_tspin * (-3/4 * is_mini + 1)
+                                                + 2**(rows_cleared-2) * (1 - is_tspin)
+                                                + min(max(self.b2b_level, 0), 1) * is_b2b)) # General formula for 2-4 rows cleared
+
+                self.combo += 1
 
         self.lines_sent += attack
         self.lines_cleared += rows_cleared

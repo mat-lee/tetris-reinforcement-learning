@@ -13,6 +13,7 @@ class Piece:
         self.type = type
         self.rotation = 0 # 1 is right, 2 is 180, 3 is left
         self.coordinates = [[], [], [], []]
+        self.was_just_rotated = False # If the last input on the piece was a rotation
 
     def get_spawn_location(self):
         # Move a newly created "O" piece to the right

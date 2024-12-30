@@ -179,7 +179,8 @@ def create_input_layers():
               (1,), 
               (1,), 
               (1,),
-              (1,)] # Color (Whether you had first move or not)
+              (1,), # Color (Whether you had first move or not)
+              (1,)] # Active player pieces placed mod 7
 
     inputs = []
     active_features = []
@@ -196,13 +197,13 @@ def create_input_layers():
 
         num_inputs = len(shapes)
         # Active player's features
-        if i < (num_inputs - 1) / 2: # Ignore last input, and take the first half
+        if i < (num_inputs - 2) / 2: # Ignore last 2 inputs, and take the first half
             if shape == shapes[0]:
                 active_grid = input
             else:
                 active_features.append(keras.layers.Flatten()(input))
         # Other player's features
-        elif i < (num_inputs - 1): # Ignore last input, take remaining half
+        elif i < (num_inputs - 2): # Ignore last 2 inputs, take remaining half
             if shape == shapes[0]:
                 opponent_grid = input
             else:
@@ -392,6 +393,154 @@ def gen_alphasame_nn(config) -> keras.Model:
 
     # Combine with other features
     x = keras.layers.Concatenate()([a_grid, o_grid, *non_player_features])
+
+    value_output = ValueHead()(x)
+    policy_output = PolicyHead()(x)
+
+    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+
+    return model
+
+def base_nn(config) -> keras.Model:
+    def ValueHead():
+        # Returns value; found at the end of the network
+        def inside(x):
+            x = keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'))(x)
+
+            return x
+        return inside
+
+    def PolicyHead():
+        # Returns policy list; found at the end of the network
+        def inside(x):
+            # Generate probability distribution
+            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+
+            return x
+        return inside
+
+    # The network uses the same neural network to apply convolutions to both grids
+    def ResidualLayer():
+        # Uses skip conections
+        def inside(in_1, in_2):
+            batch_1 = keras.layers.BatchNormalization()
+            relu_1 = keras.layers.Activation('relu')
+            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_2 = keras.layers.BatchNormalization()
+            dropout_1 = keras.layers.Dropout(config.dropout)
+            relu_2 = keras.layers.Activation('relu')
+            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+
+            out_1 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_1)))))))
+            out_2 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_2)))))))
+
+            out_1 = keras.layers.Add()([in_1, out_1])
+            out_2 = keras.layers.Add()([in_2, out_2])
+
+            return out_1, out_2
+        return inside
+
+    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
+
+    # Start with a convolutional layer
+    # Because each grid needs the same network, use the same layers for each side
+    conv_1 = keras.layers.Conv2D(config.filters, (5, 5), padding="same")
+    
+    a_grid = conv_1(a_grid)
+    o_grid = conv_1(o_grid)
+
+    # Take other features and use a dense layer to add channelwise
+    dense_1 = keras.layers.Dense(config.filters)
+
+    a_features = keras.layers.Concatenate()(a_features)
+    o_features = keras.layers.Concatenate()(o_features)
+
+    a_features = dense_1(a_features)
+    o_features = dense_1(o_features)
+
+    a_biases = keras.layers.Reshape((1, 1, config.filters))(a_features)
+    o_biases = keras.layers.Reshape((1, 1, config.filters))(o_features)
+
+    a_grid = keras.layers.Add()([a_grid, a_biases])
+    o_grid = keras.layers.Add()([o_grid, o_biases])
+
+    # 10 residual layers
+    for _ in range(config.blocks):
+        residual_layer = ResidualLayer()
+        a_grid, o_grid = residual_layer(a_grid, o_grid)
+    
+    batch_1 = keras.layers.BatchNormalization()
+    relu_1 = keras.layers.Activation('relu')
+
+    a_grid = relu_1(batch_1(a_grid))
+    o_grid = relu_1(batch_1(o_grid))
+    
+    # 1x1 Kernel
+    kernel_1 = keras.layers.Conv2D(config.kernels, (1, 1))
+    a_grid = kernel_1(a_grid)
+    o_grid = kernel_1(o_grid)
+
+    flatten_1 = keras.layers.Flatten()
+    a_grid = flatten_1(a_grid)
+    o_grid = flatten_1(o_grid)
+
+    batch_2 = keras.layers.BatchNormalization()
+    relu_2 = keras.layers.Activation('relu')
+    a_grid = relu_2(batch_2(a_grid))
+    o_grid = relu_2(batch_2(o_grid))
+
+    # Shrink opponent grid info
+    o_grid = keras.layers.Dense(config.o_side_neurons)(o_grid)
+    o_grid = keras.layers.BatchNormalization()(o_grid)
+    o_grid = keras.layers.Activation('relu')(o_grid)
+
+    # Combine with other features
+    x = keras.layers.Concatenate()([a_grid, o_grid, *non_player_features])
+
+    value_output = ValueHead()(x)
+    policy_output = PolicyHead()(x)
+
+    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+
+    return model
+
+def simple_nn(config) -> keras.Model:
+    def ValueHead():
+        # Returns value; found at the end of the network
+        def inside(x):
+            x = keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'))(x)
+
+            return x
+        return inside
+
+    def PolicyHead():
+        # Returns policy list; found at the end of the network
+        def inside(x):
+            # Generate probability distribution
+            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+
+            return x
+        return inside
+
+    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
+
+    flat = keras.layers.Flatten()
+
+    a_grid = flat(a_grid)
+    o_grid = flat(o_grid)
+    a_features = keras.layers.Concatenate()(a_features)
+    o_features = keras.layers.Concatenate()(o_features)
+    non_player_features = keras.layers.Concatenate()(non_player_features)
+
+    x = keras.layers.Concatenate()([a_grid, o_grid, a_features, o_features, non_player_features])
+
+    x = keras.layers.Dense(32)(x)
+    x = keras.layers.BatchNormalization()(x)
+    x = keras.layers.Activation('relu')(x)
+
+    x = keras.layers.Dense(32)(x)
+    x = keras.layers.BatchNormalization()(x)
+    x = keras.layers.Activation('relu')(x)
 
     value_output = ValueHead()(x)
     policy_output = PolicyHead()(x)

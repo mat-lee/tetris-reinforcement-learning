@@ -2,6 +2,9 @@
  - Fix fake t spins
 
 **Todo:**
+ - FIX LOSS
+ - Fix reduction fpu if node is root and dirichlet noise is on
+ - Clean up code
  - To main, add switch boards and visualize AI moves
  - Add chance nodes/address randomness in MCTS
  - Investigate combo not sending the correct number of lines (?)
@@ -82,6 +85,22 @@ Miscellaneous
 Data:
 1.5 - Doubled training data, removed augment data
 1.6 - Increased data window length
+1.7 - Switched to S2 Ruleset:
+ - Added was_just_rotated to matrix
+   - Policy size: (19, 25, 11) -> (19, 2, 25, 11)
+ - Changed algorithm used
+   - faster-but-loss -> brute-force
+ - Added pieces % 7 to data
 
 Models:
 4.9 - Increased data window length
+5.0 - Faulty: Switched to S2 Ruleset: 
+ - Created base_nn, a copy of alpha_same but uses 1.7 policy size
+ - Switched networks
+   - alpha_same -> base_nn
+5.1 - Removed policy from loss weights, turned off dirichlet alpha, playout cap randomization, and forced policy target pruning
+
+
+
+
+ When you instantiate a game, set the ruleset

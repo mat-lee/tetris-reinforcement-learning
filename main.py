@@ -12,7 +12,7 @@ import pstats
 
 import random
 
-DefaultConfig = Config(training=False, model='keras')
+DefaultConfig = Config(training=False,MAX_ITER=160, model='keras')
 
 # Load neural network
 model = load_best_model(DefaultConfig)
@@ -24,7 +24,7 @@ class Main:
         pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption('Tetris')
-        self.game = Game()
+        self.game = Game(DefaultConfig.ruleset)
         self.mover = Mover()
 
     def mainloop(self):
@@ -68,15 +68,11 @@ class Main:
                                 game.human_player.move_down()
                                 mover.start_down()
                             elif event.key == k_hard_drop:
-                                move = (game.human_player.piece.type, 
-                                        game.human_player.piece.x_0,
-                                        game.human_player.piece.y_0,
-                                        game.human_player.piece.rotation)
-                                game.make_move(move)
+                                game.place()
                             elif event.key == k_make_ai_move:
                                 if game.players[1].game_over == False:
                                     move, _, _ = MCTS(DefaultConfig, game, interpreter)
-                                    game.make_move(move=move)
+                                    game.place()
                             elif event.key == k_rotate_cw:
                                 game.human_player.try_wallkick(1)
                             elif event.key == k_rotate_180:
@@ -92,6 +88,8 @@ class Main:
                                 game.players[1].garbage_to_receive.append(random.randint(0, 9))
                             elif event.key == k_switch:
                                 game.players[0].board, game.players[1].board = game.players[1].board, game.players[0].board
+                            elif event.key == k_print_board:
+                                print(game.players[game.turn].board.grid)
 
                         # On key release
                         elif event.type == pygame.KEYUP:
