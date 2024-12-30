@@ -42,7 +42,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 5.1
+MODEL_VERSION = 5.2
 DATA_VERSION = 1.7
 
 # Where data and models are saved
@@ -87,7 +87,7 @@ class Config():
         augment_data=False, # Turned off due to the very slight differences in flipped boards
         learning_rate=0.001, 
         # loss_weights=[1, 19/POLICY_SIZE], # keras categorical cross entropy loss sums the cross entropy for each value in the policy, then divides by batch size(19?), so divide further by a factor of 2*26*11
-        loss_weights=[1, 0],
+        loss_weights=[1, 1],
         epochs=1, 
         batch_size=64,
         shuffle=True,
@@ -98,12 +98,12 @@ class Config():
         save_all=False,
 
         MAX_ITER=160, # 1600 ##########
-        use_playout_cap_randomization=False,
+        use_playout_cap_randomization=True,
         playout_cap_chance=0.25,
         playout_cap_mult=5,
 
-        use_dirichlet_noise=False,
-        DIRICHLET_ALPHA=0.0,
+        use_dirichlet_noise=True,
+        DIRICHLET_ALPHA=0.003,
         DIRICHLET_S=25,
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
@@ -111,7 +111,7 @@ class Config():
         FpuStrategy='reduction', # 'reduction' subtracts FpuValue from parent eval, 'absolute' uses FpuValue
         FpuValue=0.4,
 
-        use_forced_playouts_and_policy_target_pruning=False,
+        use_forced_playouts_and_policy_target_pruning=True,
         CForcedPlayout=2,
 
         use_root_softmax=True,
