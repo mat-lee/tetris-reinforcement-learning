@@ -447,28 +447,7 @@ def test_parameters(
     for value, config in zip(values, configs):
         setattr(config, var, value)
 
-    # Networks
-    if load_from_best_model:
-        networks = [load_best_model(config) for config in configs]
-    else:
-        networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
-
-    if data != None:
-        for config, network in zip(configs, networks):
-            for set in data:
-                train_network_keras(config, network, set)
-        
-        del data
-        gc.collect()
-
-    # Networks -> interpreters
-    interpreters = [get_interpreter(network) for network in networks]
-
-    print(battle_royale(interpreters, 
-                        configs, 
-                        [str(value) for value in values], 
-                        num_games,
-                        visual=visual))
+    test_configs(configs, num_games, data=data, load_from_best_model=load_from_best_model, visual=visual)
 
 def test_configs(
     configs,
@@ -721,7 +700,7 @@ data = load_data(c)
 
 # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
 # test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
-test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 0]], num_games=200, data=data, load_from_best_model=False, visual=True)
+# test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 0]], num_games=200, data=data, load_from_best_model=False, visual=True)
 # test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
 # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
@@ -738,7 +717,7 @@ test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 0]], num_games=200, da
 # test_older_vs_newer_networks(14, 28)
 
 
-# test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=16000)
+# test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=1600)
 # test_convert_data_and_train_4_7_to_4_8()
 
 # visualize_piece_placements()
