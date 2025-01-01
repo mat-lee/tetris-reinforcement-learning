@@ -146,9 +146,9 @@ def make_piece_starting_row():
 
 def test_dirichlet_noise() -> None:
     # Finding different values of dirichlet alpha affect piece decisions
-    # alpha_values = [0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
+    alpha_values = [0.03, 0.01, 0.003, 0.001, 0.0003]
     # alpha_values = [0.4, 0.3, 0.2, 0.1]
-    alpha_values = [0.0001]
+    # alpha_values = [0.0001]
     alpha_values = {alpha: {'n_same': 0, 'n_total': 0} for alpha in alpha_values}
 
     use_dirichlet_s=False
@@ -466,11 +466,7 @@ def test_configs(
 
     if data != None:
         for config, network in zip(configs, networks):
-            for set in data:
-                train_network_keras(config, network, set)
-        
-        del data
-        gc.collect()
+            load_data_and_train_model(config, network, data)
 
     # Networks -> interpreters
     interpreters = [get_interpreter(network) for network in networks]
@@ -488,6 +484,7 @@ def test_architectures(
     num_games,
     visual=True
 ):
+    raise Exception("Not up to date!")
     # Configs aren't being changed here but the list is needed for battle royale
     configs = [copy.deepcopy(config) for _ in range(len(nn_gens))]
     
@@ -525,6 +522,7 @@ def test_data_parameters(
     load_from_best_model: bool = False,
     visual = True
 ):
+    raise Exception("Not up to date!")
     ## Grid search battling different parameters
     screen = None
     if visual == True:
@@ -700,7 +698,7 @@ data = load_data(c)
 
 # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
 # test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
-# test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 0]], num_games=200, data=data, load_from_best_model=False, visual=True)
+test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 1]], num_games=200, data=data, load_from_best_model=False, visual=True)
 # test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
 # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 

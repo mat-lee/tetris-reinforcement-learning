@@ -42,7 +42,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 5.2
+MODEL_VERSION = 5.3
 DATA_VERSION = 1.8
 
 # Where data and models are saved
@@ -103,7 +103,7 @@ class Config():
         playout_cap_mult=5,
 
         use_dirichlet_noise=True,
-        DIRICHLET_ALPHA=0.003,
+        DIRICHLET_ALPHA=0.0003,
         DIRICHLET_S=25,
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
