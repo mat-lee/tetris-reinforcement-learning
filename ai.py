@@ -86,8 +86,8 @@ class Config():
         data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
         augment_data=False, # Turned off due to the very slight differences in flipped boards
         learning_rate=0.001, 
-        # loss_weights=[1, 19/POLICY_SIZE], # keras categorical cross entropy loss sums the cross entropy for each value in the policy, then divides by batch size(19?), so divide further by a factor of 2*26*11
-        loss_weights=[1, 1],
+        loss_weights=[1, 19/POLICY_SIZE], # keras categorical cross entropy loss sums the cross entropy for each value in the policy, then divides by batch size(19?), so divide further by a factor of 2*26*11
+        # loss_weights=[1, 1],
         epochs=1, 
         batch_size=64,
         shuffle=True,
@@ -403,13 +403,6 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
 
                 child_data.policy = child_data.policy * (1 - config.DIRICHLET_EXPLORATION) + noise * config.DIRICHLET_EXPLORATION
                 post_noise_policy.append(child_data.policy)
-            
-            # fig, axs = plt.subplots(2)
-            # fig.suptitle('Policy before and after dirichlet noise')
-            # axs[0].plot(pre_noise_policy)
-            # axs[1].plot(post_noise_policy)
-            # plt.savefig(f"{directory_path}/policy_3_7_1")
-            # print("saved")
 
         # When you make a make a move and evaluate it, the turn flips so
         # the evaluation is from the perspective of the other player, 

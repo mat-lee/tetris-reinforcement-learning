@@ -197,6 +197,48 @@ def test_dirichlet_noise() -> None:
 
     return percent_dict
 
+def view_policy_with_dirichlet_noise() -> None:
+    # Creates a graph of the policy distribution before and after dirichlet noise is applied
+
+    def get_policy(tree):
+        res = []
+
+        root = tree.get_node("root")
+        child_ids = root.successors(tree.identifier)
+
+        for child_id in child_ids:
+            child = tree.get_node(child_id)
+            res.append(child.data.policy)
+        
+        return res
+
+    c = Config(MAX_ITER=1, 
+               training=True, 
+               use_playout_cap_randomization=False, 
+               use_forced_playouts_and_policy_target_pruning=False, 
+               use_dirichlet_noise=False)
+
+    no_noise_config = c.copy()
+    noisy_config = c.copy()
+    noisy_config.use_dirichlet_noise = True
+
+    g = Game(c.ruleset)
+    g.setup()
+
+    interpreter = get_interpreter(load_best_model(c))
+    _, no_noise_tree, _ = MCTS(no_noise_config, g, interpreter)
+    _, noisy_tree, _ = MCTS(noisy_config, g, interpreter)
+
+    pre_noise_policy = get_policy(no_noise_tree)
+    post_noise_policy = get_policy(noisy_tree)
+
+    fig, axs = plt.subplots(2)
+    fig.suptitle('Policy before and after dirichlet noise')
+    axs[0].plot(pre_noise_policy)
+    axs[1].plot(post_noise_policy)
+    plt.savefig(f"{directory_path}/policy_{c.ruleset}_{MODEL_VERSION}.png")
+    print("Saved")
+
 def time_move_matrix(algo) -> None:
     # Test the game speed
     # Returns the average speed of each move over n games
@@ -687,7 +729,7 @@ c=Config(MAX_ITER=1)
 
 # keras.utils.set_random_seed(937)
 
-data = load_data(c)
+# data = load_data(c)
 
 #### Setting learning rate DOES NOT WORK
 
@@ -698,7 +740,7 @@ data = load_data(c)
 
 # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
 # test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
-test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 1]], num_games=200, data=data, load_from_best_model=False, visual=True)
+# test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 1]], num_games=200, data=data, load_from_best_model=False, visual=True)
 # test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
 # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
@@ -721,6 +763,8 @@ test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 1]], num_games=200, da
 # visualize_piece_placements()
 # test_dirichlet_noise()
 # test_parameters("FpuStrategy", ['reduction', 'absolute'], num_games=200, data=data, load_from_best_model=True, visual=True)
+
+view_policy_with_dirichlet_noise()
 
 # Command for running python files
 # This is for running many tests at the same time
