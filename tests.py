@@ -70,8 +70,8 @@ def battle_royale(interpreters, configs, names, num_games, visual=True) -> dict:
 
     scores={name: {} for name in names}
 
-    for i in range(len(interpreters)):
-        for j in range(i):
+    for i in range(len(configs)):
+        for j in range(i + 1, len(configs)):
             if i != j:
                 score_1, score_2 = battle_networks_win_loss(interpreters[i], configs[i], 
                                                             interpreters[j], configs[j],
@@ -141,6 +141,17 @@ def make_piece_starting_row():
     
     return res
 
+def get_attribute_list_from_tree(tree, attr):
+    res = []
+
+    root = tree.get_node("root")
+    child_ids = root.successors(tree.identifier)
+
+    for child_id in child_ids:
+        child = tree.get_node(child_id)
+        res.append(getattr(child.data, attr))
+    
+    return res
 
 # ------------------------- Test Functions -------------------------
 
@@ -199,19 +210,6 @@ def test_dirichlet_noise() -> None:
 
 def view_policy_with_dirichlet_noise() -> None:
     # Creates a graph of the policy distribution before and after dirichlet noise is applied
-
-    def get_policy(tree):
-        res = []
-
-        root = tree.get_node("root")
-        child_ids = root.successors(tree.identifier)
-
-        for child_id in child_ids:
-            child = tree.get_node(child_id)
-            res.append(child.data.policy)
-        
-        return res
-
     c = Config(MAX_ITER=1, 
                training=True, 
                use_playout_cap_randomization=False, 
@@ -229,14 +227,36 @@ def view_policy_with_dirichlet_noise() -> None:
     _, no_noise_tree, _ = MCTS(no_noise_config, g, interpreter)
     _, noisy_tree, _ = MCTS(noisy_config, g, interpreter)
 
-    pre_noise_policy = get_policy(no_noise_tree)
-    post_noise_policy = get_policy(noisy_tree)
+    pre_noise_policy = get_attribute_list_from_tree(no_noise_tree, "policy")
+    post_noise_policy = get_attribute_list_from_tree(noisy_tree, "policy")
 
     fig, axs = plt.subplots(2)
     fig.suptitle('Policy before and after dirichlet noise')
     axs[0].plot(pre_noise_policy)
     axs[1].plot(post_noise_policy)
-    plt.savefig(f"{directory_path}/policy_{c.ruleset}_{MODEL_VERSION}.png")
+    plt.savefig(f"{directory_path}/policy_vs_noise_{c.ruleset}_{MODEL_VERSION}.png")
+    print("Saved")
+
+def view_policy_vs_visit_count() -> None:
+    # Creates a graph of the policy distribution before and after dirichlet noise is applied
+    c = Config(MAX_ITER=1600,
+               use_playout_cap_randomization=False, 
+               use_forced_playouts_and_policy_target_pruning=False)
+
+    g = Game(c.ruleset)
+    g.setup()
+
+    interpreter = get_interpreter(load_best_model(c))
+    _, tree, _ = MCTS(c, g, interpreter)
+
+    root_child_n = get_attribute_list_from_tree(tree, "visit_count")
+    root_child_policy = get_attribute_list_from_tree(tree, "policy")
+
+    fig, axs = plt.subplots(2)
+    fig.suptitle('N Compared to policy')
+    axs[0].plot(root_child_n)
+    axs[1].plot(root_child_policy)
+    plt.savefig(f"{directory_path}/policy_vs_n_{c.ruleset}_{MODEL_VERSION}.png")
     print("Saved")
 
 def time_move_matrix(algo) -> None:
@@ -564,7 +584,8 @@ def test_data_parameters(
     load_from_best_model: bool = False,
     visual = True
 ):
-    raise Exception("Not up to date!")
+    print("CHECK CODE!!!")
+    # raise Exception("Not up to date!")
     ## Grid search battling different parameters
     screen = None
     if visual == True:
@@ -744,8 +765,10 @@ c=Config(MAX_ITER=1)
 # test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
 # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
+test_data_parameters("CPUCT", [0.75, 7.5], 0.001, 2, 100, 200, load_from_best_model=False, visual=True)
 # test_data_parameters("DIRICHLET_S", [25, 2500], 0.1, 1, 50, 100, load_from_best_model=True, visual=True)
-# test_data_parameters("FpuValue", [0.1, 0.01], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
+# test_parameters("FpuValue", [0.2, 0.4], num_games=500, load_from_best_model=True, visual=True)
+# test_data_parameters("FpuValue", [0.2, 0.4], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
 
 # test_reflected_policy()
 
@@ -764,7 +787,9 @@ c=Config(MAX_ITER=1)
 # test_dirichlet_noise()
 # test_parameters("FpuStrategy", ['reduction', 'absolute'], num_games=200, data=data, load_from_best_model=True, visual=True)
 
-view_policy_with_dirichlet_noise()
+# view_policy_with_dirichlet_noise()
+# view_policy_vs_visit_count()
+
 
 # Command for running python files
 # This is for running many tests at the same time

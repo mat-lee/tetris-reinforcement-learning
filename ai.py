@@ -252,13 +252,15 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
                 total_branch += 1
 
                 # For each child calculate a score
-                # Polynomial upper confidence trees (PUCT)
+                # Polynomial upper confidence trees (PUCT) formula
                 child_data = tree.get_node(child_id).data
 
-                child_score = child_data.value_avg + config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
+                Q = child_data.value_avg
+                U = config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
+                child_score = Q + U
 
-                Qs.append(child_data.value_avg)
-                Us.append(config.CPUCT* child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count))
+                Qs.append(Q)
+                Us.append(U)
 
                 # Check forced playouts
                 if config.use_forced_playouts_and_policy_target_pruning and config.training: # Only use during training/when configured
@@ -394,15 +396,9 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
 
             noise_distribution = np.random.gamma(d_alpha, 1, number_of_children)
 
-            pre_noise_policy = []
-            post_noise_policy = []
-
             for child_id, noise in zip(child_ids, noise_distribution):
                 child_data = tree.get_node(child_id).data
-                pre_noise_policy.append(child_data.policy)
-
                 child_data.policy = child_data.policy * (1 - config.DIRICHLET_EXPLORATION) + noise * config.DIRICHLET_EXPLORATION
-                post_noise_policy.append(child_data.policy)
 
         # When you make a make a move and evaluate it, the turn flips so
         # the evaluation is from the perspective of the other player, 
