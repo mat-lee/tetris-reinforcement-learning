@@ -745,52 +745,52 @@ def test_convert_data_and_train_4_7_to_4_8():
         
     new_network.save(f"{directory_path}/models/TESTS/{i}.keras")
     
+if __name__ == "__main__":
+    c=Config(MAX_ITER=1)
 
-c=Config(MAX_ITER=1)
+    # keras.utils.set_random_seed(937)
 
-# keras.utils.set_random_seed(937)
+    # data = load_data(c)
 
-# data = load_data(c)
+    #### Setting learning rate DOES NOT WORK
 
-#### Setting learning rate DOES NOT WORK
+    # test_architectures(DefaultConfig, nn_gens=[gen_alphasame_nn, test_10], data=data, num_games=200, visual=True)
 
-# test_architectures(DefaultConfig, nn_gens=[gen_alphasame_nn, test_10], data=data, num_games=200, visual=True)
+    # test_parameters("dropout", values=[0.25, 0.4], num_games=200, data=data, load_from_best_model=False, visual=True)
+    # test_configs([Config(default_model=test_8, l2_reg=1e-2), Config(default_model=test_8, l2_reg=1e-3)], num_games=200, data=data, load_from_best_model=False, visual=True)
 
-# test_parameters("dropout", values=[0.25, 0.4], num_games=200, data=data, load_from_best_model=False, visual=True)
-# test_configs([Config(default_model=test_8, l2_reg=1e-2), Config(default_model=test_8, l2_reg=1e-3)], num_games=200, data=data, load_from_best_model=False, visual=True)
+    # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
+    # test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
+    # test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 1]], num_games=200, data=data, load_from_best_model=False, visual=True)
+    # test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
+    # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
-# test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
-# test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
-# test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 1]], num_games=200, data=data, load_from_best_model=False, visual=True)
-# test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
-# test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
+    test_data_parameters("CPUCT", [0.75, 7.5], 0.001, 2, 100, 200, load_from_best_model=False, visual=True)
+    # test_data_parameters("DIRICHLET_S", [25, 2500], 0.1, 1, 50, 100, load_from_best_model=True, visual=True)
+    # test_parameters("FpuValue", [0.2, 0.4], num_games=500, load_from_best_model=True, visual=True)
+    # test_data_parameters("FpuValue", [0.2, 0.4], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
 
-test_data_parameters("CPUCT", [0.75, 7.5], 0.001, 2, 100, 200, load_from_best_model=False, visual=True)
-# test_data_parameters("DIRICHLET_S", [25, 2500], 0.1, 1, 50, 100, load_from_best_model=True, visual=True)
-# test_parameters("FpuValue", [0.2, 0.4], num_games=500, load_from_best_model=True, visual=True)
-# test_data_parameters("FpuValue", [0.2, 0.4], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
+    # test_reflected_policy()
 
-# test_reflected_policy()
-
-# test_algorithm_accuracy(test_algo='harddrop')
-# time_move_matrix('faster-but-loss')
-
-
-# test_dirichlet_noise()
-# test_older_vs_newer_networks(14, 28)
+    # test_algorithm_accuracy(test_algo='harddrop')
+    # time_move_matrix('faster-but-loss')
 
 
-# test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=1600)
-# test_convert_data_and_train_4_7_to_4_8()
-
-# visualize_piece_placements()
-# test_dirichlet_noise()
-# test_parameters("FpuStrategy", ['reduction', 'absolute'], num_games=200, data=data, load_from_best_model=True, visual=True)
-
-# view_policy_with_dirichlet_noise()
-# view_policy_vs_visit_count()
+    # test_dirichlet_noise()
+    # test_older_vs_newer_networks(14, 28)
 
 
-# Command for running python files
-# This is for running many tests at the same time
-"/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/tests.py"
+    # test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=1600)
+    # test_convert_data_and_train_4_7_to_4_8()
+
+    # visualize_piece_placements()
+    # test_dirichlet_noise()
+    # test_parameters("FpuStrategy", ['reduction', 'absolute'], num_games=200, data=data, load_from_best_model=True, visual=True)
+
+    # view_policy_with_dirichlet_noise()
+    # view_policy_vs_visit_count()
+
+
+    # Command for running python files
+    # This is for running many tests at the same time
+    "/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/tests.py"

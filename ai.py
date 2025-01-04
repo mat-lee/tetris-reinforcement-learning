@@ -42,7 +42,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 5.3
+MODEL_VERSION = 5.4
 DATA_VERSION = 1.8
 
 # Where data and models are saved
@@ -73,7 +73,7 @@ class Config():
         cpool=4,
 
         # Only use one of dropout or l2_reg
-        dropout=0.25,
+        dropout=0.4,
         l2_reg=None, #3e-5,
 
         kernels=1,
@@ -117,7 +117,7 @@ class Config():
         use_root_softmax=True,
         RootSoftmaxTemp=1.1,
         
-        CPUCT=0.75
+        CPUCT=15
     ):
         self.ruleset = ruleset
         self.move_algo = move_algo

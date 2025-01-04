@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import directory_path, MCTS, load_best_model, get_interpreter, Config
+from ai import directory_path, MCTS, get_interpreter, load_best_model, Config
 from const import *
 from game import Game
 from mover import Mover
