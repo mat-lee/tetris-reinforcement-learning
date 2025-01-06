@@ -8,6 +8,7 @@ from skopt.utils import use_named_args
 param_space = [
     Real(0.0, 0.9, name='dropout'),
     Real(0.0, 0.1, name='policy_loss_weight'),
+    Real(0.0, 0.3, name='DIRICHLET_ALPHA'),
     # Categorical([False, True], name='use_playout_cap_randomization'),
     # Categorical(['reduction', 'absolute'], name='FpuStrategy'),
     # Real(0.0, 1.0, name='FpuValue'),
@@ -16,9 +17,9 @@ param_space = [
     Real(1, 100, name='CPUCT'),
 ]
 
-training_games = 25
+training_games = 1
 training_loops = 2
-eval_games = 50
+eval_games = 2
 visual = True
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 i = 0
@@ -71,3 +72,4 @@ result = gp_minimize(
 
 print(f"Best Parameters: {result.x}")
 print(f"Best Score: {-result.fun}")  # Negate the score to interpret correctly
+print([print(x) for x in result.x_iters])

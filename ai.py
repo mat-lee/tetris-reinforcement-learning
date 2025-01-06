@@ -42,7 +42,7 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 5.4
+MODEL_VERSION = 5.5
 DATA_VERSION = 1.8
 
 # Where data and models are saved
@@ -73,7 +73,7 @@ class Config():
         cpool=4,
 
         # Only use one of dropout or l2_reg
-        dropout=0.4,
+        dropout=0.5,
         l2_reg=None, #3e-5,
 
         kernels=1,
@@ -86,7 +86,7 @@ class Config():
         data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
         augment_data=False, # Turned off due to the very slight differences in flipped boards
         learning_rate=0.001, 
-        loss_weights=[1, 19/POLICY_SIZE], # keras categorical cross entropy loss sums the cross entropy for each value in the policy, then divides by batch size(19?), so divide further by a factor of 2*26*11
+        loss_weights=[1, 0.02], # keras categorical cross entropy loss sums the cross entropy for each value in the policy, then divides by batch size(19?), so divide further by a factor of 2*26*11
         # loss_weights=[1, 1],
         epochs=1, 
         batch_size=64,
@@ -117,7 +117,7 @@ class Config():
         use_root_softmax=True,
         RootSoftmaxTemp=1.1,
         
-        CPUCT=15
+        CPUCT=60
     ):
         self.ruleset = ruleset
         self.move_algo = move_algo

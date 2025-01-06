@@ -765,7 +765,7 @@ if __name__ == "__main__":
     # test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
     # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
-    test_data_parameters("CPUCT", [0.75, 7.5], 0.001, 2, 100, 200, load_from_best_model=False, visual=True)
+    # test_data_parameters("CPUCT", [0.75, 7.5], 0.001, 2, 100, 200, load_from_best_model=False, visual=True)
     # test_data_parameters("DIRICHLET_S", [25, 2500], 0.1, 1, 50, 100, load_from_best_model=True, visual=True)
     # test_parameters("FpuValue", [0.2, 0.4], num_games=500, load_from_best_model=True, visual=True)
     # test_data_parameters("FpuValue", [0.2, 0.4], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
@@ -776,7 +776,7 @@ if __name__ == "__main__":
     # time_move_matrix('faster-but-loss')
 
 
-    # test_dirichlet_noise()
+    test_dirichlet_noise()
     # test_older_vs_newer_networks(14, 28)
 
 
