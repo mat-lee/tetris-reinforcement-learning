@@ -6,9 +6,9 @@ from skopt.space import Real, Integer, Categorical
 from skopt.utils import use_named_args
 
 param_space = [
-    Real(0.0, 0.9, name='dropout'),
-    Real(0.0, 0.1, name='policy_loss_weight'),
-    Real(0.0, 0.3, name='DIRICHLET_ALPHA'),
+    # Real(0.0, 0.9, name='dropout'),
+    Real(0.0, 1.0, name='policy_loss_weight'),
+    Real(0.0, 1.0, name='DIRICHLET_ALPHA'),
     # Categorical([False, True], name='use_playout_cap_randomization'),
     # Categorical(['reduction', 'absolute'], name='FpuStrategy'),
     # Real(0.0, 1.0, name='FpuValue'),
@@ -17,9 +17,9 @@ param_space = [
     Real(1, 100, name='CPUCT'),
 ]
 
-training_games = 1
-training_loops = 2
-eval_games = 2
+training_games = 10
+training_loops = 4
+eval_games = 40
 visual = True
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 i = 0

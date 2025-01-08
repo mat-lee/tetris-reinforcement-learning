@@ -103,7 +103,7 @@ class Config():
         playout_cap_mult=5,
 
         use_dirichlet_noise=True,
-        DIRICHLET_ALPHA=0.0003,
+        DIRICHLET_ALPHA=0.003,
         DIRICHLET_S=25,
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
@@ -117,7 +117,7 @@ class Config():
         use_root_softmax=True,
         RootSoftmaxTemp=1.1,
         
-        CPUCT=60
+        CPUCT=1.5
     ):
         self.ruleset = ruleset
         self.move_algo = move_algo
@@ -256,7 +256,9 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
                 child_data = tree.get_node(child_id).data
 
                 Q = child_data.value_avg
-                U = config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
+                # Use 0.02 in the denominator because when it's higher, it causes later iterations to 
+                # have a higher U value than earlier iterations which is not supposed to happen.
+                U = config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(0.02+child_data.visit_count)
                 child_score = Q + U
 
                 Qs.append(Q)
