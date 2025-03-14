@@ -66,7 +66,7 @@ def objective_function(**params):
 result = gp_minimize(
     func=objective_function,       # Objective function
     dimensions=param_space,        # Parameter space
-    n_calls=10,                    # Number of evaluations
+    n_calls=20,                    # Number of evaluations
     random_state=42                # For reproducibility
 )
 

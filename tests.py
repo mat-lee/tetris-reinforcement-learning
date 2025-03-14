@@ -744,7 +744,43 @@ def test_convert_data_and_train_4_7_to_4_8():
             new_network.save(f"{directory_path}/models/TESTS/{i}.keras")
         
     new_network.save(f"{directory_path}/models/TESTS/{i}.keras")
-    
+
+def visualize_policy():
+    # Visualize the policy of a network
+    c=Config(MAX_ITER=16)
+
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption(f"Viewing policy of the network")
+    pygame.event.get() # Required for visuals?
+
+    game = Game(c.ruleset)
+    game.setup()
+
+    network = get_interpreter(load_best_model(c))
+
+    # After a certain number of moves, the policy is examined
+    moves = 10
+
+    while game.is_terminal == False and len(game.history.states) < moves:
+        move, _, _ = MCTS(c, game, network)
+        game.make_move(move)
+
+        game.show(screen)
+        pygame.display.update()
+
+    value, policy = evaluate(c, game, network)
+
+    pygame.image.save(screen, f"{directory_path}/policy_visualization_screen.png")
+
+    fig, axs = plt.subplots(1, 19, figsize=(25, 3))
+    fig.suptitle('Policy visualization', y=0.98)
+    for i in range(len(policy_index_to_piece)):
+        axs[i].imshow(policy[i], cmap='viridis')
+        axs[i].set_title(f"{policy_index_to_piece[i][0]} rotation {policy_index_to_piece[i][1]}")
+
+    plt.savefig(f"{directory_path}/policy_visualization.png")
+    print("saved")
+
 if __name__ == "__main__":
     c=Config(MAX_ITER=1)
 
@@ -761,7 +797,7 @@ if __name__ == "__main__":
 
     # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
     # test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
-    # test_parameters("loss_weights", [[1, 19/POLICY_SIZE], [1, 1]], num_games=200, data=data, load_from_best_model=False, visual=True)
+    # test_parameters("loss_weights", [[1, 0.02], [0, 1]], num_games=200, data=data, load_from_best_model=False, visual=True)
     # test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
     # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
 
@@ -776,7 +812,7 @@ if __name__ == "__main__":
     # time_move_matrix('faster-but-loss')
 
 
-    test_dirichlet_noise()
+    # test_dirichlet_noise()
     # test_older_vs_newer_networks(14, 28)
 
 
@@ -786,6 +822,8 @@ if __name__ == "__main__":
     # visualize_piece_placements()
     # test_dirichlet_noise()
     # test_parameters("FpuStrategy", ['reduction', 'absolute'], num_games=200, data=data, load_from_best_model=True, visual=True)
+
+    visualize_policy()
 
     # view_policy_with_dirichlet_noise()
     # view_policy_vs_visit_count()

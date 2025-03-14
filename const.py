@@ -14,7 +14,7 @@ MAX_MOVES = 1000
 
 TRAINING_GAMES = 100
 TRAINING_LOOPS = 1
-SETS_TO_TRAIN_WITH = 3
+SETS_TO_TRAIN_WITH = 10
 BATTLE_GAMES = 200
 GATING_THRESHOLD = 0.5
 GATING_THRESHOLD_TYPE = 'more' # 'moreorequal' or 'more'
@@ -109,7 +109,7 @@ policy_index_to_piece = {
 
 # Leftside buffer is 2
 # Can't place piece at the bottom most row
-POLICY_SHAPE = (len(policy_index_to_piece), 2, ROWS - 1, COLS + 2 - 1)
+POLICY_SHAPE = (len(policy_index_to_piece), ROWS - 1, COLS + 2 - 1)
 POLICY_SIZE = prod(POLICY_SHAPE)
 
 policy_piece_to_index = {

@@ -27,7 +27,7 @@ import tensorflow as tf
 from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
 
-# Reduce tensorflow text
+# Reduce tensorflow text (doesn't work)
 # tf.get_logger().setLevel('ERROR')
 # tf.autograph.set_verbosity(0)
 
@@ -35,15 +35,17 @@ from torch.utils.data import DataLoader
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# Not sure where I'm importing pygame from but sure
 pygame.init()
 
 import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 5.5
-DATA_VERSION = 1.8
+MODEL_VERSION = 5.7
+DATA_VERSION = 2.0
+
+# For reducing the amount of tensorflow prints
+HIDE_PRINTS = True
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -301,10 +303,7 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
 
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
-            if config.model == 'keras':
-                value, policy = evaluate_from_tflite(node_state.game, network)
-            elif config.model == 'pytorch':
-                value, policy = evaluate_pytorch(node_state.game, network)
+            value, policy = evaluate(config, node_state.game, network)
             # value, policy = random_evaluate()
                 
             # Make sure that no values of the policy are below 0
@@ -514,13 +513,10 @@ def pick_random_move_by_policy(tree: treelib.Tree) -> tuple:
     return move
 
 def get_move_matrix(player, algo=None):
-    # Returns a list of all possible moves that a player can make.
-    # [Policy Index][Row][Col]
+    # Returns a list of all possible moves that a player can make
     # Very Important: With my coordinate system, pieces can be placed with negative x values
     # To avoid negative indexing, the list of moves is shifted by 2
     # It encodes moves from -2 to 8 as indices 0 to 10
-    # Also: if a move exists with and without last rotation, remove the placement with last rotation
-    #    This means that every move with last rotation and not without last rotation is an allspin
     #
     # Algorithm names:
         # 'brute-force': Slow but finds every move
@@ -541,17 +537,17 @@ def get_move_matrix(player, algo=None):
         # Else return the floor
         return len(grid)
 
-    def check_add_to_sets(lr, x, y, o, check_placement=True):
+    def check_add_to_sets(x, y, o, check_placement=True):
         # Checks if move has been looked at already
-        if (lr, x, y, o) not in check_set:
-            next_location_queue.append((lr, x, y, o))
-            check_set.add((lr, x, y, o))
+        if (x, y, o) not in check_set:
+            next_location_queue.append((x, y, o))
+            check_set.add((x, y, o))
 
             # Check if it can be placed
             if check_placement:
                 coords = [[col + x, row + y + 1] for col, row in mino_coords_dict[piece.type][o]]
                 if sim_player.collision(coords):
-                    place_location_queue.append((lr, x, y, o))
+                    place_location_queue.append((x, y, o))
 
     def algo_1(check_rotations):
         # My initial algorithm
@@ -560,9 +556,27 @@ def get_move_matrix(player, algo=None):
         while len(next_location_queue) > 0:
             location = next_location_queue.popleft()
 
-            piece.was_just_rotated, piece.x_0, piece.y_0, piece.rotation = location
+            piece.x_0, piece.y_0, piece.rotation = location
 
             piece.coordinates = piece.get_self_coords
+
+            # Check left, right moves
+            for x_offset in [1, -1]:
+                if sim_player.can_move(piece, x_offset=x_offset): # Check this first to avoid index errors
+                    x = piece.x_0 + x_offset
+                    y = piece.y_0
+                    o = piece.rotation
+
+                    check_add_to_sets(x, y, o)
+            
+            # Check full softdrop
+            ghost_y = sim_player.ghost_y
+
+            if ghost_y != sim_player.piece.y_0:
+                x = piece.x_0
+                o = piece.rotation
+
+                check_add_to_sets(x, ghost_y, o)
 
             # Check left, right, and down moves
             for move in [[1, 0], [-1, 0], [0, 1]]:
@@ -571,7 +585,7 @@ def get_move_matrix(player, algo=None):
                     y = piece.y_0 + move[1]
                     o = piece.rotation
 
-                    check_add_to_sets(False, x, y, o) # Last move was not a rotation
+                    check_add_to_sets(x, y, o)
 
             if check_rotations:
                 # Check rotations 1, 2, and 3
@@ -583,12 +597,12 @@ def get_move_matrix(player, algo=None):
                     o = piece.rotation
 
                     if y >= 0: # Avoid negative indexing
-                        check_add_to_sets(True, x, y, o) # Last move was a rotation
+                        check_add_to_sets(x, y, o)
 
                     # Reset piece locations
                     if i != 3: # Don't need to reset on last rotation
-                        piece.was_just_rotated, piece.x_0, piece.y_0, piece.rotation = location
-    """
+                        piece.x_0, piece.y_0, piece.rotation = location
+
     def algo_2(check_rotations):
         # Faster algorithm
         # Requires spawn height to be above or equal to max height
@@ -759,7 +773,6 @@ def get_move_matrix(player, algo=None):
 
             # These are all hardroppable piece locations
             place_location_queue.append((x, y, o))
-    """
 
 
     # Other ideas:
@@ -797,23 +810,25 @@ def get_move_matrix(player, algo=None):
             starting_row = max(highest_row - len(piece_dict[piece.type]), ROWS - SPAWN_ROW)
             piece.y_0 = starting_row
 
-            check_add_to_sets(piece.was_just_rotated, piece.x_0, piece.y_0, piece.rotation)
+            check_add_to_sets(piece.x_0, piece.y_0, piece.rotation)
 
             # O piece can't rotate
-            check_rotations = False if piece.type == "O" else True
+            check_rotations = True
+            if piece.type == "O":
+                check_rotations = False
 
             # Search through the queue
             if algo == 'brute-force':
-                algo_1(check_rotations) 
-            # elif algo == 'faster-but-loss':
-            #     algo_2(check_rotations)
-            # elif algo == 'harddrop':
-            #     algo_3(check_rotations)
+                algo_1(check_rotations)
+            elif algo == 'faster-but-loss':
+                algo_2(check_rotations)
+            elif algo == 'harddrop':
+                algo_3(check_rotations)
             else:
                 raise Exception("Invalid algorithm type")
 
             # Convert queue of placements to the policy grid
-            for lr, x, y, o in place_location_queue:
+            for x, y, o in place_location_queue:
                 rotation_index = o % len(policy_pieces[piece.type])
                 policy_index = policy_piece_to_index[piece.type][rotation_index]
 
@@ -829,42 +844,7 @@ def get_move_matrix(player, algo=None):
                     if o == 3:
                         new_col -= 1
 
-                # Remember to account for buffer
-                        
-                # Avoid redundant information
-                if piece.type != "T":
-                    # For non t pieces, a move can only be an all spin if it cannot move, so by definition
-                    # if it has lr=0 and lr=1 then it won't be an all spin
-                    if lr == 0:
-                        # Both lr 0 and lr 1 are moves
-                        if new_policy[policy_index][1][new_row][new_col + 2] == 1:
-                            new_policy[policy_index][1][new_row][new_col + 2] = 0 # Unset
-                    if lr == 1:
-                        if new_policy[policy_index][0][new_row][new_col + 2] == 1:
-                            continue # Don't set
-                elif piece.type == "T":
-                    if lr == 1:
-                        # For t pieces, a move can only be a t spin if 3 / 4 of it's corners are filled
-                        # Copied and pasted from player.py
-                        corners = [[0, 0], [2, 0], [2, 2], [0,  2]]
-                        corners_filled = 0
-
-                        for i in range(4):
-                            row = corners[i][1] + y
-                            col = corners[i][0] + x
-                            if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
-                                corners_filled += 1
-                            elif sim_player.board.grid[row][col] != 0:
-                                corners_filled += 1
-
-                        if not corners_filled >= 3: # Not a t spin
-                            continue
-                else:
-                    raise Exception("Invalid piece type")
-                
-
-                # lr is a bool, so convert to int
-                new_policy[policy_index][lr * 1][new_row][new_col + 2] = 1
+                new_policy[policy_index][new_row][new_col + 2] = 1 # Account for buffer        
         
     return new_policy
 
@@ -875,8 +855,8 @@ def get_move_list(move_matrix, policy_matrix):
 
     move_list = np.argwhere(mask != 0)
 
-    # Formats moves from (policy index, lr, row, col) to (value, (policy index, lr, col - 2, row))
-    move_list = [(mask[move[0]][move[1]][move[2]][move[3]], (move[0], move[1], move[3] - 2, move[2])) for move in move_list]
+    # Formats moves from (policy index, row, col) to (value, (policy index, col - 2, row))
+    move_list = [(mask[move[0]][move[1]][move[2]], (move[0], move[2] - 2, move[1])) for move in move_list]
 
     return move_list
 
@@ -1009,6 +989,12 @@ def train_network_pytorch(config, model, set):
     loss = loss.item()
     print(f"loss: {loss:>7f}")
 
+def evaluate(config, game, network):
+    if config.model == 'keras':
+        return evaluate_from_tflite(game, network)
+    elif config.model == 'pytorch':
+        return evaluate_pytorch(game, network)
+
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
     data = game_to_X(game)
@@ -1042,9 +1028,10 @@ def evaluate_from_tflite(game, interpreter):
     policies = interpreter.get_tensor(output_details[0]['index'])
 
     # Both value and policies are returned as arrays
+    value = value.item()
     policies = policies.reshape(POLICY_SHAPE)
     
-    return value[0][0], policies
+    return value, policies
 
 def evaluate_pytorch(game, model):
     # Use a neural network to return value and policy.
@@ -1102,11 +1089,11 @@ def search_statistics(tree):
         root_child_n = root_child.data.visit_count
         if root_child_n != 0:
             root_child_move = root_child.data.move
-            policy_index, lr, col, row = root_child_move
+            policy_index, col, row = root_child_move
 
             # ACCOUNT FOR BUFFER
-            assert policy_index >= 0 and lr >= 0 and row >= 0 and col + 2 >= 0
-            probability_matrix[policy_index][lr][row][col + 2] = round(root_child_n / total_n, 4)
+            assert policy_index >= 0 and row >= 0 and col + 2 >= 0
+            probability_matrix[policy_index][row][col + 2] = round(root_child_n / total_n, 4)
 
     return probability_matrix
 
@@ -1651,10 +1638,13 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
 def load_best_model(config):
     max_ver = highest_model_number(config, MODEL_VERSION)
 
+    blockPrint()
+
     if config.model == 'keras':
         path = f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}/{max_ver}.keras"
 
         model = keras.models.load_model(path)
+        enablePrint()
     elif config.model == 'pytorch':
         path = f"{directory_path}/pytorch_models/{config.ruleset}.{MODEL_VERSION}/{max_ver}"
 
@@ -1663,11 +1653,15 @@ def load_best_model(config):
         model.to(device)
         model.eval()
 
+    enablePrint()
+
     print(path)
 
     return model
 
 def get_interpreter(model):
+    blockPrint()
+
     # Save a model as saved model, then load it as tflite
     path = f"{directory_path}/TEMP_MODELS/savedmodel"
     model.export(path)
@@ -1695,6 +1689,8 @@ def get_interpreter(model):
 
     interpreter = tf.lite.Interpreter(model_content=tflite_model)
     interpreter.allocate_tensors()
+
+    enablePrint()
 
     return interpreter
 
@@ -1736,3 +1732,12 @@ def highest_data_number(config):
             max = data_number
 
     return max
+
+# Disable
+def blockPrint():
+    if HIDE_PRINTS:
+        sys.stdout = open(os.devnull, 'w')
+
+# Restore
+def enablePrint():
+    sys.stdout = sys.__stdout__

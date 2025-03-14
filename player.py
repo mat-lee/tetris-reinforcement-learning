@@ -145,35 +145,35 @@ class Player:
         is_all_clear = False
 
         # Spins
-        if piece.was_just_rotated:
-            # Check for t-spins
-            if piece.type == "T":
-                corners = [[0, 0], [2, 0], [2, 2], [0,  2]]
-                corner_filled = 4 * [False]
+        # Check for t-spins
+        if piece.type == "T":
+            corners = [[0, 0], [2, 0], [2, 2], [0,  2]]
+            corner_filled = 4 * [False]
 
-                for i in range(4):
-                    row = corners[i][1] + place_y
-                    col = corners[i][0] + piece.x_0 
-                    if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
-                        corner_filled[i] = True
-                    elif grid[row][col] != 0:
-                        corner_filled[i] = True
+            for i in range(4):
+                row = corners[i][1] + place_y
+                col = corners[i][0] + piece.x_0 
+                if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
+                    corner_filled[i] = True
+                elif grid[row][col] != 0:
+                    corner_filled[i] = True
 
-                if sum(corner_filled) >= 3:
-                    is_tspin = True
-                
-                if not (corner_filled[piece.rotation] and corner_filled[(piece.rotation + 1) % 4]):
-                    is_mini = True
+            if sum(corner_filled) >= 3:
+                is_tspin = True
+            
+            if not (corner_filled[piece.rotation] and corner_filled[(piece.rotation + 1) % 4]):
+                is_mini = True
         
-            # Check for s2 all spins:
-            elif self.ruleset == 's2':
-                # If a piece can't move in any direction it is a mini
-                offsets = [[-1, 0], [1, 0], [0, -1], [0, 1]]
-                for x_offset, y_offset in offsets:
-                    if self.can_move(piece, x_offset=x_offset, y_offset=y_offset):
-                        break
-                else:
-                    is_mini = True
+        # Check for s2 all spins:
+        # Since tetr.io version something the allspin rules apply to t-pieces too
+        if self.ruleset == 's2':
+            # If a piece can't move in any direction it is a mini
+            offsets = [[-1, 0], [1, 0], [0, -1], [0, 1]]
+            for x_offset, y_offset in offsets:
+                if self.can_move(piece, x_offset=x_offset, y_offset=y_offset):
+                    break
+            else:
+                is_mini = True
 
         # Place the pieces and check rows that minos will be placed
         for col, row in piece.get_mino_coords(piece.x_0, place_y, piece.rotation, piece.type):
