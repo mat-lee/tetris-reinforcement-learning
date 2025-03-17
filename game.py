@@ -1,17 +1,15 @@
 from const import *
 from history import History
-from player import Human, AI
+from player import Player
 
 class Game:
     """Contains all players and communicates with them."""
     def __init__(self, ruleset):
         self.ruleset = ruleset
 
-        self.human_player = Human(ruleset)
-        self.ai_player = AI(ruleset)
         self.turn = 0
         
-        self.players = [self.human_player, self.ai_player]
+        self.players = [Player(ruleset, PLAYER_1_DRAW_COORDS, 0), Player(ruleset, PLAYER_2_DRAW_COORDS, 1)]
 
         self.history = History()
 

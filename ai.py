@@ -58,7 +58,7 @@ class Config():
         self, 
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
-        move_algo='brute-force',
+        move_algo='faster-but-loss',
 
         model='keras',
         default_model=base_nn,
@@ -1271,6 +1271,7 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
     # Initialize data storage
     # Each player's move data will be stored in their respective list
     game_data = [[], []]
+    total_data = []
 
     # Initialize the game with random moves
 
@@ -1302,56 +1303,10 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
             search_matrix = search_statistics(tree) # Moves that the network looked at
             
             # Get data
-            move_data = [*game_to_X(game)] 
-
-            if config.augment_data: 
-                reflected_search_matrix = reflect_policy(search_matrix)
-                
-                # Reflect each player for a total of 2 * 2 = 4 times more data
-                # When the other player is reflected, it shouldn't impact active player
-                # When the active player is reflected, the search placements need to be reflected as well
-                for active_player_idx in range(2): # 0: not reflected, 1: reflected
-                    for other_player_idx in range(2):
-                        # Copy move data
-                        copied_data = []
-                        for feature in move_data:
-                            # Copy data
-                            if isinstance(feature, np.ndarray): # queue array
-                                copied_data.append(feature.copy())
-                            elif type(feature) == list: # board
-                                copied_data.append([x[:] for x in feature])
-                            else: # int or float
-                                copied_data.append(feature)
-
-                        # Flip boards and pieces
-                        if active_player_idx == 1:
-                            copied_data[0] = reflect_grid(copied_data[0])
-                            copied_data[1] = reflect_pieces(copied_data[1])
-                        
-                        if other_player_idx == 1:
-                            copied_data[5] = reflect_grid(copied_data[5])
-                            copied_data[6] = reflect_pieces(copied_data[6])
-
-                        # Convert np arrays to regular lists
-                        for i in range(len(copied_data)):
-                            if isinstance(copied_data[i], np.ndarray):
-                                copied_data[i] = copied_data[i].tolist()
-
-                        # Flip search matrix
-                        if active_player_idx == 0:
-                            copied_data.append(search_matrix)
-                        else:
-                            copied_data.append(reflected_search_matrix)
-
-                        game_data[game.turn].append(copied_data)
-            else:
-                # Convert to regular lists
-                for i in range(len(move_data)):
-                    if isinstance(move_data[i], np.ndarray):
-                        move_data[i] = move_data[i].tolist()
-                
-                move_data.append(search_matrix)
-                game_data[game.turn].append(move_data)
+            move_data = [*game_to_X(game)]
+            
+            # Combines the search data and the move data to the game_data
+            add_search_and_move_data(config, game_data, search_matrix, move_data, game.turn)
 
         game.make_move(move)
 
@@ -1373,10 +1328,62 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
             game_data[player_idx][move_idx].insert(-1, value)
 
     # Reformat data to stack all moves into one continuous list
-    data = game_data[0]
-    data.extend(game_data[1])
+    total_data.extend(game_data[0])
+    total_data.extend(game_data[1])
 
-    return data
+    return total_data
+
+def add_search_and_move_data(config, game_data, search_matrix, move_data, turn) -> None:
+    # Combines the search data and the move data to the game_data
+    if config.augment_data: 
+        raise NotImplementedError("Data augmentation not implemented yet")
+        reflected_search_matrix = reflect_policy(search_matrix)
+        
+        # Reflect each player for a total of 2 * 2 = 4 times more data
+        # When the other player is reflected, it shouldn't impact active player
+        # When the active player is reflected, the search placements need to be reflected as well
+        for active_player_idx in range(2): # 0: not reflected, 1: reflected
+            for other_player_idx in range(2):
+                # Copy move data
+                copied_data = []
+                for feature in move_data:
+                    # Copy data
+                    if isinstance(feature, np.ndarray): # queue array
+                        copied_data.append(feature.copy())
+                    elif type(feature) == list: # board
+                        copied_data.append([x[:] for x in feature])
+                    else: # int or float
+                        copied_data.append(feature)
+
+                # Flip boards and pieces
+                if active_player_idx == 1:
+                    copied_data[0] = reflect_grid(copied_data[0])
+                    copied_data[1] = reflect_pieces(copied_data[1])
+                
+                if other_player_idx == 1:
+                    copied_data[5] = reflect_grid(copied_data[5])
+                    copied_data[6] = reflect_pieces(copied_data[6])
+
+                # Convert np arrays to regular lists
+                for i in range(len(copied_data)):
+                    if isinstance(copied_data[i], np.ndarray):
+                        copied_data[i] = copied_data[i].tolist()
+
+                # Flip search matrix
+                if active_player_idx == 0:
+                    copied_data.append(search_matrix)
+                else:
+                    copied_data.append(reflected_search_matrix)
+
+                game_data[game.turn].append(copied_data)
+    else:
+        # Convert to regular lists
+        for i in range(len(move_data)):
+            if isinstance(move_data[i], np.ndarray):
+                move_data[i] = move_data[i].tolist()
+        
+        move_data.append(search_matrix)
+        game_data[turn].append(move_data)
 
 def make_training_set(config, network, num_games, save_game=True, show_game=False, screen=None):
     # Creates a dataset of several AI games.

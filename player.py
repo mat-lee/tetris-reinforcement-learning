@@ -8,7 +8,7 @@ import random
 
 class Player:
     """Parent class for both human and AI players."""
-    def __init__(self, ruleset) -> None:
+    def __init__(self, ruleset, draw_coords=None, color=None) -> None:
         self.board = Board()
         self.queue = Queue()
         self.stats = Stats(ruleset)
@@ -17,12 +17,12 @@ class Player:
         self.garbage_to_receive = [] # index 0 spawns first
         self.garbage_to_send = [] # sends and receive are in same order
 
-        self.color = None # Used for turn order
+        self.color = color # Used for turn order
 
         self.piece = None
         self.held_piece = None
 
-        self.draw_coords = None
+        self.draw_coords = draw_coords
 
         self.ruleset = ruleset # Specifies tetr.io s1 or s2 spins
 
@@ -392,18 +392,6 @@ class Player:
                 screen.blit(render_text, 
                             (self.draw_coords[0] + E_BUFFER + stat['location'][0], 
                             self.draw_coords[1] + N_BUFFER + (ROWS - GRID_ROWS) * MINO_SIZE + stat['location'][1]))
-
-class Human(Player):
-    def __init__(self, config) -> None:
-        super().__init__(config)
-        self.draw_coords = (0, 0)
-        self.color = 0
-
-class AI(Player):
-    def __init__(self, config) -> None:
-        super().__init__(config)
-        self.draw_coords = (WIDTH/2, 0)
-        self.color = 1
 
 '''dic = {}
 for piece_type in "ZLOSIJT":

@@ -27,6 +27,13 @@ class Main:
         self.game = Game(DefaultConfig.ruleset)
         self.mover = Mover()
 
+        self.human_turn = 1
+        self.ai_turn = 0
+        self.human_player = self.game.players[self.human_turn]
+        self.ai_player = self.game.players[self.ai_turn]
+
+        assert(self.human_turn + self.ai_turn == 1)
+
     def mainloop(self):
         screen = self.screen
         game = self.game
@@ -54,38 +61,38 @@ class Main:
                         game.restart()
 
                 # Only for first player
-                if game.turn == 0 and not game.is_terminal:
-                    if game.human_player.piece != None:
+                if game.turn == self.human_turn and not game.is_terminal:
+                    if self.human_player.piece != None:
                         # On key down
                         if event.type == pygame.KEYDOWN:
                             if event.key == k_move_left:
-                                game.human_player.move_left()
+                                self.human_player.move_left()
                                 mover.start_left()
                             elif event.key == k_move_right:
-                                game.human_player.move_right()
+                                self.human_player.move_right()
                                 mover.start_right()
                             elif event.key == k_soft_drop:
-                                game.human_player.move_down()
+                                self.human_player.move_down()
                                 mover.start_down()
                             elif event.key == k_hard_drop:
                                 game.place()
-                            elif event.key == k_make_ai_move:
-                                if game.players[1].game_over == False:
-                                    move, _, _ = MCTS(DefaultConfig, game, interpreter)
-                                    game.place()
                             elif event.key == k_rotate_cw:
-                                game.human_player.try_wallkick(1)
+                                self.human_player.try_wallkick(1)
                             elif event.key == k_rotate_180:
-                                game.human_player.try_wallkick(2)
+                                self.human_player.try_wallkick(2)
                             elif event.key == k_rotate_ccw:
-                                game.human_player.try_wallkick(3)
+                                self.human_player.try_wallkick(3)
                             elif event.key == k_hold:
-                                game.human_player.hold_piece()
+                                self.human_player.hold_piece()
 
                             # Helper keybinds
+                            elif event.key == k_make_ai_move:
+                                if self.ai_player.game_over == False:
+                                    move, _, _ = MCTS(DefaultConfig, game, interpreter)
+                                    game.place()
                             elif event.key == k_add_garbage:
-                                game.players[0].garbage_to_receive.append(random.randint(0, 9))
-                                game.players[1].garbage_to_receive.append(random.randint(0, 9))
+                                for player in game.players:
+                                    player.garbage_to_receive.append(random.randint(0, 9))
                             elif event.key == k_switch:
                                 game.players[0].board, game.players[1].board = game.players[1].board, game.players[0].board
                             elif event.key == k_print_board:
@@ -101,7 +108,7 @@ class Main:
                             elif event.key == k_soft_drop:
                                 mover.stop_down()
 
-            if game.turn == 0 and not game.is_terminal:
+            if game.turn == self.human_turn and not game.is_terminal:
                 # DAS, ARR, and Softdrop
                 current_time = time.time()
 
@@ -110,19 +117,19 @@ class Main:
                     if mover.lr_das_start_time != None:
                         if current_time - mover.lr_das_start_time > mover.lr_das_counter:
                             if mover.lr_das_direction == "L":
-                                game.human_player.move_left()
+                                self.human_player.move_left()
                             elif mover.lr_das_direction == "R":
-                                game.human_player.move_right()      
+                                self.human_player.move_right()      
                             mover.lr_das_counter += ARR/1000
 
             if mover.can_sd_das:
                 if mover.sd_start_time != None:
                     if current_time - mover.sd_start_time > mover.sd_counter:
-                        game.human_player.move_down()
+                        self.human_player.move_down()
                         mover.sd_counter += (1 / SDF) / 1000
 
             # AI's turn
-            if game.turn == 1 and not game.is_terminal:
+            if game.turn == self.ai_turn and not game.is_terminal:
                 if game.players[0].game_over == False:
                     # with cProfile.Profile() as pr:
                     #     move, _ = MCTS(game, interpreter)

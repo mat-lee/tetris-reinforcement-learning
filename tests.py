@@ -2,6 +2,7 @@ from ai import *
 from const import *
 from game import Game
 from player import Player
+from mover import Mover
 
 from collections import namedtuple
 import matplotlib.pyplot as plt
@@ -360,7 +361,7 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption(f'Testing algorithm accuracy')
 
-    config = Config()
+    config = Config(MAX_ITER=16, move_algo='brute-force')
 
     interpreter = get_interpreter(load_best_model(config))
 
@@ -375,7 +376,7 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
             truth_moves += np.sum(get_move_matrix(game.players[game.turn], algo=truth_algo))
             test_moves += np.sum(get_move_matrix(game.players[game.turn], algo=test_algo))
 
-            move, _, _ = MCTS(config, game, interpreter, move_algorithm='brute-force')
+            move, _, _ = MCTS(config, game, interpreter)
             game.make_move(move)
 
             game.show(screen)
@@ -781,8 +782,200 @@ def visualize_policy():
     plt.savefig(f"{directory_path}/policy_visualization.png")
     print("saved")
 
+def generate_human_data():
+    # Manually play a game against the AI, once as white and once as black
+    c = Config()
+    network = get_interpreter(load_best_model(c))
+
+    screen = pygame.display.set_mode( (WIDTH, HEIGHT))
+    pygame.display.set_caption(f'Generating human data game')
+    pygame.event.get()
+
+    mover = Mover()
+
+    # Initialize data storage
+    # Each player's move data will be stored in their respective list
+    total_data = []
+    
+    for color in [0, 1] * 10:
+        game = Game(c.ruleset)
+        game.setup()
+
+        human_player = game.players[color]
+        ai_player = game.players[1 - color]
+
+        # Wipe game_data
+        game_data = [[], []]
+
+        while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
+            if game.turn == color:
+                for event in pygame.event.get():
+                    if human_player.piece != None:
+                        # On key down
+                        if event.type == pygame.KEYDOWN:
+                            if event.key == k_move_left:
+                                human_player.move_left()
+                                mover.start_left()
+                            elif event.key == k_move_right:
+                                human_player.move_right()
+                                mover.start_right()
+                            elif event.key == k_soft_drop:
+                                human_player.move_down()
+                                mover.start_down()
+                            elif event.key == k_hard_drop:
+                                move_data = [*game_to_X(game)]
+                                search_matrix = np.zeros(POLICY_SHAPE, dtype=int).tolist()
+                                piece = game.players[color].piece
+                                x = piece.x_0
+                                y = piece.y_0
+                                o = piece.rotation
+
+                                rotation_index = o % len(policy_pieces[piece.type])
+                                policy_index = policy_piece_to_index[piece.type][rotation_index]
+
+                                new_col = x
+                                new_row = y
+                                if piece.type in ["Z", "S", "I"]:
+                                    # For those pieces, rotation 2 is the same as rotation 0
+                                    # but moved one down
+                                    if o == 2:
+                                        new_row += 1
+                                    # For those pieces, rotation 3 is the same as rotation 1
+                                    # but moved one to the left
+                                    if o == 3:
+                                        new_col -= 1
+
+                                search_matrix[policy_index][new_row][new_col + 2] = 1 # Account for buffer
+                                add_search_and_move_data(c, game_data, search_matrix, move_data, game.turn)
+                                
+                                game.place()
+                            elif event.key == k_rotate_cw:
+                                human_player.try_wallkick(1)
+                            elif event.key == k_rotate_180:
+                                human_player.try_wallkick(2)
+                            elif event.key == k_rotate_ccw:
+                                human_player.try_wallkick(3)
+                            elif event.key == k_hold:
+                                human_player.hold_piece()
+
+                        # On key release
+                        elif event.type == pygame.KEYUP:
+                            # pain
+                            if event.key == k_move_left:
+                                mover.stop_left()
+                            elif event.key == k_move_right:
+                                mover.stop_right()
+                            elif event.key == k_soft_drop:
+                                mover.stop_down()
+
+                # DAS, ARR, and Softdrop
+                current_time = time.time()
+
+                # This makes das limited by FPS
+                if mover.can_lr_das:
+                    if mover.lr_das_start_time != None:
+                        if current_time - mover.lr_das_start_time > mover.lr_das_counter:
+                            if mover.lr_das_direction == "L":
+                                human_player.move_left()
+                            elif mover.lr_das_direction == "R":
+                                human_player.move_right()      
+                            mover.lr_das_counter += ARR/1000
+
+                if mover.can_sd_das:
+                    if mover.sd_start_time != None:
+                        if current_time - mover.sd_start_time > mover.sd_counter:
+                            human_player.move_down()
+                            mover.sd_counter += (1 / SDF) / 1000
+
+            # AI's turn
+            else: 
+                move, tree, save = MCTS(c, game, network)
+                search_matrix = search_statistics(tree) # Moves that the network looked at
+                
+                # Get data
+                move_data = [*game_to_X(game)]
+                
+                # Combines the search data and the move data to the game_data
+                add_search_and_move_data(c, game_data, search_matrix, move_data, game.turn)
+
+                game.make_move(move)
+
+            game.show(screen)
+            pygame.display.update()
+
+        # After game ends update value
+        winner = game.winner
+        for player_idx in range(len(game_data)):
+            if winner == -1: # Draw
+                value = (0 if c.use_tanh else 0.5)
+            elif winner == player_idx:
+                value = 1
+            else:
+                value = (-1 if c.use_tanh else 0)
+            # Insert value before policy for each move of that player
+            for move_idx in range(len(game_data[player_idx])):
+                game_data[player_idx][move_idx].insert(-1, value)
+
+        # Reformat data to stack all moves into one continuous list
+        total_data.extend(game_data[0])
+        total_data.extend(game_data[1])
+
+    json_data = ujson.dumps(total_data)
+
+    with open(f"{directory_path}/player_data.txt", 'w') as out_file:
+        out_file.write(json_data)
+    
+def test_data(config, data):
+    model = load_best_model(Config())
+    untrained_interpreter = get_interpreter(model)
+
+    load_data_and_train_model(config, model, data)
+    trained_interpreter = get_interpreter(model)
+
+    battle_networks_win_loss(untrained_interpreter, config, trained_interpreter, config, 200, "untrained", "trained", True)
+
+def test_quantization(config):
+    # Tests if quantizing a model changes its performance
+    model = load_best_model(Config())
+
+    path = f"{directory_path}/TEMP_MODELS/savedmodel"
+
+    # UNQUANTIZED MODEL
+    model.export(path)
+
+    uq_converter = tf.lite.TFLiteConverter.from_saved_model(path)
+
+    uq_converter.target_spec.supported_ops = [
+        tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
+        tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
+    ]
+
+    # uq_converter.optimizations = [tf.lite.Optimize.DEFAULT] # NO QUANTIZATION
+
+    uq_tflite_model = uq_converter.convert()
+
+    uq_interpreter = tf.lite.Interpreter(model_content=uq_tflite_model)
+    uq_interpreter.allocate_tensors()
+
+    # QUANTIZED MODEL
+    q_converter = tf.lite.TFLiteConverter.from_saved_model(path)
+
+    q_converter.target_spec.supported_ops = [
+        tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
+        tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
+    ]
+
+    q_converter.optimizations = [tf.lite.Optimize.DEFAULT] # Quantization
+
+    q_tflite_model = q_converter.convert()
+
+    q_interpreter = tf.lite.Interpreter(model_content=q_tflite_model)
+    q_interpreter.allocate_tensors()
+
+    battle_networks_win_loss(uq_interpreter, config, q_interpreter, config, 200, "unquantized", "quantized", True)
+
 if __name__ == "__main__":
-    c=Config(MAX_ITER=1)
+    c=Config()
 
     # keras.utils.set_random_seed(937)
 
@@ -808,7 +1001,7 @@ if __name__ == "__main__":
 
     # test_reflected_policy()
 
-    # test_algorithm_accuracy(test_algo='harddrop')
+    # test_algorithm_accuracy(test_algo='faster-but-loss')
     # time_move_matrix('faster-but-loss')
 
 
@@ -823,11 +1016,18 @@ if __name__ == "__main__":
     # test_dirichlet_noise()
     # test_parameters("FpuStrategy", ['reduction', 'absolute'], num_games=200, data=data, load_from_best_model=True, visual=True)
 
-    visualize_policy()
+    # visualize_policy()
+
+    # play_game(c, get_interpreter(load_best_model(c)), 777, show_game=True)
+    # generate_human_data()
+
+    # data = [ujson.load(open(f"{directory_path}/player_data.txt", 'r'))]
+    # test_data(c, data)
 
     # view_policy_with_dirichlet_noise()
     # view_policy_vs_visit_count()
 
+    test_quantization(c)
 
     # Command for running python files
     # This is for running many tests at the same time

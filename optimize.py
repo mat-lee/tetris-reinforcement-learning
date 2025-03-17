@@ -7,19 +7,21 @@ from skopt.utils import use_named_args
 
 param_space = [
     # Real(0.0, 0.9, name='dropout'),
-    Real(0.0, 1.0, name='policy_loss_weight'),
+    # Real(0.0, 1.0, name='policy_loss_weight'),
     Real(0.0, 1.0, name='DIRICHLET_ALPHA'),
+    # Categorical([False, True], name='use_dirichlet_noise'),
     # Categorical([False, True], name='use_playout_cap_randomization'),
     # Categorical(['reduction', 'absolute'], name='FpuStrategy'),
     # Real(0.0, 1.0, name='FpuValue'),
     # Categorical([False, True], name='use_forced_playouts_and_policy_target_pruning'),
     # Integer(0.0, 3.0, name='CForcedPlayout'),
-    Real(1, 100, name='CPUCT'),
+    # Real(0.0, 0.01, name='learning_rate'),
+    # Real(0.1, 100, name='CPUCT'),
 ]
 
-training_games = 10
+training_games = 15
 training_loops = 4
-eval_games = 40
+eval_games = 60
 visual = True
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 i = 0
@@ -54,6 +56,7 @@ def objective_function(**params):
         train_network(challenger_config, challenger_network, set)
 
         del set
+        del interpreter
         gc.collect()
     
     challenger_interpreter = get_interpreter(challenger_network)
@@ -66,7 +69,7 @@ def objective_function(**params):
 result = gp_minimize(
     func=objective_function,       # Objective function
     dimensions=param_space,        # Parameter space
-    n_calls=20,                    # Number of evaluations
+    n_calls=10,                    # Number of evaluations
     random_state=42                # For reproducibility
 )
 
