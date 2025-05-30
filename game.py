@@ -4,9 +4,12 @@ from player import Human, AI
 
 class Game:
     """Contains all players and communicates with them."""
-    def __init__(self):
-        self.human_player = Human()
-        self.ai_player = AI()
+    def __init__(self, ruleset):
+        self.ruleset = ruleset
+
+        self.human_player = Human(ruleset)
+        self.ai_player = AI(ruleset)
+
         self.turn = 0
         
         self.players = [self.human_player, self.ai_player]
@@ -26,34 +29,33 @@ class Game:
             bag = player.queue.generate_bag()
             player.queue.add_bag(bag)
 
-    def make_move(self, move, add_bag=True, add_history=True):
+    def move_piece(self, move):
+        # This function moves the the current player's piece. 
+        # move: (Policy index, was_just_rotated, col, row)
         player = self.players[self.turn]
 
-        # Move: (Piece type, col, row, rotation) or (Policy index, col, row)
+        policy_index, col, row = move
+        piece, rotation = policy_index_to_piece[policy_index]
+
+        # If the player doesn't have an active piece, the ai wants it to hold
+        if player.piece == None:
+            player.hold_piece()
+
+        # If the piece it wants to place is not the same as the active piece, hold
+        elif piece != player.piece.type:
+            player.hold_piece()
+
+        player.piece.x_0 = col
+        player.piece.y_0 = row
+        player.piece.rotation = rotation
+
+    def place(self, add_bag=True, add_history=True):
+        # It places the piece, updates garbage, pieces, bag, and history.
+        player = self.players[self.turn]
+
         if player.game_over == False:
+            rows_cleared = player.place_piece()
 
-            piece = None
-            row = None
-            col = None
-            rotation = None
-            # If the move is straight from the policy (policy index, col, row),
-            # convert it to piece and rotation
-            if len(move) == 3:
-                piece, rotation = policy_index_to_piece[move[0]]
-                col = move[1]
-                row = move[2]
-            elif len(move) == 4:
-                piece, col, row, rotation = move
-
-            # If the player doesn't have an active piece, the ai wants it to hold
-            if player.piece == None:
-                player.hold_piece()
-
-            # If the piece it wants to place is not the same as the active piece, hold
-            elif piece != player.piece.type:
-                player.hold_piece()
-
-            rows_cleared = player.force_place_piece(col, row, rotation)
             if rows_cleared > 0:
                 is_last_move_line_clear = True
             else:
@@ -71,6 +73,10 @@ class Game:
                 self.add_history()
 
             self.turn = 1 - self.turn # 1 to 0
+
+    def make_move(self, move, add_bag=True, add_history=True):
+        self.move_piece(move)
+        self.place(add_bag=add_bag, add_history=add_history)
 
     def check_garbage(self, is_last_move_line_clear):
         active_player = self.players[self.turn]
@@ -200,7 +206,7 @@ class Game:
             return -1
 
     def copy(self):
-        new_game = Game()
+        new_game = Game(self.ruleset)
         new_game.players = [player.copy() for player in self.players]
         new_game.turn = self.turn
 

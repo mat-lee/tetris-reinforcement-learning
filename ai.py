@@ -42,8 +42,8 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 4.9
-DATA_VERSION = 1.6
+MODEL_VERSION = 5.7
+DATA_VERSION = 2.0
 
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
@@ -54,6 +54,8 @@ number_branch = 0
 class Config():
     def __init__(
         self, 
+
+        ruleset='s2', # 's1' for season 1, 's2' for season 2
 
         model='keras',
         default_model=None,
@@ -81,7 +83,7 @@ class Config():
 
         # Training Parameters
         data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
-        augment_data=False,
+        augment_data=True,
         learning_rate=0.001, 
         loss_weights=[1, 1], 
         epochs=1, 
@@ -115,6 +117,7 @@ class Config():
         
         CPUCT=0.75
     ):
+        self.ruleset = ruleset
         self.model = model
         self.default_model = default_model
         self.l1_neurons = l1_neurons
@@ -899,7 +902,7 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
         if show_summary: model.summary()
 
         if save_network:
-            path = f"{directory_path}/models/{MODEL_VERSION}"
+            path = f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}"
             os.makedirs(path, exist_ok=True)
             model.save(f"{path}/0.keras")
 
@@ -908,7 +911,7 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
         if show_summary: print(model)
 
         if save_network:
-            path = f"{directory_path}/pytorch_models/{MODEL_VERSION}"
+            path = f"{directory_path}/pytorch_models/{config.ruleset}.{MODEL_VERSION}"
             os.makedirs(path, exist_ok=True)
             torch.save(model.state_dict(), f"{path}/0")
 
@@ -1258,7 +1261,7 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
         for event in pygame.event.get():
             pass
 
-    game = Game()
+    game = Game(config.ruleset)
     game.setup()
 
     # Initialize data storage
@@ -1382,16 +1385,16 @@ def make_training_set(config, network, num_games, save_game=True, show_game=Fals
         json_data = ujson.dumps(series_data)
 
         # Increment set counter
-        next_set = highest_data_number() + 1
+        next_set = highest_data_number(config) + 1
 
-        with open(f"{directory_path}/data/{DATA_VERSION}/{next_set}.txt", 'w') as out_file:
+        with open(f"{directory_path}/data/{config.ruleset}.{DATA_VERSION}/{next_set}.txt", 'w') as out_file:
             out_file.write(json_data)
     
     else:
         return series_data
 
 def load_data_and_train_model(config, model, data=None):
-    path = f"{directory_path}/data/{DATA_VERSION}"
+    path = f"{directory_path}/data/{config.ruleset}.{DATA_VERSION}"
 
     if config.data_loading_style == "merge":
         if data == None:
@@ -1445,7 +1448,7 @@ def load_data(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> 
 
     sets, len_sets = 0, 0
 
-    path = f"{directory_path}/data/{data_ver}"
+    path = f"{directory_path}/data/{config.ruleset}.{data_ver}"
 
     # Get filenames and load them
     for filename in get_data_filenames(config, data_ver=data_ver, last_n_sets=last_n_sets):
@@ -1461,11 +1464,11 @@ def load_data(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> 
 def get_data_filenames(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
     # Returns a list of data filenames
     filenames = []
-    max_set = highest_data_number()
+    max_set = highest_data_number(config)
 
     sets = 0
 
-    path = f"{directory_path}/data/{data_ver}"
+    path = f"{directory_path}/data/{config.ruleset}.{data_ver}"
 
     # Get n games
     for filename in os.listdir(path):
@@ -1489,6 +1492,9 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
     wins = np.zeros((2), dtype=int)
     flip_color = False
 
+    if config_1.ruleset != config_2.ruleset:
+        raise NotImplementedError("Ruleset's aren't equal")
+
     for i in range(games):
         if show_game == True:
             if screen == None:
@@ -1503,7 +1509,7 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
             for event in pygame.event.get():
                 pass
 
-        game = Game()
+        game = Game(config_1.ruleset)
         game.setup()
 
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
@@ -1526,7 +1532,10 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
         winner = game.winner
         if winner == -1:
             wins += 0.5
-        else: wins[winner] += 1
+        elif not flip_color: # ARGGHGHHHH
+            wins[winner] += 1
+        else: # If the color is flipped, nn_1 is playing for player 2, and nn_2 is playing for player 1
+            wins[1 - winner] += 1
 
         flip_color = not flip_color
 
@@ -1607,9 +1616,9 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
             next_ver = highest_model_number(config, MODEL_VERSION) + 1
 
             if config.model == 'keras':
-                challenger_network.save(f"{directory_path}/models/{MODEL_VERSION}/{next_ver}.keras")
+                challenger_network.save(f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}/{next_ver}.keras")
             if config.model == 'pytorch':
-                torch.save(challenger_network.state_dict(), f"{directory_path}/pytorch_models/{MODEL_VERSION}/{next_ver}")
+                torch.save(challenger_network.state_dict(), f"{directory_path}/pytorch_models/{config.ruleset}.{MODEL_VERSION}/{next_ver}")
 
             # The new network becomes the network to beat
             best_network = challenger_network
@@ -1627,11 +1636,11 @@ def load_best_model(config):
     max_ver = highest_model_number(config, MODEL_VERSION)
 
     if config.model == 'keras':
-        path = f"{directory_path}/models/{MODEL_VERSION}/{max_ver}.keras"
+        path = f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}/{max_ver}.keras"
 
         model = keras.models.load_model(path)
     elif config.model == 'pytorch':
-        path = f"{directory_path}/pytorch_models/{MODEL_VERSION}/{max_ver}"
+        path = f"{directory_path}/pytorch_models/{config.ruleset}.{MODEL_VERSION}/{max_ver}"
 
         model = config.default_model(config)
         model.load_state_dict(torch.load(path))
@@ -1677,7 +1686,7 @@ def highest_model_number(config, ver):
     max = -1
 
     if config.model == 'keras':
-        path = f"{directory_path}/models/{ver}"
+        path = f"{directory_path}/models/{config.ruleset}.{ver}"
 
         os.makedirs(path, exist_ok=True)
 
@@ -1687,7 +1696,7 @@ def highest_model_number(config, ver):
                 max = model_number
 
     elif config.model == 'pytorch':
-        path = f"{directory_path}/pytorch_models/{ver}"
+        path = f"{directory_path}/pytorch_models/{config.ruleset}.{ver}"
 
         os.makedirs(path, exist_ok=True)
 
@@ -1698,10 +1707,10 @@ def highest_model_number(config, ver):
 
     return max
 
-def highest_data_number():
+def highest_data_number(config):
     max = -1
 
-    path = f"{directory_path}/data/{DATA_VERSION}"
+    path = f"{directory_path}/data/{config.ruleset}.{DATA_VERSION}"
 
     os.makedirs(path, exist_ok=True)
 

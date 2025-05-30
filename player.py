@@ -8,10 +8,10 @@ import random
 
 class Player:
     """Parent class for both human and AI players."""
-    def __init__(self) -> None:
+    def __init__(self, ruleset) -> None:
         self.board = Board()
         self.queue = Queue()
-        self.stats = Stats()
+        self.stats = Stats(ruleset)
 
         self.game_over = False
         self.garbage_to_receive = [] # index 0 spawns first
@@ -23,6 +23,8 @@ class Player:
         self.held_piece = None
 
         self.draw_coords = None
+
+        self.ruleset = ruleset # Specifies tetr.io s1 or s2 spins
 
     # Game methods    
     def create_next_piece(self):
@@ -145,6 +147,7 @@ class Player:
         is_mini = False
         is_all_clear = False
 
+        # Spins
         # Check for a t-spin
         if piece.type == "T":
             corners = [[0, 0], [2, 0], [2, 2], [0,  2]]
@@ -162,6 +165,17 @@ class Player:
                 is_tspin = True
             
             if not (corner_filled[piece.rotation] and corner_filled[(piece.rotation + 1) % 4]):
+                is_mini = True
+
+        # Check for s2 all spins:
+        # Since tetr.io version something the allspin rules apply to t-pieces too
+        if self.ruleset == 's2':
+            # If a piece can't move in any direction it is a mini
+            offsets = [[-1, 0], [1, 0], [0, -1], [0, 1]]
+            for x_offset, y_offset in offsets:
+                if self.can_move(piece, x_offset=x_offset, y_offset=y_offset):
+                    break
+            else:
                 is_mini = True
 
         # Place the pieces and check rows that minos will be placed
@@ -230,7 +244,7 @@ class Player:
     def reset(self):
         self.board = Board()
         self.queue = Queue()
-        self.stats = Stats()
+        self.stats = Stats(self.ruleset)
         self.piece = None
         self.held_piece = None
         self.garbage_to_receive = []
@@ -238,7 +252,7 @@ class Player:
 
     # AI methods
     def copy(self):
-        new_player = Player()
+        new_player = Player(self.ruleset)
         
         new_player.board = self.board.copy()
         new_player.queue = self.queue.copy()
@@ -383,14 +397,14 @@ class Player:
                             self.draw_coords[1] + N_BUFFER + (ROWS - GRID_ROWS) * MINO_SIZE + stat['location'][1]))
 
 class Human(Player):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, config) -> None:
+        super().__init__(config)
         self.draw_coords = (0, 0)
         self.color = 0
 
 class AI(Player):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, config) -> None:
+        super().__init__(config)
         self.draw_coords = (WIDTH/2, 0)
         self.color = 1
 

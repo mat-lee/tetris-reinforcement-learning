@@ -24,7 +24,7 @@ class Main:
         pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption('Tetris')
-        self.game = Game()
+        self.game = Game(DefaultConfig.ruleset)
         self.mover = Mover()
 
     def mainloop(self):
@@ -68,11 +68,7 @@ class Main:
                                 game.human_player.move_down()
                                 mover.start_down()
                             elif event.key == k_hard_drop:
-                                move = (game.human_player.piece.type, 
-                                        game.human_player.piece.x_0,
-                                        game.human_player.piece.y_0,
-                                        game.human_player.piece.rotation)
-                                game.make_move(move)
+                                game.place()
                             elif event.key == k_make_ai_move:
                                 if game.players[1].game_over == False:
                                     move, _, _ = MCTS(DefaultConfig, game, interpreter)
