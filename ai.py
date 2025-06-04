@@ -45,6 +45,9 @@ import pstats
 MODEL_VERSION = 5.7
 DATA_VERSION = 2.0
 
+# For reducing the amount of tensorflow prints
+HIDE_PRINTS = True
+
 # Where data and models are saved
 directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
 
@@ -254,10 +257,13 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
                 # Polynomial upper confidence trees (PUCT)
                 child_data = tree.get_node(child_id).data
 
-                child_score = child_data.value_avg + config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
+                Q = child_data.value_avg
+                U = config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
 
-                Qs.append(child_data.value_avg)
-                Us.append(config.CPUCT* child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count))
+                child_score = Q + U
+
+                Qs.append(Q)
+                Us.append(U)
 
                 # Check forced playouts
                 if config.use_forced_playouts_and_policy_target_pruning and config.training: # Only use during training/when configured
@@ -296,10 +302,7 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
 
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
-            if config.model == 'keras':
-                value, policy = evaluate_from_tflite(node_state.game, network)
-            elif config.model == 'pytorch':
-                value, policy = evaluate_pytorch(node_state.game, network)
+            value, policy = evaluate(config, node_state.game, network)
             # value, policy = random_evaluate()
                 
             # Make sure that no values of the policy are below 0
@@ -998,6 +1001,12 @@ def train_network_pytorch(config, model, set):
     loss = loss.item()
     print(f"loss: {loss:>7f}")
 
+def evaluate(config, game, network):
+    if config.model == 'keras':
+        return evaluate_from_tflite(game, network)
+    elif config.model == 'pytorch':
+        return evaluate_pytorch(game, network)
+    
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
     data = game_to_X(game)
@@ -1032,9 +1041,10 @@ def evaluate_from_tflite(game, interpreter):
     policies = interpreter.get_tensor(output_details[0]['index'])
 
     # Both value and policies are returned as arrays
+    value = value.item()
     policies = policies.reshape(POLICY_SHAPE)
     
-    return value[0][0], policies
+    return value, policies
 
 def evaluate_pytorch(game, model):
     # Use a neural network to return value and policy.
@@ -1642,6 +1652,8 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
 def load_best_model(config):
     max_ver = highest_model_number(config, MODEL_VERSION)
 
+    blockPrint()
+
     if config.model == 'keras':
         path = f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}/{max_ver}.keras"
 
@@ -1654,12 +1666,16 @@ def load_best_model(config):
         model.to(device)
         model.eval()
 
+    enablePrint()
+
     print(path)
 
     return model
 
 def get_interpreter(model):
     # Save a model as saved model, then load it as tflite
+    blockPrint()
+    
     path = f"{directory_path}/TEMP_MODELS/savedmodel"
     model.export(path)
 
@@ -1686,6 +1702,8 @@ def get_interpreter(model):
 
     interpreter = tf.lite.Interpreter(model_content=tflite_model)
     interpreter.allocate_tensors()
+
+    enablePrint()
 
     return interpreter
 
@@ -1729,25 +1747,11 @@ def highest_data_number(config):
     return max
 
 # Debug Functions
+# Disable
+def blockPrint():
+    if HIDE_PRINTS:
+        sys.stdout = open(os.devnull, 'w')
 
-
-
-if __name__ == "__main__":
-
-    game = Game()
-    game.setup()
-
-    # Place a piece to make it more interesting
-    for i in range(10):
-        piece = game.players[game.turn].piece
-        game.make_move((piece.type, piece.x_0, game.players[game.turn].ghost_y, 0))
-
-    
-
-    # Profile make moves
-    with cProfile.Profile() as pr:
-        for i in range(100):
-            get_move_matrix(game.players[game.turn])
-    stats = pstats.Stats(pr)
-    stats.sort_stats(pstats.SortKey.TIME)
-    stats.print_stats(20)
+# Restore
+def enablePrint():
+    sys.stdout = sys.__stdout__
