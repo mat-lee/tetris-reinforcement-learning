@@ -1502,11 +1502,10 @@ def get_data_filenames(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_
     if config.shuffle:
         random.shuffle(filenames)
     return filenames
-    
 
 def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
-    # Battle two AI's with different networks.
-    # Returns true if NN_1 wins, otherwise returns false
+    # Battle two AI networks and returns results with optional early termination
+    # Returns tuple of (wins_array, True if NN_1 met the threshold, False otherwise)
     wins = np.zeros((2), dtype=int)
     flip_color = False
 
@@ -1530,16 +1529,10 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
         game.setup()
 
         while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
-            if not flip_color:
-                if game.turn == 0:
-                    move, _, _ = MCTS(config_1, game, NN_1)    
-                elif game.turn == 1:
-                    move, _, _ = MCTS(config_2, game, NN_2)
+            if (game.turn == 0 and not flip_color) or (game.turn == 1 and flip_color):
+                move, *_ = MCTS(config_1, game, NN_1)
             else:
-                if game.turn == 1:
-                    move, _, _ = MCTS(config_1, game, NN_1)    
-                elif game.turn == 0:
-                    move, _, _ = MCTS(config_2, game, NN_2)
+                move, *_ = MCTS(config_2, game, NN_2)
             game.make_move(move)
 
             if show_game == True:
@@ -1556,26 +1549,28 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
 
         flip_color = not flip_color
 
-        # End early if either player reaches the cutoff
-        if threshold_type == 'more':
-            if wins[0] > threshold * games:
-                print(*wins)
-                return True
-            elif wins[1] >= (1 - threshold) * games:
-                print(*wins)
-                return False
-        elif threshold_type == 'moreorequal':
-            if wins[0] >= threshold * games:
-                print(*wins)
-                return True
-            elif wins[1] > (1 - threshold) * games:
-                print(*wins)
-                return False
+        # Terminate early if threshold is provided and either network meets it
+        if threshold is not None:
+            if threshold_type == 'more':
+                if wins[0] > threshold * games:
+                    print(*wins)
+                    return wins, True
+                elif wins[1] >= (1 - threshold) * games:
+                    print(*wins)
+                    return wins, False
+            elif threshold_type == 'moreorequal':
+                if wins[0] >= threshold * games:
+                    print(*wins)
+                    return wins, True
+                elif wins[1] > (1 - threshold) * games:
+                    print(*wins)
+                    return wins, False
         else:
             raise NotImplementedError
 
-    # If neither side eaches a cutoff (which shouldn't happen) return false
-    return False
+    # If neither side eaches a cutoff, return None
+    print(*wins)
+    return wins, None
 
 def self_play_loop(config, skip_first_set=False, show_games=False):
     if show_games == True:
@@ -1618,7 +1613,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
 
         # If new network is improved, save it and make it the default
         # Otherwise, repeat
-        if battle_networks(
+        _, win = battle_networks(
             (challenger_interpreter if config.model == 'keras' else challenger_network), 
             config, 
             (best_interpreter if config.model == 'keras' else best_network), 
@@ -1628,7 +1623,8 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
             BATTLE_GAMES, 
             show_game=show_games, 
             screen=screen
-        ):
+        )
+        if win:
             # Challenger network becomes next highest version
             next_ver = highest_model_number(config, MODEL_VERSION) + 1
 

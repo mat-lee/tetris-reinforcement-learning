@@ -10,58 +10,6 @@ import pygame
 import time
 
 # ------------------------- Internal Functions -------------------------
-def battle_networks_win_loss(NN_1, config_1, NN_2, config_2, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None) -> list[int, int]:
-    # Battle two AI's with different networks, and returns the wins and losses for each network
-    wins = np.zeros((2), dtype=int)
-    flip_color = False
-
-    for i in range(games):
-        if show_game == True:
-            if screen == None:
-                screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-
-            if not flip_color:
-                title = f'{network_1_title} | {wins[0]} vs {wins[1]} | {network_2_title}'
-            else:
-                title = f'{network_2_title} | {wins[1]} vs {wins[0]} | {network_1_title}'
-            pygame.display.set_caption(title)
-
-            for event in pygame.event.get():
-                pass
-
-        game = Game()
-        game.setup()
-
-        while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
-            if not flip_color:
-                if game.turn == 0:
-                    move, _, _ = MCTS(config_1, game, NN_1)    
-                elif game.turn == 1:
-                    move, _, _ = MCTS(config_2, game, NN_2)
-            else:
-                if game.turn == 1:
-                    move, _, _ = MCTS(config_1, game, NN_1)    
-                elif game.turn == 0:
-                    move, _, _ = MCTS(config_2, game, NN_2)
-            game.make_move(move)
-
-            if show_game == True:
-                game.show(screen)
-                pygame.display.update()
-
-        winner = game.winner
-        if winner == -1:
-            wins += 0.5
-        else: 
-            if flip_color:
-                winner = 1 - winner
-            wins[winner] += 1
-
-        flip_color = not flip_color
-
-    print(network_1_title, wins, network_2_title)
-    return wins
-
 def battle_royale(interpreters, configs, names, num_games, visual=True) -> dict:
     screen = None
     if visual == True:
@@ -72,12 +20,13 @@ def battle_royale(interpreters, configs, names, num_games, visual=True) -> dict:
     for i in range(len(interpreters)):
         for j in range(i):
             if i != j:
-                score_1, score_2 = battle_networks_win_loss(interpreters[i], configs[i], 
-                                                            interpreters[j], configs[j],
-                                                            num_games, 
-                                                            network_1_title=names[i], 
-                                                            network_2_title=names[j], 
-                                                            show_game=visual, screen=screen)
+                (score_1, score_2), _ = battle_networks(interpreters[i], configs[i], 
+                                                   interpreters[j], configs[j],
+                                                   None, None, # Set threshold to None
+                                                   num_games, 
+                                                   network_1_title=names[i], 
+                                                   network_2_title=names[j], 
+                                                   show_game=visual, screen=screen)
                 
                 scores[names[i]][names[j]] = f"{score_1}-{score_2}"
                 scores[names[j]][names[i]] = f"{score_2}-{score_1}"
@@ -538,7 +487,7 @@ def test_older_vs_newer_networks(old_ver, new_ver):
 
     config = Config()
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-    battle_networks_win_loss(new_model, config, old_model, config, 200, f"new {new_ver}", f"old {old_ver}", True, screen)
+    battle_networks(new_model, config, old_model, config, 200, None, None, f"new {new_ver}", f"old {old_ver}", True, screen)
 
 def test_if_changes_improved_model():
     config = Config()
