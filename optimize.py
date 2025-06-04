@@ -1,5 +1,4 @@
 from ai import *
-from tests import battle_networks_win_loss
 
 from skopt import gp_minimize
 from skopt.space import Real, Integer, Categorical
@@ -21,15 +20,15 @@ param_space = [
     Categorical([False, True], name='use_experimental_features'),
     Categorical([False, True], name='save_all'),
     Categorical([False, True], name='use_playout_cap_randomization'),
-    Real(0.0, 1.0, name='dirichlet_alpha'),
+    Real(0.0, 1.0, name='DIRICHLET_ALPHA'),
     Categorical([False, True], name='use_dirichlet_s'),
     Categorical([False, True], name='use_forced_playouts_and_policy_target_pruning'),
     Integer(0.0, 3.0, name='CForcedPlayout'),
 ]
 
-training_games = 10 # Number of training games per training loop
-training_loops = 4 # Number of training loops
-eval_games = 40 # Number of evaluation games
+training_games = 1 # Number of training games per training loop
+training_loops = 1 # Number of training loops
+eval_games = 1 # Number of evaluation games
 visual = True
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 i = 0
@@ -38,7 +37,7 @@ def evaluate_challenger(baseline_config, challenger_config, challenger_interpret
     # Returns the percentage of games won by the challenger network against the baseline network
     baseline_interpreter = get_interpreter(load_best_model(baseline_config))
 
-    wins = battle_networks_win_loss(baseline_interpreter, baseline_config, challenger_interpreter, challenger_config, num_games, "Baseline Network", "Challenger Network", show_game=visual, screen=screen)
+    wins, _ = battle_networks(baseline_interpreter, baseline_config, challenger_interpreter, challenger_config, None, None, num_games, "Baseline Network", "Challenger Network", show_game=visual, screen=screen)
     chal_wins = wins[1]
     eval = chal_wins / num_games # Win more -> higher eval
     return eval
@@ -88,10 +87,11 @@ if __name__ == "__main__":
     result = gp_minimize(
         func=objective_function,       # Objective function
         dimensions=param_space,        # Parameter space
-        n_calls=1,                    # Number of evaluations
+        n_calls=10,                    # Number of evaluations
         random_state=42                # For reproducibility
     )
 
     print(f"Best Parameters: {result.x}")
     print(f"Best Score: {-result.fun}")  # Negate the score to interpret correctly
+    print()
     print([print(x) for x in result.x_iters])

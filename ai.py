@@ -1565,8 +1565,8 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
                 elif wins[1] > (1 - threshold) * games:
                     print(*wins)
                     return wins, False
-        else:
-            raise NotImplementedError
+        # else:
+            # raise NotImplementedError
 
     # If neither side eaches a cutoff, return None
     print(*wins)
