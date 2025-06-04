@@ -65,17 +65,17 @@ class Config():
         move_algorithm='faster-but-loss', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
         # Architecture Parameters
-        # Fishlike model
+        #   Fishlike model
         l1_neurons=256, 
         l2_neurons=32,
 
-        # Alphalike model
+        #   Alphalike model
         blocks=10,
         pooling_blocks=2,
         filters=16, 
         cpool=4,
 
-        # Only use one of dropout or l2_reg
+        #   Only use one of dropout or l2_reg
         dropout=0.25,
         l2_reg=3e-5,
 
@@ -85,21 +85,29 @@ class Config():
 
         use_tanh=False, # If false means using sigmoid; affects data saving and model activation
 
+        # MCTS Parameters
+        MAX_ITER=160, 
+        CPUCT=0.75,
+
+        FpuStrategy='reduction', # 'reduction' subtracts FpuValue from parent eval, 'absolute' uses FpuValue
+        FpuValue=0.4,
+
+        use_root_softmax=True,
+        RootSoftmaxTemp=1.1,
+
         # Training Parameters
-        data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
-        augment_data=True,
+        training=False, # Set to true to use a variety of features
         learning_rate=0.001, 
         loss_weights=[1, 1], 
         epochs=1, 
         batch_size=64,
-        shuffle=True,
 
-        # MCTS Parameters
-        training=False, # Set to true to use a variety of features
+        data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
+        augment_data=True,
+        shuffle=True,
         use_experimental_features=True, # Before setting to true, check if it's in use
         save_all=False,
 
-        MAX_ITER=160, # 1600 ##########
         use_playout_cap_randomization=True,
         playout_cap_chance=0.25,
         playout_cap_mult=5,
@@ -110,16 +118,8 @@ class Config():
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
 
-        FpuStrategy='reduction', # 'reduction' subtracts FpuValue from parent eval, 'absolute' uses FpuValue
-        FpuValue=0.4,
-
         use_forced_playouts_and_policy_target_pruning=True,
         CForcedPlayout=2,
-
-        use_root_softmax=True,
-        RootSoftmaxTemp=1.1,
-        
-        CPUCT=0.75
     ):
         self.ruleset = ruleset
         self.model = model
@@ -137,17 +137,22 @@ class Config():
         self.o_side_neurons = o_side_neurons
         self.value_head_neurons = value_head_neurons
         self.use_tanh = use_tanh
-        self.data_loading_style = data_loading_style
-        self.augment_data = augment_data
+        self.MAX_ITER = MAX_ITER
+        self.CPUCT = CPUCT
+        self.FpuStrategy = FpuStrategy
+        self.FpuValue = FpuValue
+        self.use_root_softmax = use_root_softmax
+        self.RootSoftmaxTemp = RootSoftmaxTemp
+        self.training = training
         self.learning_rate = learning_rate
         self.loss_weights = loss_weights
         self.epochs = epochs
         self.batch_size = batch_size
+        self.data_loading_style = data_loading_style
+        self.augment_data = augment_data
         self.shuffle = shuffle
-        self.training = training
         self.use_experimental_features = use_experimental_features
         self.save_all = save_all
-        self.MAX_ITER = MAX_ITER
         self.use_playout_cap_randomization = use_playout_cap_randomization
         self.playout_cap_chance = playout_cap_chance
         self.playout_cap_mult = playout_cap_mult
@@ -156,13 +161,8 @@ class Config():
         self.DIRICHLET_S = DIRICHLET_S
         self.DIRICHLET_EXPLORATION = DIRICHLET_EXPLORATION
         self.use_dirichlet_s = use_dirichlet_s
-        self.FpuStrategy = FpuStrategy
-        self.FpuValue = FpuValue
         self.use_forced_playouts_and_policy_target_pruning = use_forced_playouts_and_policy_target_pruning
         self.CForcedPlayout = CForcedPlayout
-        self.use_root_softmax = use_root_softmax
-        self.RootSoftmaxTemp = RootSoftmaxTemp
-        self.CPUCT = CPUCT
 
     def copy(self):
         # Create a new Config instance with the same attributes as self
