@@ -59,6 +59,7 @@ class Config():
 
         model='keras',
         default_model=None,
+        move_algorithm='faster-but-loss', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
         # Architecture Parameters
         # Fishlike model
@@ -120,6 +121,7 @@ class Config():
         self.ruleset = ruleset
         self.model = model
         self.default_model = default_model
+        self.move_algorithm = move_algorithm
         self.l1_neurons = l1_neurons
         self.l2_neurons = l2_neurons
         self.blocks = blocks
@@ -159,6 +161,10 @@ class Config():
         self.RootSoftmaxTemp = RootSoftmaxTemp
         self.CPUCT = CPUCT
 
+    def copy(self):
+        # Create a new Config instance with the same attributes as self
+        return Config(**vars(self))
+
 class NodeState():
     """Node class for storing the game in the tree.
     
@@ -176,7 +182,7 @@ class NodeState():
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple, treelib.Tree, bool]:
+def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
     global total_branch, number_branch
     # Picks a move for the AI to make 
 
@@ -189,7 +195,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple
         while len(player.queue.pieces) > PREVIEWS:
             player.queue.pieces.pop(-1)
 
-    # Create the initial node
+    # Create the root node
     initial_state = NodeState(game=game_copy, move=None)
 
     tree.create_node(identifier="root", data=initial_state)
@@ -300,7 +306,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple
             policy[policy<=0] = 1e-25
 
             if node_state.game.no_move == False:
-                move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn], algo=move_algorithm)
+                move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn], algo=config.move_algorithm)
                 move_list = get_move_list(move_matrix, policy)
 
                 assert len(move_list) > 0, [node_state.game.players[node_state.game.turn].board.grid, 
@@ -461,7 +467,7 @@ def MCTS(config, game, network, move_algorithm='faster-but-loss') -> tuple[tuple
     data = tree.get_node(max_id).data
     move = data.move
 
-    # Prune policie
+    # Prune policy
     if config.use_forced_playouts_and_policy_target_pruning and config.training and not fast_iter:
         post_prune_n_list = []
 
@@ -1017,7 +1023,8 @@ def evaluate_from_tflite(game, interpreter):
             split_str = split_str.split("_")[2]
             idx = int(split_str)
         
-        interpreter.set_tensor(input_details[i]["index"], X[idx])
+        assert input_details[i]["index"] == i
+        interpreter.set_tensor(i, X[idx])
 
     interpreter.invoke()
 
@@ -1086,6 +1093,8 @@ def search_statistics(tree):
         if root_child_n != 0:
             root_child_move = root_child.data.move
             policy_index, col, row = root_child_move
+
+            assert policy_index >= 0 and row >= 0 and col + 2 >= 0 # Make sure indices are nonnegative
 
             # ACCOUNT FOR BUFFER
             probability_matrix[policy_index][row][col + 2] = round(root_child_n / total_n, 4)
@@ -1258,8 +1267,7 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
             screen = pygame.display.set_mode( (WIDTH, HEIGHT))
         pygame.display.set_caption(f'Training game {game_number}')
 
-        for event in pygame.event.get():
-            pass
+        pygame.event.get()
 
     game = Game(config.ruleset)
     game.setup()
@@ -1276,7 +1284,7 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
         scale = 0.04 * config.DIRICHLET_S
         num_random_moves = np.random.exponential(scale=scale)
 
-        fast_config = copy.deepcopy(config)
+        fast_config = config.copy()
         fast_config.MAX_ITER = 1
         fast_config.use_playout_cap_randomization = False
         fast_config.use_dirichlet_noise = False
@@ -1506,8 +1514,7 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
                 title = f'{network_2_title} | {wins[1]} vs {wins[0]} | {network_1_title}'
             pygame.display.set_caption(title)
 
-            for event in pygame.event.get():
-                pass
+            pygame.event.get()
 
         game = Game(config_1.ruleset)
         game.setup()
@@ -1569,7 +1576,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
     if config.model == 'keras':
         best_interpreter = get_interpreter(best_network)
 
-    training_config = copy.deepcopy(config)
+    training_config = config.copy()
     # Setting training to true enables a variety of training features
     training_config.training = True
 

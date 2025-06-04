@@ -88,6 +88,8 @@ class Main:
                                 game.players[1].garbage_to_receive.append(random.randint(0, 9))
                             elif event.key == k_switch:
                                 game.players[0].board, game.players[1].board = game.players[1].board, game.players[0].board
+                            elif event.key == k_print_board:
+                                print(game.players[game.turn].board.grid)
 
                         # On key release
                         elif event.type == pygame.KEYUP:
