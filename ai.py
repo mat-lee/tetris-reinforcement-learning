@@ -1644,18 +1644,16 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
             del challenger_interpreter
 
         gc.collect()
-
-def load_best_model(config):
-    max_ver = highest_model_number(config, MODEL_VERSION)
-
+def load_model(config, model_number):
+    # Returns the model with the given number
     blockPrint()
 
     if config.model == 'keras':
-        path = f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}/{max_ver}.keras"
+        path = f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}/{model_number}.keras"
 
         model = keras.models.load_model(path)
     elif config.model == 'pytorch':
-        path = f"{directory_path}/pytorch_models/{config.ruleset}.{MODEL_VERSION}/{max_ver}"
+        path = f"{directory_path}/pytorch_models/{config.ruleset}.{MODEL_VERSION}/{model_number}"
 
         model = config.default_model(config)
         model.load_state_dict(torch.load(path))
@@ -1667,6 +1665,12 @@ def load_best_model(config):
     print(path)
 
     return model
+
+def load_best_model(config):
+    # Returns the model with the highest number
+    max_ver = highest_model_number(config, MODEL_VERSION)
+
+    return load_model(config, max_ver)
 
 def get_interpreter(model):
     # Save a model as saved model, then load it as tflite

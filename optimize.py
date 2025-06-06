@@ -32,10 +32,11 @@ eval_games = 1 # Number of evaluation games
 visual = True
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 i = 0
+baseline_model = 8 # The model number of the baseline network to compare against
 
 def evaluate_challenger(baseline_config, challenger_config, challenger_interpreter, num_games, visual, screen):
     # Returns the percentage of games won by the challenger network against the baseline network
-    baseline_interpreter = get_interpreter(load_best_model(baseline_config))
+    baseline_interpreter = get_interpreter(load_model(baseline_config, 5))
 
     wins, _ = battle_networks(baseline_interpreter, baseline_config, challenger_interpreter, challenger_config, None, None, num_games, "Baseline Network", "Challenger Network", show_game=visual, screen=screen)
     chal_wins = wins[1]
