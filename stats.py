@@ -40,7 +40,7 @@ class Stats:
             if (self.b2b >= list[0]) and (self.b2b_level < list[1]):
                 self.b2b_level = list[1]
 
-    def get_attack(self, rows_cleared, is_tspin, is_mini, is_all_clear):
+    def get_attack(self, rows_cleared, is_tspin, is_mini, is_all_clear, piece_type):
         # Returns attack + functions as update stats for now
         attack = 0
 
@@ -138,6 +138,8 @@ class Stats:
 
         if is_tspin == True:
             attack_text += 'T-SPIN '
+        elif is_mini == True:
+            attack_text += f'{piece_type.capitalize()}-SPIN '
 
         if rows_cleared == 4:
             attack_text += 'QUAD'

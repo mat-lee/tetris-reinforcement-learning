@@ -33,7 +33,7 @@ def battle_royale(interpreters, configs, names, num_games, visual=True) -> dict:
 
     return scores
 
-def make_piece_starting_row():
+def make_piece_coord_starting_row_dict():
     player = Player()
     res = {}
     for piece_type in mino_coords_dict:
@@ -89,10 +89,21 @@ def make_piece_starting_row():
     
     return res
 
+def get_attribute_list_from_tree(tree, attr):
+    res = []
+
+    root = tree.get_node("root")
+    child_ids = root.successors(tree.identifier)
+
+    for child_id in child_ids:
+        child = tree.get_node(child_id)
+        res.append(getattr(child.data, attr))
+
+    return res
 
 # ------------------------- Test Functions -------------------------
 
-def test_dirichlet_noise() -> None:
+def plot_dirichlet_noise() -> None:
     # Finding different values of dirichlet alpha affect piece decisions
     alpha_values = [1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001]
     # alpha_values = [0.4, 0.3, 0.2, 0.1]
@@ -100,17 +111,17 @@ def test_dirichlet_noise() -> None:
 
     use_dirichlet_s=False
 
-    default_config = Config()
+    c = Config()
 
-    model = load_best_model(default_config)
+    model = load_best_model(c)
     interpreter = get_interpreter(model)
 
     for _ in range(10):
-        game = Game()
+        game = Game(c.ruleset)
         game.setup()
 
         while game.is_terminal == False:
-            default_move, _, _ = MCTS(default_config, game, interpreter)
+            default_move, _, _ = MCTS(c, game, interpreter)
 
             for alpha_value in alpha_values:
                 config = Config(DIRICHLET_ALPHA=alpha_value, use_dirichlet_s=use_dirichlet_s, training=True, use_playout_cap_randomization=False)
@@ -132,7 +143,7 @@ def test_dirichlet_noise() -> None:
     ax.set_xticks(range(len(percent_dict)), list(percent_dict.keys()))
 
     if use_dirichlet_s:
-        ax.set_xlabel(f"Dirichlet Alpha Values; Dirichlet S {default_config.DIRICHLET_S}")
+        ax.set_xlabel(f"Dirichlet Alpha Values; Dirichlet S {c.DIRICHLET_S}")
         ax.set_ylabel("% of moves that were the same as without noise")
 
         plt.savefig(f"{directory_path}/tst_alpha_vals_s")
@@ -143,6 +154,35 @@ def test_dirichlet_noise() -> None:
         plt.savefig(f"{directory_path}/tst_alpha_vals")
 
     return percent_dict
+
+def view_visit_count_and_policy_with_and_without_dirichlet_noise() -> None:
+    # Creates a graph of the policy distribution before and after dirichlet noise is applied
+    c = Config(training=True,
+               use_playout_cap_randomization=False, 
+               use_forced_playouts_and_policy_target_pruning=False)
+
+    g = Game(c.ruleset)
+    g.setup()
+
+    no_noise_config = c.copy()
+    noisy_config = c.copy()
+    noisy_config.use_dirichlet_noise = True
+
+    interpreter = get_interpreter(load_best_model(c))
+    _, no_noise_tree, _ = MCTS(no_noise_config, g, interpreter)
+    _, noisy_tree, _ = MCTS(noisy_config, g, interpreter)
+
+    root_child_n = get_attribute_list_from_tree(noisy_tree, "visit_count")
+    pre_noise_policy = get_attribute_list_from_tree(no_noise_tree, "policy")
+    post_noise_policy = get_attribute_list_from_tree(noisy_tree, "policy")
+
+    fig, axs = plt.subplots(3)
+    fig.suptitle('Policy and visit count before and after dirichlet noise')
+    axs[0].plot(root_child_n)
+    axs[1].plot(pre_noise_policy)
+    axs[2].plot(post_noise_policy)
+    plt.savefig(f"{directory_path}/visit_count_vs_policy_vs_policy+noise_{c.ruleset}_{MODEL_VERSION}.png")
+    print("Saved")
 
 def time_move_matrix(algo) -> None:
     # Test the game speed
@@ -170,25 +210,25 @@ def time_move_matrix(algo) -> None:
 
     # Using lookup table for row      0.239
 
-    config = Config(MAX_ITER=100)
+    c = Config(MAX_ITER=100, move_algorithm=algo)
 
-    num_games = 3
+    num_games = 5
 
     # Initialize pygame
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
     pygame.display.set_caption(f'Profiling Get Move Matrix')
 
-    interpreter = get_interpreter(load_best_model(config))
+    interpreter = get_interpreter(load_best_model(c))
 
     moves = 0
     START = time.time()
 
     for _ in range(num_games):
-        game = Game()
+        game = Game(c.ruleset)
         game.setup()
 
         while game.is_terminal == False:
-            move, _, _ = MCTS(config, game, interpreter, move_algorithm=algo)
+            move, _, _ = MCTS(c, game, interpreter)
             game.make_move(move)
             moves += 1
 
@@ -208,7 +248,7 @@ def time_architectures(var, values) -> None:
         setattr(config, var, value)
         network = get_interpreter(instantiate_network(config,show_summary=False, save_network=False))
 
-        game = Game()
+        game = Game(configs[0].ruleset)
         game.setup()
 
         START = time.time()
@@ -219,18 +259,18 @@ def time_architectures(var, values) -> None:
     print(scores)
 
 def profile_game() -> None:
-    game = Game()
+    c = Config()
+    game = Game(c.ruleset)
     game.setup()
 
-    config = Config()
-    network = get_interpreter(load_best_model())
+    network = get_interpreter(load_best_model(c))
 
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption(f'Testing algorithm accuracy')
 
     # Profile game
     with cProfile.Profile() as pr:
-        play_game(config, network, 777, show_game=True, screen=screen)
+        play_game(c, network, 777, show_game=True, screen=screen)
     stats = pstats.Stats(pr)
     stats.sort_stats(pstats.SortKey.TIME)
     stats.print_stats(20)
@@ -245,22 +285,22 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption(f'Testing algorithm accuracy')
 
-    config = Config()
+    c = Config()
 
-    interpreter = get_interpreter(load_best_model(config))
+    interpreter = get_interpreter(load_best_model(c))
 
     truth_moves = 0
     test_moves = 0
 
     for _ in range(num_games):
-        game = Game()
+        game = Game(c.ruleset)
         game.setup()
 
         while game.is_terminal == False:
             truth_moves += np.sum(get_move_matrix(game.players[game.turn], algo=truth_algo))
             test_moves += np.sum(get_move_matrix(game.players[game.turn], algo=test_algo))
 
-            move, _, _ = MCTS(config, game, interpreter, move_algorithm='brute-force')
+            move, _, _ = MCTS(c, game, interpreter, move_algorithm='brute-force')
             game.make_move(move)
 
             game.show(screen)
@@ -269,25 +309,27 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     
     print(test_moves / truth_moves * 100)
 
+def visualize_piece_placements(game, moves):
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption('Tetris')
+    # Need to iterate through pygame events to initialize screen
+    for event in pygame.event.get():
+        pass
+
+    for policy, move in moves:
+        game_copy = game.copy()
+        game_copy.make_move(move)
+
+        game_copy.show(screen)
+        pygame.display.update()
+
+        time.sleep(0.3)
+
 def test_reflected_policy():
     # Testing if reflecting pieces, grids, and policy are accurate
-    def visualize_piece_placements(game, moves):
-        screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption('Tetris')
-        # Need to iterate through pygame events to initialize screen
-        for event in pygame.event.get():
-            pass
+    c = Config()
 
-        for policy, move in moves:
-            game_copy = game.copy()
-            game_copy.make_move(move)
-
-            game_copy.show(screen)
-            pygame.display.update()
-
-            time.sleep(0.3)
-
-    game = Game()
+    game = Game(c.ruleset)
     game.setup()
 
     # Place a piece to make it more interesting
@@ -337,28 +379,7 @@ def test_parameters(
     for value, config in zip(values, configs):
         setattr(config, var, value)
 
-    # Networks
-    if load_from_best_model:
-        networks = [load_best_model(config) for config in configs]
-    else:
-        networks = [instantiate_network(config, show_summary=False, save_network=False, plot_model=False) for config in configs]
-
-    if data != None:
-        for config, network in zip(configs, networks):
-            for set in data:
-                train_network_keras(config, network, set)
-        
-        del data
-        gc.collect()
-
-    # Networks -> interpreters
-    interpreters = [get_interpreter(network) for network in networks]
-
-    print(battle_royale(interpreters, 
-                        configs, 
-                        [str(value) for value in values], 
-                        num_games,
-                        visual=visual))
+    test_configs(configs, num_games, data=data, load_from_best_model=load_from_best_model, visual=visual)
 
 def test_configs(
     configs,
@@ -377,11 +398,7 @@ def test_configs(
 
     if data != None:
         for config, network in zip(configs, networks):
-            for set in data:
-                train_network_keras(config, network, set)
-        
-        del data
-        gc.collect()
+             load_data_and_train_model(config, network, data)
 
     # Networks -> interpreters
     interpreters = [get_interpreter(network) for network in networks]
@@ -390,40 +407,6 @@ def test_configs(
                         configs, 
                         [f"Config {i+1}" for i in range(len(configs))], 
                         num_games,
-                        visual=visual))
-
-def test_architectures(
-    config,
-    nn_gens: list, 
-    data,
-    num_games,
-    visual=True
-):
-    # Configs aren't being changed here but the list is needed for battle royale
-    configs = [copy.deepcopy(config) for _ in range(len(nn_gens))]
-    
-    networks = [instantiate_network(configs[0], 
-                                    nn_generator=nn_gen, 
-                                    show_summary=True, 
-                                    save_network=False, 
-                                    plot_model=False) for nn_gen in nn_gens]
-
-    for network in networks:
-        for set in data:
-            if config.model == 'keras':
-                train_network_keras(configs[0], network, set)
-            elif config.model == 'pytorch':
-                raise NotImplementedError
-
-    del data
-    gc.collect()
-
-    interpreters = [get_interpreter(network) for network in networks]
-
-    print(battle_royale(interpreters, 
-                        configs, 
-                        [str(nn_gen) for nn_gen in nn_gens],
-                        num_games=num_games, 
                         visual=visual))
 
 def test_data_parameters(
@@ -458,7 +441,7 @@ def test_data_parameters(
             interpreter = get_interpreter(network)
             set = make_training_set(config, interpreter, num_training_games, save_game=False, show_game=visual, screen=screen)
             
-            train_network_keras(config, network, set)
+            train_network(config, network, set)
 
             del set
             gc.collect()
@@ -520,7 +503,7 @@ def test_high_depth_replay(network, max_iter):
     pygame.display.set_caption(f"Search Amount {max_iter} Replay Game")
     pygame.event.get() # Required for visuals?
 
-    game = Game()
+    game = Game(c.ruleset)
     game.setup()
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
@@ -593,6 +576,42 @@ def test_convert_data_and_train_4_7_to_4_8():
         
     new_network.save(f"{directory_path}/models/TESTS/{i}.keras")
     
+def visualize_policy():
+    # Visualize the policy of a network
+    c=Config(MAX_ITER=16)
+
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption(f"Viewing policy of the network")
+    pygame.event.get() # Required for visuals?
+
+    game = Game(c.ruleset)
+    game.setup()
+
+    network = get_interpreter(load_best_model(c))
+
+    # After a certain number of moves, the policy is examined
+    moves = 10
+
+    while game.is_terminal == False and len(game.history.states) < moves:
+        move, _, _ = MCTS(c, game, network)
+        game.make_move(move)
+
+        game.show(screen)
+        pygame.display.update()
+
+    value, policy = evaluate(c, game, network)
+
+    pygame.image.save(screen, f"{directory_path}/policy_visualization_screen.png")
+
+    fig, axs = plt.subplots(1, 19, figsize=(25, 3))
+    fig.suptitle('Policy visualization', y=0.98)
+    for i in range(len(policy_index_to_piece)):
+        axs[i].imshow(policy[i], cmap='viridis')
+        axs[i].set_title(f"{policy_index_to_piece[i][0]} rotation {policy_index_to_piece[i][1]}")
+
+    plt.savefig(f"{directory_path}/policy_visualization.png")
+    print("saved")
+
 if __name__ == "__main__":
 
     c=Config(model='keras', shuffle=True, MAX_ITER=1)
@@ -621,12 +640,17 @@ if __name__ == "__main__":
     # time_move_matrix('faster-but-loss')
 
 
-    test_dirichlet_noise()
+    plot_dirichlet_noise()
     # test_older_vs_newer_networks(14, 28)
 
 
     # test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=80000)
     # test_convert_data_and_train_4_7_to_4_8()
+
+    # profile_game()
+    # view_policy_with_and_without_dirichlet_noise()
+    # view_visit_count_and_policy_with_and_without_dirichlet_noise()
+    # visualize_policy()
 
 
 # Command for running python files
