@@ -6,17 +6,17 @@ from skopt.utils import use_named_args
 
 param_space = [
     Real(0.0, 0.9, name='dropout'),
-    Categorical([False, True], name='use_tanh'),
+    # Categorical([False, True], name='use_tanh'),
 
-    Real(1, 100, name='CPUCT'),
+    Real(0.1, 10, name='CPUCT'),
     Categorical(['reduction', 'absolute'], name='FpuStrategy'),
     Real(0.0, 1.0, name='FpuValue'),
     Categorical([False, True], name='use_root_softmax'),
 
     Real(0.0001, 0.01, name='learning_rate'),
     Real(0.0, 10.0, name='policy_loss_weight'),
-    Categorical(['merge', 'distinct'], name='data_loading_style'),
-    Categorical([False, True], name='augment_data'),
+    # Categorical(['merge', 'distinct'], name='data_loading_style'),
+    # Categorical([False, True], name='augment_data'),
     Categorical([False, True], name='use_experimental_features'),
     Categorical([False, True], name='save_all'),
     Categorical([False, True], name='use_playout_cap_randomization'),
@@ -26,9 +26,9 @@ param_space = [
     Integer(0.0, 3.0, name='CForcedPlayout'),
 ]
 
-training_games = 1 # Number of training games per training loop
-training_loops = 1 # Number of training loops
-eval_games = 1 # Number of evaluation games
+training_games = 25 # Number of training games per training loop
+training_loops = 4 # Number of training loops
+eval_games = 50 # Number of evaluation games
 visual = True
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 i = 0
@@ -88,7 +88,7 @@ if __name__ == "__main__":
     result = gp_minimize(
         func=objective_function,       # Objective function
         dimensions=param_space,        # Parameter space
-        n_calls=10,                    # Number of evaluations
+        n_calls=20,                    # Number of evaluations
         random_state=42                # For reproducibility
     )
 
