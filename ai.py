@@ -43,7 +43,7 @@ import pstats
 
 # For naming data and models
 MODEL_VERSION = 5.7
-DATA_VERSION = 2.0
+DATA_VERSION = 2.1
 
 # For reducing the amount of tensorflow prints
 HIDE_PRINTS = True
@@ -113,7 +113,7 @@ class Config():
         playout_cap_mult=5,
 
         use_dirichlet_noise=True,
-        DIRICHLET_ALPHA=0.1,
+        DIRICHLET_ALPHA=0.02,
         DIRICHLET_S=25,
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
