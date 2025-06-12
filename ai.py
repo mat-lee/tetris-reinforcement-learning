@@ -87,7 +87,8 @@ class Config():
 
         # MCTS Parameters
         MAX_ITER=160, 
-        CPUCT=0.75,
+        CPUCT=0.75, # CPUCT is the scalar multiple of the policy term in PUCT
+        DPUCT=1, # DPUCT is an additive scalar in the denominator of in PUCT
 
         FpuStrategy='reduction', # 'reduction' subtracts FpuValue from parent eval, 'absolute' uses FpuValue
         FpuValue=0.4,
@@ -107,6 +108,8 @@ class Config():
         shuffle=True,
         use_experimental_features=True, # Before setting to true, check if it's in use
         save_all=False,
+
+        use_random_starting_moves=False, # If true, pick the first few moves randomly with respect to policy weights
 
         use_playout_cap_randomization=True,
         playout_cap_chance=0.25,
@@ -139,6 +142,7 @@ class Config():
         self.use_tanh = use_tanh
         self.MAX_ITER = MAX_ITER
         self.CPUCT = CPUCT
+        self.DPUCT = DPUCT
         self.FpuStrategy = FpuStrategy
         self.FpuValue = FpuValue
         self.use_root_softmax = use_root_softmax
@@ -153,6 +157,7 @@ class Config():
         self.shuffle = shuffle
         self.use_experimental_features = use_experimental_features
         self.save_all = save_all
+        self.use_random_starting_moves = use_random_starting_moves
         self.use_playout_cap_randomization = use_playout_cap_randomization
         self.playout_cap_chance = playout_cap_chance
         self.playout_cap_mult = playout_cap_mult
@@ -258,7 +263,7 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
                 child_data = tree.get_node(child_id).data
 
                 Q = child_data.value_avg
-                U = config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(1+child_data.visit_count)
+                U = config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(config.DPUCT+child_data.visit_count)
 
                 child_score = Q + U
 
@@ -475,7 +480,7 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
         post_prune_n_list = []
 
         most_playouts_child = tree.get_node(max_id)
-        most_playouts_CPUCT = most_playouts_child.data.value_avg + config.CPUCT * most_playouts_child.data.policy * math.sqrt(root.data.visit_count) / (1 + most_playouts_child.data.visit_count)
+        most_playouts_CPUCT = most_playouts_child.data.value_avg + config.CPUCT * most_playouts_child.data.policy * math.sqrt(root.data.visit_count) / (config.DPUCT + most_playouts_child.data.visit_count)
         
         for root_child_id in root_children_id:
             if root_child_id != max_id:
@@ -492,7 +497,7 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
                             break
 
                         # Subtract up to n playouts so that the CPUCT value is smaller than the max playout CPUCT
-                        root_child_CPUCT_minus = root_child.data.value_avg + config.CPUCT * root_child.data.policy * math.sqrt(root.data.visit_count) / (root.data.visit_count) # No +1
+                        root_child_CPUCT_minus = root_child.data.value_avg + config.CPUCT * root_child.data.policy * math.sqrt(root.data.visit_count) / (config.DPUCT + root.data.visit_count)
 
                         if count < root_child_n_forced and root_child_CPUCT_minus < most_playouts_CPUCT:
                             count += 1
@@ -1287,7 +1292,7 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
     game_data = [[], []]
 
     # Initialize the game with random moves
-    if config.use_experimental_features:
+    if config.use_random_starting_moves:
         # Because dirichlet alpha is scaled with dirichlet_s and not the
         # board size, use dirichlet_s as a general scaling factor proportional
         # to the action space
