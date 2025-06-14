@@ -460,17 +460,14 @@ def test_data_parameters(
     
     print(var)
 
-def test_older_vs_newer_networks(old_ver, new_ver):
+def test_network_versions(ver_1, ver_2):
     # Making sure that the newest iteration of a network is better than earlier versions
-    old_path = f"{directory_path}/models/{MODEL_VERSION}/{old_ver}.keras"
-    old_model = get_interpreter(keras.models.load_model(old_path))
+    c = Config()
+    model_1 = get_interpreter(load_model(c, ver_1))
+    model_2 = get_interpreter(load_model(c, ver_2))
 
-    new_path = f"{directory_path}/models/{MODEL_VERSION}/{new_ver}.keras"
-    new_model = get_interpreter(keras.models.load_model(new_path))
-
-    config = Config()
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-    battle_networks(new_model, config, old_model, config, 200, None, None, f"new {new_ver}", f"old {old_ver}", True, screen)
+    battle_networks(model_1, c, model_2, c, None, None, 200, f"Version {ver_1}", f"Version {ver_2}", True, screen)
 
 def test_if_changes_improved_model():
     config = Config()
@@ -640,8 +637,8 @@ if __name__ == "__main__":
     # time_move_matrix('faster-but-loss')
 
 
-    plot_dirichlet_noise()
-    # test_older_vs_newer_networks(14, 28)
+    # plot_dirichlet_noise()
+    test_network_versions(52, 62)
 
 
     # test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=80000)
