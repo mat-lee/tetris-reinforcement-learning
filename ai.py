@@ -11,6 +11,7 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+from pathlib import Path
 import random
 from scipy import signal
 import sys
@@ -43,15 +44,11 @@ pygame.init()
 import cProfile
 import pstats
 
-# For naming data and models
-MODEL_VERSION = 5.8
-DATA_VERSION = 2.2
-
 # For reducing the amount of tensorflow prints
 HIDE_PRINTS = True
 
 # Where data and models are saved
-directory_path = '/Users/matthewlee/Documents/Code/Tetris Game/Storage'
+directory_path = Path.cwd().parent / "Storage"
 
 total_branch = 0
 number_branch = 0
@@ -59,6 +56,10 @@ number_branch = 0
 class Config():
     def __init__(
         self, 
+
+        # For naming data and models
+        model_version = 5.8,
+        data_version = 2.2,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -127,6 +128,8 @@ class Config():
         use_forced_playouts_and_policy_target_pruning=True,
         CForcedPlayout=2,
     ):
+        self.model_version = model_version
+        self.data_version = data_version
         self.ruleset = ruleset
         self.model = model
         self.default_model = default_model
@@ -175,6 +178,16 @@ class Config():
     def copy(self):
         # Create a new Config instance with the same attributes as self
         return Config(**vars(self))
+
+    @property
+    def model_dir(self):
+        # Returns the path to the model file
+        return f"{directory_path}/models/{self.ruleset}.{self.model_version}"
+    
+    @property
+    def data_dir(self):
+        # Returns the path to the data file
+        return f"{directory_path}/data/{self.ruleset}.{self.data_version}"
 
 class NodeState():
     """Node class for storing the game in the tree.
@@ -379,7 +392,7 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
                 # fig.suptitle('Policy before and after softmax')
                 # axs[0].plot(pn)
                 # axs[1].plot(ps)
-                # plt.savefig(f"{directory_path}/softmax_policy_{MODEL_VERSION}.png")
+                # plt.savefig(f"{directory_path}/softmax_policy_{config.model_version}.png")
                 # print("saved")
         
         # Node is terminal
@@ -472,7 +485,7 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
     # # axs[0].plot(post_noise_policy)
     # axs[0].plot(root_child_policy_list)
     # axs[1].plot(root_child_n_list)
-    # plt.savefig(f"{directory_path}/root_n_{config.MAX_ITER}_depth_{MODEL_VERSION}.png")
+    # plt.savefig(f"{directory_path}/root_n_{config.MAX_ITER}_depth_{config.model_version}.png")
     # print("saved")
 
     data = tree.get_node(max_id).data
@@ -936,7 +949,7 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
 
     if config.model == 'keras':
         if plot_model == True:
-            keras.utils.plot_model(model, to_file=f"{directory_path}/model_{MODEL_VERSION}_img.png", show_shapes=True)
+            keras.utils.plot_model(model, to_file=f"{directory_path}/model_{config.model_version}_img.png", show_shapes=True)
 
         # Loss is the sum of MSE of values and Cross entropy of policies
         model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
@@ -944,7 +957,7 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
         if show_summary: model.summary()
 
         if save_network:
-            path = f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}"
+            path = config.model_dir
             os.makedirs(path, exist_ok=True)
             model.save(f"{path}/0.keras")
 
@@ -953,7 +966,7 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
         if show_summary: print(model)
 
         if save_network:
-            path = f"{directory_path}/pytorch_models/{config.ruleset}.{MODEL_VERSION}"
+            path = config.model_dir
             os.makedirs(path, exist_ok=True)
             torch.save(model.state_dict(), f"{path}/0")
 
@@ -1436,16 +1449,16 @@ def make_training_set(config, network, num_games, save_game=True, show_game=Fals
         json_data = ujson.dumps(series_data)
 
         # Increment set counter
-        next_set = highest_data_number(config, data_ver=DATA_VERSION) + 1
+        next_set = highest_data_number(config) + 1
 
-        with open(f"{directory_path}/data/{config.ruleset}.{DATA_VERSION}/{next_set}.txt", 'w') as out_file:
+        with open(f"{directory_path}/data/{config.ruleset}.{config.data_version}/{next_set}.txt", 'w') as out_file:
             out_file.write(json_data)
     
     else:
         return series_data
 
 def load_data_and_train_model(config, model, data=None):
-    path = f"{directory_path}/data/{config.ruleset}.{DATA_VERSION}"
+    path = config.data_dir
 
     if config.data_loading_style == "merge":
         if data == None:
@@ -1470,15 +1483,14 @@ def load_data_and_train_model(config, model, data=None):
 
     elif config.data_loading_style == 'distinct':
         if data == None:
-            filenames = get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH)
+            data = load_data(config, last_n_sets=SETS_TO_TRAIN_WITH)
 
-            for filename in filenames:
-                set = ujson.load(open(f"{path}/{filename}", 'r'))
-
+            for set in data:
                 print(len(set))
                 train_network(config, model, set)
 
                 del set
+
         else:
             if config.shuffle == True:
                 random.shuffle(data)
@@ -1491,7 +1503,7 @@ def load_data_and_train_model(config, model, data=None):
     
     else: raise NotImplementedError
 
-def load_data(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
+def load_data(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
     # Load data from the past n games
     # Returns a list where each indice is a set
 
@@ -1499,10 +1511,10 @@ def load_data(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> 
 
     sets, len_sets = 0, 0
 
-    path = f"{directory_path}/data/{config.ruleset}.{data_ver}"
+    path = config.data_dir
 
     # Get filenames and load them
-    for filename in get_data_filenames(config, data_ver=data_ver, last_n_sets=last_n_sets):
+    for filename in get_data_filenames(config, last_n_sets=last_n_sets):
         set = ujson.load(open(f"{path}/{filename}", 'r'))
         data.append(set)
 
@@ -1512,14 +1524,14 @@ def load_data(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> 
     print(sets, len_sets)
     return data
 
-def get_data_filenames(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
+def get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
     # Returns a list of data filenames
     filenames = []
-    max_set = highest_data_number(config, data_ver=data_ver)
+    max_set = highest_data_number(config)
 
     sets = 0
 
-    path = f"{directory_path}/data/{config.ruleset}.{data_ver}"
+    path = config.data_dir
 
     # Get n games
     for filename in os.listdir(path):
@@ -1659,12 +1671,12 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         )
         if win:
             # Challenger network becomes next highest version
-            next_ver = highest_model_number(config, MODEL_VERSION) + 1
+            next_ver = highest_model_number(config) + 1
 
             if config.model == 'keras':
-                challenger_network.save(f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}/{next_ver}.keras")
+                challenger_network.save(f"{directory_path}/models/{config.ruleset}.{config.model_version}/{next_ver}.keras")
             if config.model == 'pytorch':
-                torch.save(challenger_network.state_dict(), f"{directory_path}/pytorch_models/{config.ruleset}.{MODEL_VERSION}/{next_ver}")
+                torch.save(challenger_network.state_dict(), f"{directory_path}/pytorch_models/{config.ruleset}.{config.model_version}/{next_ver}")
 
             # The new network becomes the network to beat
             best_network = challenger_network
@@ -1682,11 +1694,11 @@ def load_model(config, model_number):
     blockPrint()
 
     if config.model == 'keras':
-        path = f"{directory_path}/models/{config.ruleset}.{MODEL_VERSION}/{model_number}.keras"
+        path = f"{config.model_dir}/{model_number}.keras"
 
         model = keras.models.load_model(path)
     elif config.model == 'pytorch':
-        path = f"{directory_path}/pytorch_models/{config.ruleset}.{MODEL_VERSION}/{model_number}"
+        path = f"{config.model_dir}/{model_number}"
 
         model = config.default_model(config)
         model.load_state_dict(torch.load(path))
@@ -1701,7 +1713,7 @@ def load_model(config, model_number):
 
 def load_best_model(config):
     # Returns the model with the highest number
-    max_ver = highest_model_number(config, MODEL_VERSION)
+    max_ver = highest_model_number(config)
 
     return load_model(config, max_ver)
 
@@ -1740,11 +1752,11 @@ def get_interpreter(model):
 
     return interpreter
 
-def highest_model_number(config, ver):
+def highest_model_number(config):
     max = -1
 
     if config.model == 'keras':
-        path = f"{directory_path}/models/{config.ruleset}.{ver}"
+        path = config.model_dir
 
         os.makedirs(path, exist_ok=True)
 
@@ -1754,7 +1766,7 @@ def highest_model_number(config, ver):
                 max = model_number
 
     elif config.model == 'pytorch':
-        path = f"{directory_path}/pytorch_models/{config.ruleset}.{ver}"
+        path = config.model_dir
 
         os.makedirs(path, exist_ok=True)
 
@@ -1765,10 +1777,10 @@ def highest_model_number(config, ver):
 
     return max
 
-def highest_data_number(config, data_ver):
+def highest_data_number(config):
     max = -1
 
-    path = f"{directory_path}/data/{config.ruleset}.{data_ver}"
+    path = config.data_dir
 
     os.makedirs(path, exist_ok=True)
 

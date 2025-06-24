@@ -184,7 +184,7 @@ def view_visit_count_and_policy_with_and_without_dirichlet_noise() -> None:
     axs[0].plot(root_child_n)
     axs[1].plot(pre_noise_policy)
     axs[2].plot(post_noise_policy)
-    plt.savefig(f"{directory_path}/visit_count_vs_policy_vs_policy+noise_{c.ruleset}_{MODEL_VERSION}.png")
+    plt.savefig(f"{directory_path}/visit_count_vs_policy_vs_policy+noise_{c.ruleset}_{c.model_version}.png")
     print("Saved")
 
 def time_move_matrix(algo) -> None:
@@ -577,7 +577,7 @@ def convert_data_and_train_4_7_to_4_8():
 
     filenames = get_data_filenames(200, shuffle=False)
 
-    path = f"{directory_path}/data/{DATA_VERSION}"
+    path = f"{directory_path}/data/{4.7}"
 
     i = 0
 
@@ -694,7 +694,7 @@ def visualize_policy():
         else:
             axs[i].set_title(f"{policy_index_to_piece[i][0]} rotation {policy_index_to_piece[i][1]} {policy_index_to_piece[i][2]}")
 
-    plt.savefig(f"{directory_path}/policy_visualization_{MODEL_VERSION}.png")
+    plt.savefig(f"{directory_path}/policy_visualization_{c.model_version}.png")
     print("saved")
 
 def test_generate_move_matrix():
@@ -715,7 +715,7 @@ if __name__ == "__main__":
     # keras.utils.set_random_seed(937)
 
     # data = load_data(data_ver=1.3, last_n_sets=0)
-    #### Setting learning rate DOES NOT WORK
+    ############### Setting learning rate DOES NOT WORK
 
     # test_architectures(DefaultConfig, nn_gens=[gen_alphasame_nn, test_10], data=data, num_games=200, visual=True)
 
@@ -730,7 +730,7 @@ if __name__ == "__main__":
     # test_data_parameters("DIRICHLET_S", [25, 2500], 0.1, 1, 50, 100, load_from_best_model=True, visual=True)
     # test_data_parameters("FpuValue", [0.1, 0.01], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
 
-    test_reflected_policy()
+    # test_reflected_policy()
 
     # test_algorithm_accuracy(test_algo='faster-but-loss', truth_algo='brute-force')
     # time_move_matrix('faster-but-loss')
@@ -746,7 +746,7 @@ if __name__ == "__main__":
     # profile_game()
     # view_policy_with_and_without_dirichlet_noise()
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
-    # visualize_policy()
+    visualize_policy()
 
     # c.move_algorithm = 'faster-but-loss'
     # visualize_get_move_matrix(c, util_t_spin_board)
