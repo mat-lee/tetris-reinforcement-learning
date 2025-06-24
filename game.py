@@ -31,11 +31,11 @@ class Game:
 
     def move_piece(self, move):
         # This function moves the the current player's piece. 
-        # move: (Policy index, was_just_rotated, col, row)
+        # move: (Policy index, col, row)
         player = self.players[self.turn]
 
         policy_index, col, row = move
-        piece, rotation = policy_index_to_piece[policy_index]
+        piece, rotation, t_spin_index = policy_index_to_piece[policy_index]
 
         # If the player doesn't have an active piece, the ai wants it to hold
         if player.piece == None:
@@ -45,9 +45,15 @@ class Game:
         elif piece != player.piece.type:
             player.hold_piece()
 
-        player.piece.x_0 = col
-        player.piece.y_0 = row
-        player.piece.rotation = rotation
+        player.piece.location.x = col
+        player.piece.location.y = row
+        player.piece.location.rotation = rotation
+
+        if t_spin_index == 1:
+            player.piece.location.rotation_just_occurred = True
+        elif t_spin_index == 2:
+            player.piece.location.rotation_just_occurred_and_used_last_tspin_kick = True
+            player.piece.location.rotation_just_occurred = True
 
     def place(self, add_bag=True, add_history=True):
         # It places the piece, updates garbage, pieces, bag, and history.

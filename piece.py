@@ -1,4 +1,5 @@
 from const import *
+from piece_location import PieceLocation
 
 class Piece:
     '''
@@ -7,40 +8,44 @@ class Piece:
     '''
 
     def __init__(self, x_0=0, y_0=0, type=None):
-        # Coords describe the row of the top left value in the matrix
-        self.x_0 = x_0
-        self.y_0 = y_0
+        # x_0 and y_0 are the coordinates of the top left corner of the piece matrix
+        self.location = PieceLocation(x=x_0, y=y_0)
+
         self.type = type
-        self.rotation = 0 # 1 is right, 2 is 180, 3 is left
         self.coordinates = [[], [], [], []]
 
     def get_spawn_location(self):
         # Move a newly created "O" piece to the right
         displacement = (1 if self.type == "O" else 0)
 
-        return (3 + displacement, ROWS - SPAWN_ROW)
+        return PieceLocation(3 + displacement, ROWS - SPAWN_ROW)
 
     def move_to_spawn(self):
-        self.x_0, self.y_0 = self.get_spawn_location()
+        spawn_location = self.get_spawn_location()
+        self.location.x = spawn_location.x
+        self.location.y = spawn_location.y
         self.coordinates = self.get_self_coords
 
     def move(self, x_offset=0, y_offset=0):
-        self.x_0 += x_offset
-        self.y_0 += y_offset
+        self.location.x += x_offset
+        self.location.y += y_offset
         self.coordinates = [[col + x_offset, row + y_offset] for col, row in self.coordinates]
 
+        self.location.rotation_just_occurred = False
+        self.location.rotation_just_occurred_and_used_last_tspin_kick = False
+
     def copy(self):
-        new_piece = Piece(piece_dict[self.type], type=self.type)
-        new_piece.x_0 = self.x_0
-        new_piece.y_0 = self.y_0
-        new_piece.rotation = self.rotation
+        new_piece = Piece(self.location.x, self.location.y, self.type)
+        new_piece.location.rotation = self.location.rotation
+        new_piece.location.rotation_just_occurred = self.location.rotation_just_occurred
+        new_piece.location.rotation_just_occurred_and_used_last_tspin_kick = self.location.rotation_just_occurred_and_used_last_tspin_kick
         new_piece.coordinates = self.coordinates
-        
+    
         return new_piece
 
     @property
     def get_self_coords(self):
-        return Piece.get_mino_coords(self.x_0, self.y_0, self.rotation, self.type)
+        return Piece.get_mino_coords(self.location.x, self.location.y, self.location.rotation, self.type)
     
     @staticmethod
     def get_mino_coords(x_0, y_0, rotation, type):
