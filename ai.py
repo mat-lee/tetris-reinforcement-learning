@@ -1,6 +1,7 @@
 from architectures import *
 from const import *
 from game import Game
+from piece_location import PieceLocation
 
 import copy
 from collections import deque
@@ -11,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import random
+from scipy import signal
 import sys
 import time
 import treelib
@@ -42,8 +44,8 @@ import cProfile
 import pstats
 
 # For naming data and models
-MODEL_VERSION = 5.7
-DATA_VERSION = 2.1
+MODEL_VERSION = 5.8
+DATA_VERSION = 2.2
 
 # For reducing the amount of tensorflow prints
 HIDE_PRINTS = True
@@ -84,6 +86,7 @@ class Config():
         value_head_neurons=16,
 
         use_tanh=False, # If false means using sigmoid; affects data saving and model activation
+        # Makes evaluation range from -1 to 1, while sigmoid ranges from 0 to 1
 
         # MCTS Parameters
         MAX_ITER=160, 
@@ -363,7 +366,7 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
                         new_state.value_avg = max (0, config.FpuValue)
                     elif config.FpuStrategy == 'reduction':
                         # value is the parent node's value
-                        new_state.value_avg = max(0, value - config.FpuValue * math.sqrt(total_expanded_policy)) # Lower bound of 0
+                        new_state.value_avg = max(0 if config.use_tanh else -1, value - config.FpuValue * math.sqrt(total_expanded_policy)) # Lower bound of 0
 
                         # In the paper it sets FpuValue to 0 at the root node when dirichlet noise is enabled
                         # However, at the root node the policy total is always 0 for my mcts so that's reduntant
@@ -554,71 +557,91 @@ def get_move_matrix(player, algo=None):
         # Else return the floor
         return len(grid)
 
-    def check_add_to_sets(x, y, o, check_placement=True):
+    def check_add_to_sets(piece_type, piece_location, check_placement=True):
         # Checks if move has been looked at already
-        if (x, y, o) not in check_set:
-            next_location_queue.append((x, y, o))
-            check_set.add((x, y, o))
+        if not _already_checked(piece_type, piece_location):
+            # No need to add a position to the queue if it's already been checked but not with 
+            # rotation_just_occurred (which includes rotation_just_occurred_and_used_last_tspin_kick)
+            should_skip = False
+            if (piece_type == "T" and piece_location.rotation_just_occurred):
+                non_rotated_location = piece_location.copy()
+                non_rotated_location.rotation_just_occurred = False
+                if _already_checked(piece_type, non_rotated_location):
+                   should_skip = True 
+
+            # Add the piece location to the next location queue
+            if not should_skip:
+                next_location_queue.append(piece_location)
+                _mark_checked(piece_type, piece_location)
 
             # Check if it can be placed
             if check_placement:
-                coords = [[col + x, row + y + 1] for col, row in mino_coords_dict[piece.type][o]]
+                coords = [[col + piece_location.x, row + piece_location.y + 1] for col, row in mino_coords_dict[piece.type][piece_location.rotation]]
                 if sim_player.collision(coords):
-                    place_location_queue.append((x, y, o))
+                    place_location_queue.append(piece_location)
+
+    def _already_checked(piece_type, piece_location):
+        # Returns whether or not a piece location has been checked
+        if piece_type == "T": # Check set has extra locations
+            index = 0
+            if piece_location.rotation_just_occurred:
+                index = 1
+            if piece_location.rotation_just_occurred_and_used_last_tspin_kick:
+                index = 2
+
+            return checked_list[piece_location.x][piece_location.y][piece_location.rotation][index] == 1
+        return checked_list[piece_location.x][piece_location.y][piece_location.rotation] == 1
+
+    def _mark_checked(piece_type, piece_location):
+        # Marks a piece location as checked
+        if piece_type == "T":
+            index = 0
+            if piece_location.rotation_just_occurred:
+                index = 1
+            if piece_location.rotation_just_occurred_and_used_last_tspin_kick:
+                index = 2
+
+            checked_list[piece_location.x][piece_location.y][piece_location.rotation][index] = 1
+        else:
+            checked_list[piece_location.x][piece_location.y][piece_location.rotation] = 1
 
     def algo_1(check_rotations):
         # My initial algorithm
         # Will always find every piece placement
         # Takes a long time
         while len(next_location_queue) > 0:
-            location = next_location_queue.popleft()
+            piece_location = next_location_queue.popleft()
 
-            piece.x_0, piece.y_0, piece.rotation = location
+            piece_location_copy = piece_location.copy()
 
+            piece.location = piece_location_copy.copy()
             piece.coordinates = piece.get_self_coords
-
-            # Check left, right moves
-            for x_offset in [1, -1]:
-                if sim_player.can_move(piece, x_offset=x_offset): # Check this first to avoid index errors
-                    x = piece.x_0 + x_offset
-                    y = piece.y_0
-                    o = piece.rotation
-
-                    check_add_to_sets(x, y, o)
-            
-            # Check full softdrop
-            ghost_y = sim_player.ghost_y
-
-            if ghost_y != sim_player.piece.y_0:
-                x = piece.x_0
-                o = piece.rotation
-
-                check_add_to_sets(x, ghost_y, o)
 
             # Check left, right, and down moves
             for move in [[1, 0], [-1, 0], [0, 1]]:
                 if sim_player.can_move(piece, x_offset=move[0], y_offset=move[1]): # Check this first to avoid index errors
-                    x = piece.x_0 + move[0]
-                    y = piece.y_0 + move[1]
-                    o = piece.rotation
 
-                    check_add_to_sets(x, y, o)
+                    new_location = piece.location.copy()
+                    new_location.x += move[0]
+                    new_location.y += move[1]
+                    new_location.rotation_just_occurred = False
+                    new_location.rotation_just_occurred_and_used_last_tspin_kick = False
+
+                    check_add_to_sets(piece.type, new_location, check_placement=True)
 
             if check_rotations:
                 # Check rotations 1, 2, and 3
                 for i in range(1, 4):
                     sim_player.try_wallkick(i)
 
-                    x = piece.x_0
-                    y = piece.y_0
-                    o = piece.rotation
+                    new_location = piece.location.copy()
 
-                    if y >= 0: # Avoid negative indexing
-                        check_add_to_sets(x, y, o)
+                    if new_location.y >= 0: # Avoid negative indexing
+                        check_add_to_sets(piece.type, new_location, check_placement=True)
 
                     # Reset piece locations
                     if i != 3: # Don't need to reset on last rotation
-                        piece.x_0, piece.y_0, piece.rotation = location
+                        piece.location = piece_location_copy.copy()
 
     def algo_2(check_rotations):
         # Faster algorithm
@@ -652,79 +675,71 @@ def get_move_matrix(player, algo=None):
             phase_2_queue = deque()
 
             # Phase 1
-            location = next_location_queue.popleft()
-            piece.x_0, piece.y_0, piece.rotation = location
+            piece_location = next_location_queue.popleft()
+            piece_location_copy = piece_location.copy()
+            piece.location = piece_location_copy.copy()
+
             piece.coordinates = piece.get_self_coords
 
-            phase_2_queue.append((piece.x_0, piece.y_0, piece.rotation))
+            phase_2_queue.append(piece_location.copy())
 
             if check_rotations:
                 for i in range(1, 4):
                     sim_player.try_wallkick(i)
 
-                    x = piece.x_0
-                    y = piece.y_0
-                    o = piece.rotation
-
-                    phase_2_queue.append((x, y, o))
-                    check_set.add((x, y, o))
+                    phase_2_queue.append(piece.location.copy())
+                    _mark_checked(piece.type, piece_location)
 
                     if i != 3:
-                        piece.x_0, piece.y_0, piece.rotation = location
+                        piece.location = piece_location_copy.copy()
             
             phase_3_queue = deque()
 
             # Phase 2
             while len(phase_2_queue) > 0:
-                location = phase_2_queue.popleft()
-                phase_3_queue.append(location)
+                piece_location = phase_2_queue.popleft()
+                phase_3_queue.append(piece_location.copy())
 
                 for x_dir in [-1, 1]:
-                    piece.x_0, piece.y_0, piece.rotation = location
+                    piece.location = piece_location.copy()
                     piece.coordinates = piece.get_self_coords
 
-                    while sim_player.can_move(piece, x_offset=x_dir):
-                        x = piece.x_0 + x_dir
-                        y = piece.y_0
-                        o = piece.rotation
+                    piece.location.rotation_just_occurred = False
+                    piece.location.rotation_just_occurred_and_used_last_tspin_kick = False
 
-                        piece.x_0 = x
+                    while sim_player.can_move(piece, x_offset=x_dir):
+                        piece.location.x += x_dir
                         piece.coordinates = piece.get_self_coords
 
-                        phase_3_queue.append((x, y, o))
-                        check_set.add((x, y, o))
+                        _mark_checked(piece.type, piece.location)
+                        phase_3_queue.append(piece.location.copy())
 
         # Phase 3
         while len(phase_3_queue) > 0:
-            location = phase_3_queue.popleft()
-            piece.x_0, piece.y_0, piece.rotation = location
+            piece_location = phase_3_queue.popleft()
+            piece_location_copy = piece_location.copy()
+            piece.location = piece_location_copy.copy()
+
             piece.coordinates = piece.get_self_coords
 
-            x = piece.x_0
-            y = piece.y_0
-            o = piece.rotation
-
             while sim_player.can_move(piece, y_offset=1):
-                x = piece.x_0
-                y = piece.y_0 + 1
-                o = piece.rotation
-
-                piece.y_0 = y
+                piece.location.y += 1
                 piece.coordinates = piece.get_self_coords
 
                 # Add these to check set but not queue until they hit the bottom
-                check_set.add((x, y, o))
+                _mark_checked(piece.type, piece.location)
 
             # Check these using the normal algorithm
-            next_location_queue.append((x, y, o))
+            next_location_queue.append(piece.location.copy())
 
             # Piece must be placeable by definition
-            place_location_queue.append((x, y, o))
+            place_location_queue.append(piece.location.copy())
 
         # Phase 4 is the regular algorithm
         algo_1(check_rotations)
 
     def algo_3(check_rotations):
+        raise Exception("Not implemented!")
         # Only harddrops
 
         phase_2_queue = deque()
@@ -791,11 +806,32 @@ def get_move_matrix(player, algo=None):
             # These are all hardroppable piece locations
             place_location_queue.append((x, y, o))
 
+    def algo_4():
+        raise Exception("Not implemented!")
+        def traverse_convolved_graph():
+            pass
+        
+        # Convolutional piece placement finding algorithm
+        mask = piece_dict[piece.type]
+
+        # O pieces:
+        if piece.type == "O":
+            graph = signal.convolve2d(sim_player.board.grid, mask, mode='valid')
+        
+
+
 
     # Other ideas:
     # Calculate all areas that a piece could fit, subtract the moves that can be found
     # by harddropping, and then backtrack to find unfound moves
         # Issue of backtracking kicks
+
+    algorithm_dict = {
+        'brute-force': algo_1,
+        'faster-but-loss': algo_2,
+        'harddrop': algo_3,
+        'conv-brute-force': algo_4,
+    }
 
     # Convert to new policy format (19, 25 x 11)
     new_policy = np.zeros(POLICY_SHAPE)
@@ -820,34 +856,39 @@ def get_move_matrix(player, algo=None):
             # Queue for looking through piece placements
             next_location_queue = deque()
             place_location_queue = []
-            check_set = set()
+            checked_list_size = (POLICY_SHAPE[0], POLICY_SHAPE[1], 4, 3 if piece.type == "T" else 1)
+            checked_list = np.zeros(checked_list_size, dtype=int)
 
             # Start the piece at the highest point it can be placed
             highest_row = get_highest_row(sim_player.board.grid)
             starting_row = max(highest_row - len(piece_dict[piece.type]), ROWS - SPAWN_ROW)
-            piece.y_0 = starting_row
+            piece.location.y = starting_row
 
-            check_add_to_sets(piece.x_0, piece.y_0, piece.rotation)
+            check_add_to_sets(piece.type, piece.location.copy(), check_placement=True)
 
             # O piece can't rotate
             check_rotations = True
             if piece.type == "O":
                 check_rotations = False
 
-            # Search through the queue
-            if algo == 'brute-force':
-                algo_1(check_rotations)
-            elif algo == 'faster-but-loss':
-                algo_2(check_rotations)
-            elif algo == 'harddrop':
-                algo_3(check_rotations)
-            else:
-                raise Exception("Invalid algorithm type")
+            # Perform the move finding algorithm
+            algorithm_dict[algo](check_rotations)
 
             # Convert queue of placements to the policy grid
-            for x, y, o in place_location_queue:
+            for PieceLocation in place_location_queue:
+                x = PieceLocation.x
+                y = PieceLocation.y
+                o = PieceLocation.rotation
+
+                t_spin_index = 0
+                if PieceLocation.rotation_just_occurred_and_used_last_tspin_kick:
+                    # If this is true then rotation_just_occured is also true
+                    t_spin_index = 2
+                elif PieceLocation.rotation_just_occurred:
+                    t_spin_index = 1
+
                 rotation_index = o % len(policy_pieces[piece.type])
-                policy_index = policy_piece_to_index[piece.type][rotation_index]
+                policy_index = policy_piece_to_index[piece.type][rotation_index][t_spin_index]
 
                 new_col = x
                 new_row = y
@@ -876,19 +917,6 @@ def get_move_list(move_matrix, policy_matrix):
     move_list = [(mask[move[0]][move[1]][move[2]], (move[0], move[2] - 2, move[1])) for move in move_list]
 
     return move_list
-
-# Using deepcopy:                          100 iter in 36.911 s
-# Using copy functions in classes:         100 iter in 1.658 s
-# Many small changes:                      100 iter in 1.233 s
-# MCTS uses game instead of player:        100 iter in 1.577 s
-# Added large NN but optimized MCTS:       100 iter in 7.939 s
-#   Without NN:                            100 iter in 0.882 s
-#   Changed collision and added coords:    100 iter in 0.713 s
-# Use Model(X) instead of .predict:        100 iter in 3.506 s
-# Use Model.predict_on_batch(X):           100 iter in 1.788 s
-# Use TFlite model + argwhere and full sd: 100 iter in 0.748 s
-
-# Further tests moved to time_move_matrix
 
 ##### Neural Network #####
 # 
@@ -1227,7 +1255,7 @@ def reflect_policy(policy_matrix):
     }
 
     for policy_index in range(POLICY_SHAPE[0]):
-        piece, rotation = policy_index_to_piece[policy_index]
+        piece, rotation, t_spin_index = policy_index_to_piece[policy_index]
 
         # Save the piece size
         piece_size = len(piece_dict[piece])
@@ -1250,7 +1278,7 @@ def reflect_policy(policy_matrix):
                 post_col_adjustment = -1
                 new_rotation -= 2
 
-        new_policy_index = policy_piece_to_index[new_piece][new_rotation]
+        new_policy_index = policy_piece_to_index[new_piece][new_rotation][t_spin_index]
         for col in range(POLICY_SHAPE[2]):
             for row in range(POLICY_SHAPE[1]):
                 value = policy_matrix[policy_index][row][col]
@@ -1408,7 +1436,7 @@ def make_training_set(config, network, num_games, save_game=True, show_game=Fals
         json_data = ujson.dumps(series_data)
 
         # Increment set counter
-        next_set = highest_data_number(config) + 1
+        next_set = highest_data_number(config, data_ver=DATA_VERSION) + 1
 
         with open(f"{directory_path}/data/{config.ruleset}.{DATA_VERSION}/{next_set}.txt", 'w') as out_file:
             out_file.write(json_data)
@@ -1487,7 +1515,7 @@ def load_data(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> 
 def get_data_filenames(config, data_ver=DATA_VERSION, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
     # Returns a list of data filenames
     filenames = []
-    max_set = highest_data_number(config)
+    max_set = highest_data_number(config, data_ver=data_ver)
 
     sets = 0
 
@@ -1737,10 +1765,10 @@ def highest_model_number(config, ver):
 
     return max
 
-def highest_data_number(config):
+def highest_data_number(config, data_ver):
     max = -1
 
-    path = f"{directory_path}/data/{config.ruleset}.{DATA_VERSION}"
+    path = f"{directory_path}/data/{config.ruleset}.{data_ver}"
 
     os.makedirs(path, exist_ok=True)
 

@@ -55,10 +55,10 @@ class Player:
 
     @property
     def ghost_y(self):
-        ghost_y = self.piece.y_0
-        coordinate_list = self.piece.get_mino_coords(self.piece.x_0, 
+        ghost_y = self.piece.location.y
+        coordinate_list = self.piece.get_mino_coords(self.piece.location.x, 
                                             ghost_y, 
-                                            self.piece.rotation, 
+                                            self.piece.location.rotation, 
                                             self.piece.type)
         
         collided = False
@@ -99,9 +99,10 @@ class Player:
         if self.can_move(self.piece, y_offset=1):
             self.piece.move(y_offset=1)
 
-    def try_wallkick(self, dir):
+    def try_wallkick(self, dir) -> None:
+        """Try to rotate the piece with wallkicks."""
         piece = self.piece
-        initial_rotation = piece.rotation
+        initial_rotation = piece.location.rotation
         final_rotation = (initial_rotation + dir) % 4
 
         if piece.type == "I":
@@ -109,7 +110,7 @@ class Player:
         else:
             kicktable = wallkicks[initial_rotation][final_rotation]
 
-        rotated_piece_coordinates = piece.get_mino_coords(piece.x_0, piece.y_0, final_rotation, piece.type)
+        rotated_piece_coordinates = piece.get_mino_coords(piece.location.x, piece.location.y, final_rotation, piece.type)
         for kick in kicktable:
             for col, row in rotated_piece_coordinates:
                 if (row - kick[1] < 0
@@ -120,16 +121,22 @@ class Player:
                 elif self.board.grid[row - kick[1]][col + kick[0]] != 0:
                     break
             else:
-                piece.x_0 += kick[0]
-                piece.y_0 += -kick[1]
-                piece.rotation = final_rotation
+                piece.location.x += kick[0]
+                piece.location.y += -kick[1]
+                piece.location.rotation = final_rotation
                 piece.coordinates = [[col + kick[0], row - kick[1]] for col, row in rotated_piece_coordinates]
+
+                # Additionally, check if the piece is a T and the last kick in the kicktable was used:
+                if piece.type == "T":
+                    piece.location.rotation_just_occurred = True
+                    piece.location.rotation_just_occurred_and_used_last_tspin_kick = False
+
+                    if kick == kicktable[-1] and dir != 2:
+                        piece.location.rotation_just_occurred_and_used_last_tspin_kick = True
                 return
 
-    def force_place_piece(self, x, y, o):
-        self.piece.x_0 = x
-        self.piece.y_0 = y
-        self.piece.rotation = o
+    def force_place_piece(self, piece_location):
+        self.piece.location = piece_location
         self.piece.coordinates = self.piece.get_self_coords
         return self.place_piece()
 
@@ -139,6 +146,10 @@ class Player:
         stats = self.stats
 
         place_y = self.ghost_y
+        # If the piece was placed in the air, it does not count as a spin
+        if piece.location.y != place_y:
+            piece.location.rotation_just_occurred = False
+            piece.location.rotation_just_occurred_and_used_last_tspin_kick = False
 
         rows = []
         cleared_rows = []
@@ -149,13 +160,13 @@ class Player:
 
         # Spins
         # Check for a t-spin
-        if piece.type == "T":
+        if piece.type == "T" and piece.location.rotation_just_occurred:
             corners = [[0, 0], [2, 0], [2, 2], [0,  2]]
             corner_filled = 4 * [False]
 
             for i in range(4):
                 row = corners[i][1] + place_y
-                col = corners[i][0] + piece.x_0 
+                col = corners[i][0] + piece.location.x
                 if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
                     corner_filled[i] = True
                 elif grid[row][col] != 0:
@@ -164,7 +175,8 @@ class Player:
             if sum(corner_filled) >= 3:
                 is_tspin = True
             
-            if not (corner_filled[piece.rotation] and corner_filled[(piece.rotation + 1) % 4]):
+            # Two corner rule + exception
+            if not (corner_filled[piece.location.rotation] and corner_filled[(piece.location.rotation + 1) % 4]) and not piece.location.rotation_just_occurred_and_used_last_tspin_kick:
                 is_mini = True
 
         # Check for s2 all spins:
@@ -180,7 +192,7 @@ class Player:
                 is_mini = True
 
         # Place the pieces and check rows that minos will be placed
-        for col, row in piece.get_mino_coords(piece.x_0, place_y, piece.rotation, piece.type):
+        for col, row in piece.get_mino_coords(piece.location.x, place_y, piece.location.rotation, piece.type):
             grid[row][col] = piece.type
             if row not in rows:
                 rows.append(row)
@@ -301,7 +313,7 @@ class Player:
             piece = self.piece
 
             ghost_y = self.ghost_y
-            self.draw_piece(surface, piece.x_0, ghost_y, piece.rotation, piece.type, color_dict["ghost"])
+            self.draw_piece(surface, piece.location.x, ghost_y, piece.location.rotation, piece.type, color_dict["ghost"])
 
     def show_grid_lines(self, surface):
         for row in range(ROWS - GRID_ROWS, ROWS + 1):
