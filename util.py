@@ -697,14 +697,13 @@ def visualize_policy():
     plt.savefig(f"{directory_path}/policy_visualization_{c.model_version}.png")
     print("saved")
 
-def test_generate_move_matrix():
-    c = Config()
+def test_generate_move_matrix(c):
     grid = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ['I', 0, 0, 0, 0, 0, 0, 0, 0, 'Z'], ['I', 0, 0, 0, 0, 0, 0, 0, 'Z', 'Z'], ['I', 0, 0, 0, 0, 0, 0, 0, 'Z', 'J'], ['I', 'T', 0, 'I', 'T', 0, 0, 0, 0, 'J'], ['T', 'T', 0, 'I', 'T', 'T', 'S', 0, 'J', 'J'], ['L', 'T', 'L', 'I', 'T', 0, 'S', 'S', 'S', 0], ['L', 0, 'L', 'I', 'J', 'O', 'O', 'S', 'S', 'S'], [0, 'T', 0, 'O', 'O', 'O', 'O', 0, 'Z', 'Z'], [0, 'T', 'T', 'O', 'O', 0, 'S', 'S', 'S', 'S'], [0, 'T', 'O', 'O', 0, 'S', 'S', 'S', 'S', 0], [0, 0, 'O', 'O', 0, 0, 0, 'Z', 'J', 0], [0, 0, 'I', 0, 0, 0, 'Z', 'Z', 'J', 0], [0, 0, 'I', 0, 0, 0, 'Z', 'J', 'J', 0], [0, 0, 'I', 0, 0, 'T', 0, 'J', 0, 0], [0, 0, 'I', 0, 'L', 'T', 'T', 'J', 0, 0], [0, 0, 'L', 'L', 'L', 'T', 'J', 'J', 0, 0], [0, 0, 0, 0, 'O', 'O', 0, 'Z', 'Z', 0], [0, 0, 0, 0, 'O', 'O', 0, 0, 'Z', 'Z'], [0, 0, 0, 0, 0, 'I', 'I', 'I', 'I', 0], [0, 0, 0, 0, 0, 0, 'S', 'S', 0, 0], [0, 0, 0, 0, 0, 'S', 'S', 0, 0, 0], [0, 0, 0, 0, 0, 0, 'L', 'L', 'L', 0], ['I', 'I', 'I', 'I', 0, 0, 'L', 'J', 'J', 'J']]
     game = Game(c.ruleset)
     game.setup()
     game.players[0].board.grid = grid
-    game.players[0].held_piece = "J"
-    moves = get_move_matrix(game.players[0], algo='brute-force')
+    game.players[0].held_piece = "T"
+    moves = get_move_matrix(game.players[0], algo=c.move_algorithm)
     moves = get_move_list(moves, np.ones(shape=POLICY_SHAPE))
     print(moves)
 
@@ -746,10 +745,12 @@ if __name__ == "__main__":
     # profile_game()
     # view_policy_with_and_without_dirichlet_noise()
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
-    visualize_policy()
+    # visualize_policy()
 
     # c.move_algorithm = 'faster-but-loss'
     # visualize_get_move_matrix(c, util_t_spin_board)
+
+    test_generate_move_matrix(Config(move_algorithm='conv-brute-force'))
 
 
 

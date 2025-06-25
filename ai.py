@@ -819,19 +819,99 @@ def get_move_matrix(player, algo=None):
             # These are all hardroppable piece locations
             place_location_queue.append((x, y, o))
 
-    def algo_4():
-        raise Exception("Not implemented!")
-        def traverse_convolved_graph():
-            pass
+    def algo_4(check_rotations):
+        axes_of_rotation_dict = {
+            "O": 1,
+            "Z": 2,
+            "S": 2,
+            "I": 2,
+            "L": 4,
+            "J": 4,
+            "T": 4,
+        }
+
+        axes_of_rotation = axes_of_rotation_dict[piece.type]
+
+        def traverse_convolved_graph(piece_location):
+            def _check_add_to_sets_convolve(piece_location):
+                if convolved_graph[piece_location.y][piece_location.x + 2] != 1: # Account for buffer
+                    graph_queue.append()
+                    convolved_graph[piece_location.y][piece_location.x + 2] = 1
+
+                    # Check for rotations and placements
+                    if convolved_graph[piece_location.y + 1][piece_location.x + 2] == 1:
+                        place_location_queue.append()
+
+                    for offset in [[1, 0], [-1, 0], [0, 1]]:
+                        if convolved_graph[piece_location.y + offset[1]][piece_location.x + offset[0] + 2] == 1:
+                            rotation_queue.append()
+
+
+            # Traverse the convolved graph to find all adjacent positions, 
+            # then check for kicks afterwards
+            rotation = (0 if piece.type == "O" else piece_location.rotation)
+            convolved_graph = convolved_graphs[rotation]
+
+            _check_add_to_sets_convolve(piece_location)
+
+            while graph_queue:
+                piece_location = graph_queue.popleft()
+
+                # Check on the graph for neighbors
+                if convolved_graph[piece_location.y][piece_location.x + 2] == 1: # Account for buffer 
+                    pass
+
+
+        def convolve(grid, mask):
+            # Returns a array where 1 is a valid placement and 0 is not
+            res = np.zeros((POLICY_SHAPE[1], POLICY_SHAPE[2]), dtype=int).tolist()
+
+            for row in range(len(grid) - len(mask)):
+                for col in range(len(grid[0]) - len(mask[0]) + 2): # Include buffer
+                    # Check if the mask can be placed at this location
+
+                    for mask_row in range(len(mask)):
+                        for mask_col in range(len(mask[0])):
+                            if col + mask_col - 2 < 0: # Allow for pieces to be placed in negative x
+                                continue
+
+                            # Break if there's a collision or the mask goes out of bounds
+                            # if col + mask_col - 2 >= len(grid[0]) or row + mask_row < 0 or row + mask_row >= len(grid):
+                            #     break
+                            ###  Mask shouldn't go out of bounds
+
+                            if grid[row + mask_row][col + mask_col - 2] != 0 and mask[mask_row][mask_col] != 0:
+                                break
+                                
+                        else: # If no break occurred
+                            res[row][col] = 1
+                        break # Break out of the outer loop if a break occurs in the inner loop
+
+            return res
         
         # Convolutional piece placement finding algorithm
         mask = piece_dict[piece.type]
 
-        # O pieces:
-        if piece.type == "O":
-            graph = signal.convolve2d(sim_player.board.grid, mask, mode='valid')
-        
+        # Convolve the grid with the mask
+        # This will give a graph of where the piece can be placed
+        check_convolved_set_shape = ((1 if piece.type == "O" else 4), POLICY_SHAPE[1], POLICY_SHAPE[2])
+        check_convolved_set = np.zeros(check_convolved_set_shape, dtype=int).tolist()
 
+        # Convolve the grid with the mask for each rotation
+        # This will give a graph of where the piece can be moved
+        convolved_graphs = []
+
+        rotated_mask = [x[:] for x in mask]
+        for rotation in range(axes_of_rotation):
+            convolved_graphs.append(convolve(sim_player.board.grid, rotated_mask))
+            # Rotate the mask for the next iteration
+            # Rotation 1 is 90 degrees cw from 0
+            rotated_mask = np.rot90(rotated_mask, 3).tolist() 
+        
+        # Begin the algorithm
+        graph_queue = deque()
+        rotation_queue = deque()
+        traverse_convolved_graph(piece.location)
 
 
     # Other ideas:
