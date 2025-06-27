@@ -4,6 +4,7 @@ from game import Game
 from piece import Piece
 from player import Player
 
+import ast
 from collections import namedtuple
 import matplotlib.pyplot as plt
 import numpy as np
@@ -708,6 +709,35 @@ def test_generate_move_matrix():
     moves = get_move_list(moves, np.ones(shape=POLICY_SHAPE))
     print(moves)
 
+def plot_stats():
+    c = Config()
+    stats_path = f"{c.data_dir}/stats.txt"
+
+    with open(stats_path, 'r') as f:
+        lines = f.readlines()
+
+        data = {}
+        for line in lines:
+            line = line.strip("\n")
+            line = line.split(": ", 1)[1]
+            dict = ast.literal_eval(line)
+            for stat in dict:
+                if stat not in data:
+                    data[stat] = [dict[stat]]
+                else:
+                    data[stat].append(dict[stat])
+
+    fig, axs = plt.subplots(len(data), figsize=(6.4, 4.8 + 1.6 * len(data)))
+    fig.suptitle('Selfplay Data Statistics')
+
+    for i, stat in enumerate(data):
+        axs[i].plot(data[stat])
+        axs[i].set_xlabel(f"{stat}")
+
+    plt.savefig(f"{directory_path}/self_play_data_statistics_{c.ruleset}_{c.data_version}.png")
+    print("Saved")
+
+
 if __name__ == "__main__":
 
     c=Config(model='keras', shuffle=True)
@@ -746,7 +776,9 @@ if __name__ == "__main__":
     # profile_game()
     # view_policy_with_and_without_dirichlet_noise()
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
-    visualize_policy()
+    # visualize_policy()
+
+    plot_stats()
 
     # c.move_algorithm = 'faster-but-loss'
     # visualize_get_move_matrix(c, util_t_spin_board)

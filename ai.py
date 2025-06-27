@@ -58,8 +58,8 @@ class Config():
         self, 
 
         # For naming data and models
-        model_version = 5.8,
-        data_version = 2.2,
+        model_version = 5.9,
+        data_version = 2.3,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -1315,9 +1315,18 @@ def reflect_policy(policy_matrix):
     
     return reflected_policy_matrix
 
+def get_game_stats(game):
+    # Returns a dictionary with player statistics
+    stats = {
+        "app": game.players[0].stats.lines_sent  / game.players[0].stats.pieces,
+        "dspp": game.players[0].stats.lines_cleared / game.players[0].stats.pieces
+    }
+
+    return stats
+
 def play_game(config, network, game_number=None, show_game=False, screen=None):
     # AI plays one game against itself
-    # Returns the game data
+    # Returns a tuple: (game_data, player_stats)
     if show_game == True:
         if screen == None:
             screen = pygame.display.set_mode( (WIDTH, HEIGHT))
@@ -1436,14 +1445,18 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
     data = game_data[0]
     data.extend(game_data[1])
 
-    return data
+    stats = get_game_stats(game)
 
-def make_training_set(config, network, num_games, save_game=True, show_game=False, screen=None):
+    return data, stats
+
+def make_training_set(config, network, num_games, save_game=True, save_stats=True, show_game=False, screen=None):
     # Creates a dataset of several AI games.
     series_data = []
+    series_stats = []
     for idx in range(1, num_games + 1):
-        data = play_game(config, network, game_number=idx, show_game=show_game, screen=screen)
+        data, stats = play_game(config, network, game_number=idx, show_game=show_game, screen=screen)
         series_data.extend(data)
+        series_stats.append(stats)
 
     if save_game == True:
         json_data = ujson.dumps(series_data)
@@ -1451,8 +1464,17 @@ def make_training_set(config, network, num_games, save_game=True, show_game=Fals
         # Increment set counter
         next_set = highest_data_number(config) + 1
 
-        with open(f"{directory_path}/data/{config.ruleset}.{config.data_version}/{next_set}.txt", 'w') as out_file:
+        with open(f"{config.data_dir}/{next_set}.txt", 'w') as out_file:
             out_file.write(json_data)
+    
+    if save_stats == True:
+        averaged_stats = {
+            "app": round(sum([x["app"] for x in series_stats]) / len(series_stats), 3),
+            "dspp": round(sum([x["dspp"] for x in series_stats]) / len(series_stats), 3)
+        }
+
+        with open(f"{config.data_dir}/stats.txt", 'a+') as out_file:
+            out_file.write(f"{next_set}: {averaged_stats}\n")
     
     else:
         return series_data
@@ -1535,6 +1557,10 @@ def get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
 
     # Get n games
     for filename in os.listdir(path):
+        # Ignore files that don't start with numbers
+        if filename.split('.')[0].isdigit() == False:
+            continue
+
         data_number = int(filename.split('.')[0])
         if data_number > max_set - last_n_sets:
             # Load data
@@ -1785,6 +1811,9 @@ def highest_data_number(config):
     os.makedirs(path, exist_ok=True)
 
     for filename in os.listdir(path):
+        if filename.split('.')[0].isdigit() == False:
+            continue
+
         data_number = int(filename.split('.')[0])
         if data_number > max:
             max = data_number
