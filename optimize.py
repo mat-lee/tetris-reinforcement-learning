@@ -26,7 +26,7 @@ param_space = [
     # Integer(0.0, 3.0, name='CForcedPlayout'),
 ]
 
-training_games = 100 # Number of training games per training loop
+training_games = 1 # Number of training games per training loop
 training_loops = 1 # Number of training loops
 eval_games = 1 # Number of evaluation games
 visual = True
@@ -34,11 +34,11 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 i = 0
 baseline_model_number = 0 # The model number of the baseline network to compare against
 
-def evaluate_challenger(baseline_config, challenger_config, challenger_interpreter, num_games, visual, screen):
+def evaluate_challenger(baseline_config, challenger_config, challenger_interpreter, num_games, screen):
     # Returns the percentage of games won by the challenger network against the baseline network
-    baseline_interpreter = get_interpreter(load_model(baseline_config, baseline_model_number))
+    _, baseline_interference_network = load_train_and_interference_models(baseline_config, baseline_model_number)
 
-    wins, _ = battle_networks(baseline_interpreter, baseline_config, challenger_interpreter, challenger_config, None, None, num_games, "Baseline Network", "Challenger Network", show_game=visual, screen=screen)
+    wins, _ = battle_networks(baseline_interference_network, baseline_config, challenger_interpreter, challenger_config, None, None, num_games, "Baseline Network", "Challenger Network", screen=screen)
     chal_wins = wins[1]
     eval = chal_wins / num_games # Win more -> higher eval
     return eval
@@ -60,22 +60,22 @@ def objective_function(**params):
         else:
             setattr(challenger_config, param, params[param])
 
-    challenger_network = instantiate_network(challenger_config, show_summary=False, save_network=False, plot_model=False)
+    challenger_train_network = instantiate_network(challenger_config, show_summary=False, save_network=False, plot_model=False)
+    challenger_interference_network = get_interference_network(challenger_config, challenger_train_network)
 
     # Train the challenger network
     for _ in range(training_loops):
-        interpreter = get_interpreter(challenger_network)
-        set = make_training_set(challenger_config, interpreter, training_games, save_game=False, show_game=visual, screen=screen)
+        set = make_training_set(challenger_config, challenger_interference_network, training_games, save_game=False, save_stats=False, screen=screen)
 
-        train_network(challenger_config, challenger_network, set)
+        train_network(challenger_config, challenger_train_network, set)
+        challenger_interference_network = get_interference_network(challenger_config, challenger_train_network)
+
 
         del set
         gc.collect()
 
-    challenger_interpreter = get_interpreter(challenger_network)
-
     # Evaluate the challenge network
-    result = evaluate_challenger(baseline_config, challenger_config, challenger_interpreter, eval_games, visual, screen)
+    result = evaluate_challenger(baseline_config, challenger_config, challenger_interference_network, eval_games, screen)
 
     # Negate score because skopt minimizes the objective
     return -result
@@ -101,8 +101,8 @@ if __name__ == "__main__":
     )
 
     print(f"\nBest Parameters: ")
-    print_parameters(param_space, result.x)
-    print(f"Best Score: {-result.fun}")  # Negate the score to interpret correctly
+    print_parameters(param_space, result.x, result.fun)
+    # print(f"Best Score: {-result.fun}")  # Negate the score to interpret correctly
     print("------------------------------")
     print(f"All Results: ")
     for i, (x, s) in enumerate(zip(result.x_iters, result.func_vals)):

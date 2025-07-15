@@ -65,7 +65,10 @@ class Config():
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
-        model='keras',
+        model='keras', # 'keras' or 'pytorch'
+        use_tflite=True, # If true uses tflite, otherwise uses keras directly. Only for keras models
+                         # If uses tflite, then interference and training are separate classes
+                         # Otherwise, interference and training are the same class
         default_model=None,
         move_algorithm='faster-but-loss', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
@@ -135,6 +138,7 @@ class Config():
         self.data_version = data_version
         self.ruleset = ruleset
         self.model = model
+        self.use_tflite = use_tflite
         self.default_model = default_model
         self.move_algorithm = move_algorithm
         self.l1_neurons = l1_neurons
@@ -209,7 +213,7 @@ class NodeState():
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
+def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]:
     global total_branch, number_branch
     # Picks a move for the AI to make 
 
@@ -326,7 +330,7 @@ def MCTS(config, game, network) -> tuple[tuple, treelib.Tree, bool]:
 
         # Don't update policy, move_list, or generate new nodes if the game is over       
         if node_state.game.is_terminal == False:
-            value, policy = evaluate(config, node_state.game, network)
+            value, policy = evaluate(config, node_state.game, interference_network)
             # value, policy = random_evaluate()
                 
             # Make sure that no values of the policy are below 0
@@ -1052,7 +1056,11 @@ def train_network_pytorch(config, model, set):
 
 def evaluate(config, game, network):
     if config.model == 'keras':
-        return evaluate_from_tflite(game, network)
+        if config.use_tflite:
+            # Use tflite interpreter
+            return evaluate_from_tflite(game, network)
+        else:
+            return evaluate_from_keras(game, network)
     elif config.model == 'pytorch':
         return evaluate_pytorch(game, network)
     
@@ -1093,6 +1101,26 @@ def evaluate_from_tflite(game, interpreter):
     value = value.item()
     policies = policies.reshape(POLICY_SHAPE)
     
+    return value, policies
+
+def evaluate_from_keras(game, model):
+    # Use a neural network to return value and policy.
+    data = game_to_X(game)
+    X = []
+    for feature in data:
+        if type(feature) in (float, int):
+            X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
+        else:
+            np_feature = np.expand_dims(np.float32(feature), axis=0)
+            if np_feature.shape == (1, 26, 10): # Expand grids
+                np_feature = np.expand_dims(np_feature, axis=-1)
+            X.append(np_feature)
+        
+    value, policies = model.predict_on_batch(X)
+    # Both value and policies are returned as arrays
+    value = value.item()
+    policies = policies.reshape(POLICY_SHAPE)
+
     return value, policies
 
 def evaluate_pytorch(game, model):
@@ -1328,7 +1356,7 @@ def get_game_stats(game, model_number):
 
     return stats
 
-def play_game(config, network, game_number=None, screen=None):
+def play_game(config, interference_network, game_number=None, screen=None):
     # AI plays one game against itself
     # Returns a tuple: (game_data, player_stats)
     if config.visual == True:
@@ -1361,7 +1389,7 @@ def play_game(config, network, game_number=None, screen=None):
 
         while num_random_moves > 0 and game.is_terminal == False:
             # Play random moves proportional to the raw policy distribution
-            _, temp_tree, _ = MCTS(fast_config, game, network)
+            _, temp_tree, _ = MCTS(fast_config, game, interference_network)
 
             move = pick_random_move_by_policy(temp_tree)
             game.make_move(move)
@@ -1369,7 +1397,7 @@ def play_game(config, network, game_number=None, screen=None):
             num_random_moves -= 1
 
     while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
-        move, tree, save = MCTS(config, game, network)
+        move, tree, save = MCTS(config, game, interference_network)
 
         if save or config.save_all:
             search_matrix = search_statistics(tree) # Moves that the network looked at
@@ -1453,12 +1481,12 @@ def play_game(config, network, game_number=None, screen=None):
 
     return data, stats
 
-def make_training_set(config, network, num_games, save_game=True, save_stats=True, screen=None):
+def make_training_set(config, interference_network, num_games, save_game=True, save_stats=True, screen=None):
     # Creates a dataset of several AI games.
     series_data = []
     series_stats = []
     for idx in range(1, num_games + 1):
-        data, stats = play_game(config, network, game_number=idx, screen=screen)
+        data, stats = play_game(config, interference_network, game_number=idx, screen=screen)
         series_data.extend(data)
         series_stats.append(stats)
 
@@ -1505,7 +1533,6 @@ def load_data_and_train_model(config, model, data=None):
         print(len(data))
         train_network(config, model, data)
 
-        del data
         gc.collect()
 
     elif config.data_loading_style == 'distinct':
@@ -1516,8 +1543,6 @@ def load_data_and_train_model(config, model, data=None):
                 print(len(set))
                 train_network(config, model, set)
 
-                del set
-
         else:
             if config.shuffle == True:
                 random.shuffle(data)
@@ -1525,7 +1550,6 @@ def load_data_and_train_model(config, model, data=None):
                 print(len(set))
                 train_network(config, model, set)
 
-                del set
         gc.collect()
     
     else: raise NotImplementedError
@@ -1655,10 +1679,7 @@ def self_play_loop(config, skip_first_set=False):
     if config.visual == True:
         screen = pygame.display.set_mode( (WIDTH, HEIGHT))
     # Given a network, generates training data, trains it, and checks if it improved.
-    best_network = load_best_model(config)
-
-    if config.model == 'keras':
-        best_interpreter = get_interpreter(best_network)
+    best_train_network, best_interference_network = load_best_train_and_interference_models(config)
 
     training_config = config.copy()
     # Setting training to true enables a variety of training features
@@ -1670,32 +1691,30 @@ def self_play_loop(config, skip_first_set=False):
         iter += 1
 
         # The challenger network will be trained and then battled against the prior network
-        challenger_network = load_best_model(config)
+        challenger_train_network, challenger_interference_network = load_best_train_and_interference_models(config)
 
         # Play a training set and train the network on past sets.
         if not skip_first_set:
             for i in range(TRAINING_LOOPS):
                 # Make data file with trianing config
-                make_training_set(training_config, (best_interpreter if config.model == 'keras' else best_network), TRAINING_GAMES, screen=screen)
+                make_training_set(training_config, challenger_interference_network, TRAINING_GAMES, screen=screen)
                 print("Finished set")
         else:
             # Skip and stop skipping in future
             skip_first_set = False
 
         # Load data and train
-        load_data_and_train_model(config, challenger_network, data=None)
-
-        if config.model == 'keras':
-            challenger_interpreter = get_interpreter(challenger_network)
+        load_data_and_train_model(config, challenger_train_network, data=None)
+        challenger_interference_network = get_interference_network(config, challenger_train_network)
 
         print("Finished loop")
 
         # If new network is improved, save it and make it the default
         # Otherwise, repeat
         _, win = battle_networks(
-            (challenger_interpreter if config.model == 'keras' else challenger_network), 
+            challenger_interference_network, 
             config, 
-            (best_interpreter if config.model == 'keras' else best_network), 
+            best_interference_network, 
             config, 
             GATING_THRESHOLD, 
             GATING_THRESHOLD_TYPE,
@@ -1707,21 +1726,46 @@ def self_play_loop(config, skip_first_set=False):
             next_ver = highest_model_number(config) + 1
 
             if config.model == 'keras':
-                challenger_network.save(f"{directory_path}/models/{config.ruleset}.{config.model_version}/{next_ver}.keras")
+                challenger_train_network.save(f"{directory_path}/models/{config.ruleset}.{config.model_version}/{next_ver}.keras")
             if config.model == 'pytorch':
-                torch.save(challenger_network.state_dict(), f"{directory_path}/pytorch_models/{config.ruleset}.{config.model_version}/{next_ver}")
+                torch.save(challenger_train_network.state_dict(), f"{directory_path}/pytorch_models/{config.ruleset}.{config.model_version}/{next_ver}")
 
             # The new network becomes the network to beat
-            best_network = challenger_network
-
-            if config.model == 'keras':
-                best_interpreter = get_interpreter(best_network)
+            best_interference_network = challenger_interference_network
         
-        del challenger_network
-        if config.model == 'keras':
-            del challenger_interpreter
-
         gc.collect()
+
+def get_interference_network(config, training_network):
+    """Returns an interference network for the given training network."""
+
+    if config.use_tflite and config.model == 'keras':
+        # Load the model as a tflite interpreter
+        return get_interpreter(training_network)
+
+    else:
+        # Load the model as a keras or pytorch model
+        return training_network
+
+def load_train_and_interference_models(config, model_number):
+    """Loads the model and returns it along with an interpreter if needed."""
+
+    if config.use_tflite and config.model == 'keras':
+        # Load the model as a tflite interpreter
+        model = load_model(config, model_number)
+        interpreter = get_interpreter(model)
+        return model, interpreter
+
+    else:
+        # Load the model as a keras or pytorch model
+        model = load_model(config, model_number)
+        return model, model
+
+def load_best_train_and_interference_models(config):
+    # Returns the model with the highest number
+    max_ver = highest_model_number(config)
+
+    return load_train_and_interference_models(config, max_ver)
+
 def load_model(config, model_number):
     # Returns the model with the given number
     blockPrint()

@@ -146,9 +146,9 @@ class AlphaSame(nn.Module):
         o_combo = o_combo.unsqueeze(1)
         o_garbage = o_garbage.unsqueeze(1)
         color = color.unsqueeze(1)
-        pieces_placed = pieces_placed.unsqueeze(1)
+        # pieces_placed = pieces_placed.unsqueeze(1)
 
-        x = torch.concat((a_grid_out, a_pieces, a_b2b, a_combo, a_garbage, o_grid_out, o_pieces, o_b2b, o_combo, o_garbage, color, pieces_placed), dim=1)
+        x = torch.concat((a_grid_out, a_pieces, a_b2b, a_combo, a_garbage, o_grid_out, o_pieces, o_b2b, o_combo, o_garbage, color), dim=1)
 
         # Value and policy head
         value_output = self.value_head(x)

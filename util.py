@@ -478,7 +478,6 @@ def test_data_parameters(
             
             train_network(config, network, set)
 
-            del set
             gc.collect()
 
     # Networks -> interpreters
@@ -511,7 +510,6 @@ def test_if_changes_improved_model():
     for set in data:
         train_network_keras(config, network, set)
 
-        del set
         gc.collect()
 
     best_nn = get_interpreter(load_best_model(config))
@@ -598,7 +596,6 @@ def convert_data_and_train_4_7_to_4_8():
     
         # Train challenger network
         train_network(config, new_network, set)
-        del set
         gc.collect()
         
         if i % 10 == 0:
@@ -644,7 +641,6 @@ def convert_data_and_train(init_data_ver, conversion_function, last_n_sets, epoc
     
         # Train challenger network
         train_network(c, new_network, set)
-        del set
         gc.collect()
         
         if i % 5 == 0:
