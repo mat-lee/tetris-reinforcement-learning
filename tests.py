@@ -8,6 +8,8 @@ def test_reflections():
 
     grid = [x[:] for x in util_t_spin_board] # copy
     game = Game(c.ruleset)
+    game.setup()
+    game.players[game.turn].board.grid = grid
     pieces = get_pieces(game)[0]
     # _, policy = evaluate(c, game, interpreter)
     move, tree, save = MCTS(c, game, interpreter)

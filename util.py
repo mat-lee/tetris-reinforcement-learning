@@ -8,14 +8,17 @@ import ast
 from collections import namedtuple
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import pygame
 import time
 
 util_t_spin_board = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'I'], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'I'], [0, 0, 0, 0, 0, 0, 0, 'Z', 0, 'I'], [0, 0, 0, 'Z', 0, 0, 'Z', 'Z', 'S', 'I'], [0, 0, 'Z', 'Z', 0, 0, 'Z', 'T', 'S', 'S'], [0, 0, 'Z', 'L', 0, 0, 0, 'T', 'T', 'S'], ['J', 'L', 'L', 'L', 'S', 'S', 0, 'T', 'O', 'O'], ['J', 'J', 'J', 'S', 'S', 0, 0, 'J', 'O', 'O'], ['I', 'I', 'I', 'I', 0, 0, 0, 'J', 'J', 'J']]
 
 # ------------------------- Internal Functions -------------------------
-def battle_royale(interpreters, configs, names, num_games, visual=True) -> dict:
+def battle_royale(interpreters, configs, names, num_games) -> dict:
     screen = None
+    visual = all([config.visual for config in configs])
+
     if visual == True:
         screen = pygame.display.set_mode( (WIDTH, HEIGHT))
 
@@ -30,7 +33,7 @@ def battle_royale(interpreters, configs, names, num_games, visual=True) -> dict:
                                                    num_games, 
                                                    network_1_title=names[i], 
                                                    network_2_title=names[j], 
-                                                   show_game=visual, screen=screen)
+                                                   screen=screen)
                 
                 scores[names[i]][names[j]] = f"{score_1}-{score_2}"
                 scores[names[j]][names[i]] = f"{score_2}-{score_1}"
@@ -411,8 +414,7 @@ def test_parameters(
     values: list,
     num_games: int,
     data=None,
-    load_from_best_model: bool=False,
-    visual: bool=True
+    load_from_best_model: bool=False
 ):
     ## Grid search battling different parameters
     # Configs
@@ -420,14 +422,13 @@ def test_parameters(
     for value, config in zip(values, configs):
         setattr(config, var, value)
 
-    test_configs(configs, num_games, data=data, load_from_best_model=load_from_best_model, visual=visual)
+    test_configs(configs, num_games, data=data, load_from_best_model=load_from_best_model)
 
 def test_configs(
     configs,
     num_games: int,
     data=None,
-    load_from_best_model: bool=False,
-    visual: bool=True
+    load_from_best_model: bool=False
 ):
     ## Grid search battling different Configs
 
@@ -447,8 +448,7 @@ def test_configs(
     print(battle_royale(interpreters, 
                         configs, 
                         [f"Config {i+1}" for i in range(len(configs))], 
-                        num_games,
-                        visual=visual))
+                        num_games))
 
 def test_data_parameters(
     var: str, 
@@ -458,13 +458,7 @@ def test_data_parameters(
     num_training_games: int,
     num_battle_games: int,
     load_from_best_model: bool = False,
-    visual = True
-):
-    ## Grid search battling different parameters
-    screen = None
-    if visual == True:
-        screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    
+):  
     # Configs
     # Set training to true
     configs = [Config(training=True, learning_rate=learning_rate) for _ in range(len(values))]
@@ -480,7 +474,7 @@ def test_data_parameters(
     for config, network in zip(configs, networks):
         for _ in range(num_training_loops):
             interpreter = get_interpreter(network)
-            set = make_training_set(config, interpreter, num_training_games, save_game=False, show_game=visual, screen=screen)
+            set = make_training_set(config, interpreter, num_training_games, save_game=False)
             
             train_network(config, network, set)
 
@@ -496,8 +490,7 @@ def test_data_parameters(
     print(battle_royale(interpreters, 
                         battle_configs, 
                         [str(value) for value in values], 
-                        num_battle_games,
-                        visual=visual))
+                        num_battle_games))
     
     print(var)
 
@@ -533,7 +526,7 @@ def test_if_changes_improved_model():
     network.save(f"{directory_path}/New.keras")
 
 
-def test_high_depth_replay(network, max_iter):
+def visualize_high_depth_replay(network, max_iter):
     # Battle an AI against itself at high depth, and then analyze it with undo and redo
     c=Config(MAX_ITER=max_iter)
 
@@ -709,7 +702,7 @@ def test_generate_move_matrix():
     moves = get_move_list(moves, np.ones(shape=POLICY_SHAPE))
     print(moves)
 
-def plot_stats():
+def plot_stats(include_rank_data=True):
     c = Config()
     stats_path = f"{c.data_dir}/stats.txt"
 
@@ -720,19 +713,48 @@ def plot_stats():
         for line in lines:
             line = line.strip("\n")
             line = line.split(": ", 1)[1]
-            dict = ast.literal_eval(line)
-            for stat in dict:
+            dicts = ast.literal_eval(line)
+            for stat in dicts:
                 if stat not in data:
-                    data[stat] = [dict[stat]]
+                    data[stat] = [dicts[stat]]
                 else:
-                    data[stat].append(dict[stat])
+                    data[stat].append(dicts[stat])
 
-    fig, axs = plt.subplots(len(data), figsize=(6.4, 4.8 + 1.6 * len(data)))
+    df = pd.DataFrame(data)
+    df = df.groupby("model_number").mean()
+
+    rank_data = {
+        "D": {"app": 0.154, "dspp": 0.034, "color": "#8f7591"},
+        # "C": {"app": 0.235, "dspp": 0.058, "color": "#733d8e"},
+        # "B": {"app": 0.290, "dspp": 0.081, "color": "#4f64c9"},
+        # "A": {"app": 0.360, "dspp": 0.105, "color": "#47ac52"},
+        # # "S-": {"app": 0.426, "dspp": 0.122, "color": "#b1972a"},
+        # "S": {"app": 0.467, "dspp": 0.133, "color": "#e1a71c"},
+        # # "S+": {"app": 0.517, "dspp": 0.141, "color": "#d9af0d"},
+        # "SS": {"app": 0.586, "dspp": 0.154, "color": "#db8a1e"},
+        # "U": {"app": 0.673, "dspp": 0.169, "color": "#ff3913"},
+        # "X": {"app": 0.757, "dspp": 0.174, "color": "#ff45ff"},
+        # "X+": {"app": 0.849, "dspp": 0.177, "color": "#653c8d"},
+    }
+
+    fig, axs = plt.subplots(len(df.columns), figsize=(7.2, 5.6 + 1.2 * len(df.columns)))
     fig.suptitle('Selfplay Data Statistics')
 
-    for i, stat in enumerate(data):
-        axs[i].plot(data[stat])
-        axs[i].set_xlabel(f"{stat}")
+    for i, stat in enumerate(df):
+        axs[i].plot(df[stat])
+        axs[i].set_xlabel("Model number")
+        axs[i].set_ylabel(f"{stat}")
+
+        if include_rank_data:
+            if stat in rank_data["D"]:
+                for rank in rank_data:
+                    axs[i].axhline(y=rank_data[rank][stat], color=rank_data[rank]["color"], label=rank, alpha=0.3)
+
+    if include_rank_data:
+        # Remove duplicate legend
+        handles, labels = fig.gca().get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        fig.legend(by_label.values(), by_label.keys())
 
     plt.savefig(f"{directory_path}/self_play_data_statistics_{c.ruleset}_{c.data_version}.png")
     print("Saved")
@@ -743,47 +765,16 @@ if __name__ == "__main__":
     c=Config(model='keras', shuffle=True)
 
     # keras.utils.set_random_seed(937)
-
-    # data = load_data(data_ver=1.3, last_n_sets=0)
-    ############### Setting learning rate DOES NOT WORK
-
-    # test_architectures(DefaultConfig, nn_gens=[gen_alphasame_nn, test_10], data=data, num_games=200, visual=True)
-
-    # test_parameters("dropout", values=[0.25, 0.4], num_games=200, data=data, load_from_best_model=False, visual=True)
-    # test_configs([Config(default_model=test_8, l2_reg=1e-2), Config(default_model=test_8, l2_reg=1e-3)], num_games=200, data=data, load_from_best_model=False, visual=True)
-
-    # test_data_parameters("augment_data", [True, False], 0.005, 1, 100, 200, load_from_best_model=True, visual=True)
-    # test_parameters("learning_rate", [1e-3, 1e-2], num_games=200, data=data, load_from_best_model=True, visual=True)
-    # test_data_parameters("use_experimental_features", [True, False], 1e-3, 1, 100, 200, True, True)
-    # test_data_parameters("save_all", [True, False], 1e-1, 1, 100, 200, load_from_best_model=True, visual=True)
-
-    # test_data_parameters("DIRICHLET_S", [25, 2500], 0.1, 1, 50, 100, load_from_best_model=True, visual=True)
-    # test_data_parameters("FpuValue", [0.1, 0.01], 0.1, 1, 100, 200, load_from_best_model=True, visual=True)
-
-    # test_reflected_policy()
-
-    # test_algorithm_accuracy(test_algo='faster-but-loss', truth_algo='brute-force')
-    # time_move_matrix('faster-but-loss')
+    
+    ##### Setting learning rate DOES NOT WORK
 
     # plot_dirichlet_noise()
-    # test_network_versions(52, 62)
-
-    # convert_data_and_train(init_data_ver=2.1,epochs=2, conversion_function=convert_data_2_1_to_2_2, last_n_sets=12)
-
-    # test_high_depth_replay(get_interpreter(load_best_model(c)), max_iter=80000)
-    # test_convert_data_and_train_4_7_to_4_8()
-
-    # profile_game()
-    # view_policy_with_and_without_dirichlet_noise()
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
+    # profile_game()
+    # test_reflected_policy()
+    visualize_high_depth_replay(get_interpreter(load_best_model(c)), 160)
     # visualize_policy()
-
-    plot_stats()
-
-    # c.move_algorithm = 'faster-but-loss'
-    # visualize_get_move_matrix(c, util_t_spin_board)
-
-
+    # plot_stats(include_rank_data=True)
 
 # Command for running python files
 # This is for running many tests at the same time

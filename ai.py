@@ -57,9 +57,11 @@ class Config():
     def __init__(
         self, 
 
+        visual=True, # Whether to display the training
+
         # For naming data and models
-        model_version = 5.9,
-        data_version = 2.3,
+        model_version=5.9,
+        data_version=2.3,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -128,6 +130,7 @@ class Config():
         use_forced_playouts_and_policy_target_pruning=True,
         CForcedPlayout=2,
     ):
+        self.visual = visual
         self.model_version = model_version
         self.data_version = data_version
         self.ruleset = ruleset
@@ -1315,19 +1318,20 @@ def reflect_policy(policy_matrix):
     
     return reflected_policy_matrix
 
-def get_game_stats(game):
+def get_game_stats(game, model_number):
     # Returns a dictionary with player statistics
     stats = {
+        "model_number": model_number,
         "app": game.players[0].stats.lines_sent  / game.players[0].stats.pieces,
         "dspp": game.players[0].stats.lines_cleared / game.players[0].stats.pieces
     }
 
     return stats
 
-def play_game(config, network, game_number=None, show_game=False, screen=None):
+def play_game(config, network, game_number=None, screen=None):
     # AI plays one game against itself
     # Returns a tuple: (game_data, player_stats)
-    if show_game == True:
+    if config.visual == True:
         if screen == None:
             screen = pygame.display.set_mode( (WIDTH, HEIGHT))
         pygame.display.set_caption(f'Training game {game_number}')
@@ -1424,7 +1428,7 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
 
         game.make_move(move)
 
-        if show_game == True:
+        if config.visual == True:
             game.show(screen)
             pygame.display.update()
 
@@ -1445,16 +1449,16 @@ def play_game(config, network, game_number=None, show_game=False, screen=None):
     data = game_data[0]
     data.extend(game_data[1])
 
-    stats = get_game_stats(game)
+    stats = get_game_stats(game, highest_model_number(config))
 
     return data, stats
 
-def make_training_set(config, network, num_games, save_game=True, save_stats=True, show_game=False, screen=None):
+def make_training_set(config, network, num_games, save_game=True, save_stats=True, screen=None):
     # Creates a dataset of several AI games.
     series_data = []
     series_stats = []
     for idx in range(1, num_games + 1):
-        data, stats = play_game(config, network, game_number=idx, show_game=show_game, screen=screen)
+        data, stats = play_game(config, network, game_number=idx, screen=screen)
         series_data.extend(data)
         series_stats.append(stats)
 
@@ -1469,6 +1473,7 @@ def make_training_set(config, network, num_games, save_game=True, save_stats=Tru
     
     if save_stats == True:
         averaged_stats = {
+            "model_number": series_stats[0]["model_number"],
             "app": round(sum([x["app"] for x in series_stats]) / len(series_stats), 3),
             "dspp": round(sum([x["dspp"] for x in series_stats]) / len(series_stats), 3)
         }
@@ -1574,7 +1579,7 @@ def get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
         random.shuffle(filenames)
     return filenames
 
-def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, games, network_1_title='Network 1', network_2_title='Network 2', show_game=False, screen=None):
+def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, games, network_1_title='Network 1', network_2_title='Network 2', screen=None):
     # Battle two AI networks and returns results with optional early termination
     # Returns tuple of (wins_array, True if NN_1 met the threshold, False otherwise)
     wins = np.zeros((2), dtype=int)
@@ -1583,8 +1588,10 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
     if config_1.ruleset != config_2.ruleset:
         raise NotImplementedError("Ruleset's aren't equal")
 
+    visual = config_1.visual and config_2.visual
+
     for i in range(games):
-        if show_game == True:
+        if visual:
             if screen == None:
                 screen = pygame.display.set_mode( (WIDTH, HEIGHT))
 
@@ -1606,7 +1613,7 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
                 move, *_ = MCTS(config_2, game, NN_2)
             game.make_move(move)
 
-            if show_game == True:
+            if visual == True:
                 game.show(screen)
                 pygame.display.update()
 
@@ -1643,8 +1650,9 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
     print(*wins)
     return wins, None
 
-def self_play_loop(config, skip_first_set=False, show_games=False):
-    if show_games == True:
+def self_play_loop(config, skip_first_set=False):
+    screen = None
+    if config.visual == True:
         screen = pygame.display.set_mode( (WIDTH, HEIGHT))
     # Given a network, generates training data, trains it, and checks if it improved.
     best_network = load_best_model(config)
@@ -1668,7 +1676,7 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
         if not skip_first_set:
             for i in range(TRAINING_LOOPS):
                 # Make data file with trianing config
-                make_training_set(training_config, (best_interpreter if config.model == 'keras' else best_network), TRAINING_GAMES, show_game=show_games, screen=screen)
+                make_training_set(training_config, (best_interpreter if config.model == 'keras' else best_network), TRAINING_GAMES, screen=screen)
                 print("Finished set")
         else:
             # Skip and stop skipping in future
@@ -1692,7 +1700,6 @@ def self_play_loop(config, skip_first_set=False, show_games=False):
             GATING_THRESHOLD, 
             GATING_THRESHOLD_TYPE,
             BATTLE_GAMES, 
-            show_game=show_games, 
             screen=screen
         )
         if win:

@@ -13,6 +13,8 @@ import pstats
 import random
 
 DefaultConfig = Config(training=False, model='keras')
+if DefaultConfig.visual == False:
+    raise Exception("Visual must be true to play the bot!")
 
 # Load neural network
 model = load_best_model(DefaultConfig)

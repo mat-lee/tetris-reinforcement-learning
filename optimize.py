@@ -5,11 +5,11 @@ from skopt.space import Real, Integer, Categorical
 from skopt.utils import use_named_args
 
 param_space = [
-    # Real(0.0, 0.9, name='dropout'),
+    Real(0.0, 0.9, name='dropout'),
     # Categorical([False, True], name='use_tanh'),
 
-    Real(0.1, 10, name='CPUCT'),
-    Real(0.001, 10, name='DPUCT'),
+    # Real(0.1, 10, name='CPUCT'),
+    # Real(0.001, 10, name='DPUCT'),
     # Categorical(['reduction', 'absolute'], name='FpuStrategy'),
     # Real(0.0, 1.0, name='FpuValue'),
     # Categorical([False, True], name='use_root_softmax'),
@@ -26,7 +26,7 @@ param_space = [
     # Integer(0.0, 3.0, name='CForcedPlayout'),
 ]
 
-training_games = 1 # Number of training games per training loop
+training_games = 100 # Number of training games per training loop
 training_loops = 1 # Number of training loops
 eval_games = 1 # Number of evaluation games
 visual = True
