@@ -182,6 +182,10 @@ class Player:
         # Check for s2 all spins:
         # Since tetr.io version something the allspin rules apply to t-pieces too
         # If a piece is already a t-spin, don't make it a mini
+
+        ### UPDATE COORDS BEFORE CANMOVE
+        self.piece.coordinates = self.piece.get_self_coords
+
         if self.ruleset == 's2' and not is_tspin:
             # If a piece can't move in any direction it is a mini
             offsets = [[-1, 0], [1, 0], [0, -1], [0, 1]]

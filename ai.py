@@ -61,7 +61,7 @@ class Config():
 
         # For naming data and models
         model_version=5.9,
-        data_version=2.3,
+        data_version=2.4,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 

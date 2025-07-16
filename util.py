@@ -13,6 +13,7 @@ import pygame
 import time
 
 util_t_spin_board = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'I'], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'I'], [0, 0, 0, 0, 0, 0, 0, 'Z', 0, 'I'], [0, 0, 0, 'Z', 0, 0, 'Z', 'Z', 'S', 'I'], [0, 0, 'Z', 'Z', 0, 0, 'Z', 'T', 'S', 'S'], [0, 0, 'Z', 'L', 0, 0, 0, 'T', 'T', 'S'], ['J', 'L', 'L', 'L', 'S', 'S', 0, 'T', 'O', 'O'], ['J', 'J', 'J', 'S', 'S', 0, 0, 'J', 'O', 'O'], ['I', 'I', 'I', 'I', 0, 0, 0, 'J', 'J', 'J']]
+util_z_spin_board = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'J'], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'J'], ['L', 0, 'T', 0, 0, 0, 0, 0, 'J', 'J'], ['L', 'T', 'T', 0, 0, 0, 0, 0, 0, 'T'], ['L', 'L', 'T', 'O', 'O', 0, 0, 0, 'T', 'T'], ['O', 'O', 'S', 'O', 'O', 0, 0, 0, 'S', 'T'], ['O', 'O', 'S', 'S', 'O', 'O', 0, 0, 'S', 'S'], ['L', 'L', 'I', 'S', 'O', 'O', 'T', 0, 'S', 'S'], [0, 'J', 'I', 'I', 'O', 'O', 0, 0, 'S', 'S'], [0, 'J', 'I', 'I', 'O', 'O', 0, 'S', 'S', 0], ['J', 'J', 'I', 'I', 0, 'I', 'I', 0, 'T', 0], [0, 'S', 'S', 'I', 0, 'I', 'I', 'T', 'T', 0], ['S', 'S', 'Z', 'Z', 0, 'I', 'I', 0, 'T', 0], [0, 'T', 0, 'Z', 'Z', 'I', 'I', 0, 'L', 'L'], ['T', 'T', 0, 0, 'J', 'J', 'J', 0, 0, 'L'], [0, 'T', 0, 0, 0, 0, 'J', 0, 0, 'L'], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1]]
 
 # ------------------------- Internal Functions -------------------------
 def battle_royale(interpreters, configs, names, num_games) -> dict:
@@ -401,7 +402,7 @@ def visualize_get_move_matrix(c, board):
 
     game.players[game.turn].piece = Piece(type="T")
     game.players[game.turn].piece.move_to_spawn()
-    game.players[game.turn].held_piece = "T"
+    game.players[game.turn].held_piece = "Z"
     game.players[game.turn].board.grid = board
 
     move_matrix = get_move_matrix(game.players[game.turn], algo=c.move_algorithm)
@@ -700,21 +701,22 @@ def test_generate_move_matrix():
 
 def plot_stats(include_rank_data=True):
     c = Config()
-    stats_path = f"{c.data_dir}/stats.txt"
+    stats_paths = [f"{c.data_dir}/stats.txt"]
 
-    with open(stats_path, 'r') as f:
-        lines = f.readlines()
+    for stats_path in stats_paths:
+        with open(stats_path, 'r') as f:
+            lines = f.readlines()
 
-        data = {}
-        for line in lines:
-            line = line.strip("\n")
-            line = line.split(": ", 1)[1]
-            dicts = ast.literal_eval(line)
-            for stat in dicts:
-                if stat not in data:
-                    data[stat] = [dicts[stat]]
-                else:
-                    data[stat].append(dicts[stat])
+            data = {}
+            for line in lines:
+                line = line.strip("\n")
+                line = line.split(": ", 1)[1]
+                dicts = ast.literal_eval(line)
+                for stat in dicts:
+                    if stat not in data:
+                        data[stat] = [dicts[stat]]
+                    else:
+                        data[stat].append(dicts[stat])
 
     df = pd.DataFrame(data)
     df = df.groupby("model_number").mean()
@@ -733,24 +735,87 @@ def plot_stats(include_rank_data=True):
         # "X+": {"app": 0.849, "dspp": 0.177, "color": "#653c8d"},
     }
 
-    fig, axs = plt.subplots(len(df.columns), figsize=(7.2, 5.6 + 1.2 * len(df.columns)))
+    change_data = {
+        72: "Kicktable was corrected from SRS-X to SRS+ and all-spins were fixed for the AI"
+    }
+
+    fig, axs = plt.subplots(len(df.columns), figsize=(6.5, 5.6 + 1.2 * len(df.columns)))
     fig.suptitle('Selfplay Data Statistics')
 
-    for i, stat in enumerate(df):
-        axs[i].plot(df[stat])
+    # Collect all legend handles and labels
+    all_handles = []
+    all_labels = []
+    rank_added = False
+    change_added = False
+
+    for i, stat in enumerate(df.columns):
+        # Plot main data
+        line = axs[i].plot(df[stat], label=f'{stat} data')[0]
         axs[i].set_xlabel("Model number")
         axs[i].set_ylabel(f"{stat}")
+        
+        # Add rank reference lines
+        if include_rank_data and stat in rank_data["D"]:
+            for rank in rank_data:
+                if stat in rank_data[rank]:
+                    rank_line = axs[i].axhline(
+                        y=rank_data[rank][stat], 
+                        color=rank_data[rank]["color"], 
+                        alpha=0.6, 
+                        linestyle='-', 
+                        linewidth=1
+                    )
+                    # Only add to legend once
+                    if not rank_added:
+                        all_handles.append(rank_line)
+                        all_labels.append(f'Rank {rank}')
+            rank_added = True
+        
+        # Add change indicators
+        for model_number, change in change_data.items():
+            change_line = axs[i].axvline(
+                x=model_number, 
+                color='red', 
+                linestyle='--', 
+                alpha=0.5,
+                linewidth=1
+            )
+            # Only add to legend once
+            if not change_added:
+                all_handles.append(change_line)
+                all_labels.append('Major Change')
+            change_added = True
 
-        if include_rank_data:
-            if stat in rank_data["D"]:
-                for rank in rank_data:
-                    axs[i].axhline(y=rank_data[rank][stat], color=rank_data[rank]["color"], label=rank, alpha=0.3)
+    # Create a single legend for the entire figure
+    if all_handles:
+        fig.legend(
+            all_handles, 
+            all_labels, 
+            loc='upper right', 
+            bbox_to_anchor=(0.98, 0.98),
+            fontsize=9,
+            frameon=True,
+            fancybox=True,
+            shadow=True
+        )
 
-    if include_rank_data:
-        # Remove duplicate legend
-        handles, labels = fig.gca().get_legend_handles_labels()
-        by_label = dict(zip(labels, handles))
-        fig.legend(by_label.values(), by_label.keys())
+    # Adjust layout to prevent overlap
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.93)
+
+    # Add changes text underneath the plot
+    if change_data:
+        # Create text for changes
+        change_text = "Changes:\n" + "\n".join([f"• Model {k}: {v}" for k, v in change_data.items()])
+        
+        fig.text(0.02, 0.01, change_text, 
+                fontsize=7, 
+                verticalalignment='bottom',
+                horizontalalignment='left',
+                bbox=dict(boxstyle='round,pad=0.6', facecolor='lightblue', alpha=0.8, edgecolor='blue'),
+                wrap=True)
+
+    plt.show()
 
     plt.savefig(f"{directory_path}/self_play_data_statistics_{c.ruleset}_{c.data_version}.png")
     print("Saved")
@@ -758,7 +823,7 @@ def plot_stats(include_rank_data=True):
 
 if __name__ == "__main__":
 
-    c=Config(model='keras', shuffle=True)
+    c=Config()
 
     # keras.utils.set_random_seed(937)
     
@@ -768,9 +833,10 @@ if __name__ == "__main__":
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
     # profile_game()
     # test_reflected_policy()
-    visualize_high_depth_replay(get_interpreter(load_best_model(c)), 160)
     # visualize_policy()
-    # plot_stats(include_rank_data=True)
+    plot_stats(include_rank_data=True)
+
+    # visualize_get_move_matrix(c, util_z_spin_board)
 
 # Command for running python files
 # This is for running many tests at the same time
