@@ -26,7 +26,7 @@ def battle_royale(interpreters, configs, names, num_games) -> dict:
     scores={name: {} for name in names}
 
     for i in range(len(interpreters)):
-        for j in range(i):
+        for j in range(i + 1, len(interpreters)):
             if i != j:
                 (score_1, score_2), _ = battle_networks(interpreters[i], configs[i], 
                                                    interpreters[j], configs[j],
@@ -444,7 +444,7 @@ def test_configs(
              load_data_and_train_model(config, network, data)
 
     # Networks -> interpreters
-    interpreters = [get_interpreter(network) for network in networks]
+    interpreters = [get_interference_network(config, network) for (config, network) in zip(configs, networks)]
 
     print(battle_royale(interpreters, 
                         configs, 
@@ -497,11 +497,12 @@ def test_data_parameters(
 def test_network_versions(ver_1, ver_2):
     # Making sure that the newest iteration of a network is better than earlier versions
     c = Config()
-    model_1 = get_interpreter(load_model(c, ver_1))
-    model_2 = get_interpreter(load_model(c, ver_2))
+
+    model_1 = get_interference_network(c, load_model(c, ver_1))
+    model_2 = get_interference_network(c, load_model(c, ver_2))
 
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
-    battle_networks(model_1, c, model_2, c, None, None, 200, f"Version {ver_1}", f"Version {ver_2}", True, screen)
+    battle_networks(model_1, c, model_2, c, None, None, 200, f"Version {ver_1}", f"Version {ver_2}", screen)
 
 def test_if_changes_improved_model():
     config = Config()
@@ -701,13 +702,16 @@ def test_generate_move_matrix():
 
 def plot_stats(include_rank_data=True):
     c = Config()
-    stats_paths = [f"{c.data_dir}/stats.txt"]
+    # stats_paths = [f"{c.data_dir}/stats.txt"]
+    stats_paths = [f"{Config(data_version=2.3).data_dir}/stats.txt",
+                   f"{Config(data_version=2.4).data_dir}/stats.txt",]
+
+    data = {}
 
     for stats_path in stats_paths:
         with open(stats_path, 'r') as f:
             lines = f.readlines()
 
-            data = {}
             for line in lines:
                 line = line.strip("\n")
                 line = line.split(": ", 1)[1]
@@ -723,14 +727,14 @@ def plot_stats(include_rank_data=True):
 
     rank_data = {
         "D": {"app": 0.154, "dspp": 0.034, "color": "#8f7591"},
-        # "C": {"app": 0.235, "dspp": 0.058, "color": "#733d8e"},
-        # "B": {"app": 0.290, "dspp": 0.081, "color": "#4f64c9"},
-        # "A": {"app": 0.360, "dspp": 0.105, "color": "#47ac52"},
-        # # "S-": {"app": 0.426, "dspp": 0.122, "color": "#b1972a"},
-        # "S": {"app": 0.467, "dspp": 0.133, "color": "#e1a71c"},
-        # # "S+": {"app": 0.517, "dspp": 0.141, "color": "#d9af0d"},
-        # "SS": {"app": 0.586, "dspp": 0.154, "color": "#db8a1e"},
-        # "U": {"app": 0.673, "dspp": 0.169, "color": "#ff3913"},
+        "C": {"app": 0.235, "dspp": 0.058, "color": "#733d8e"},
+        "B": {"app": 0.290, "dspp": 0.081, "color": "#4f64c9"},
+        "A": {"app": 0.360, "dspp": 0.105, "color": "#47ac52"},
+        # "S-": {"app": 0.426, "dspp": 0.122, "color": "#b1972a"},
+        "S": {"app": 0.467, "dspp": 0.133, "color": "#e1a71c"},
+        # "S+": {"app": 0.517, "dspp": 0.141, "color": "#d9af0d"},
+        "SS": {"app": 0.586, "dspp": 0.154, "color": "#db8a1e"},
+        "U": {"app": 0.673, "dspp": 0.169, "color": "#ff3913"},
         # "X": {"app": 0.757, "dspp": 0.174, "color": "#ff45ff"},
         # "X+": {"app": 0.849, "dspp": 0.177, "color": "#653c8d"},
     }
@@ -753,6 +757,11 @@ def plot_stats(include_rank_data=True):
         line = axs[i].plot(df[stat], label=f'{stat} data')[0]
         axs[i].set_xlabel("Model number")
         axs[i].set_ylabel(f"{stat}")
+
+
+        # Shrink plot width to make space for legend
+        box = axs[i].get_position()
+        axs[i].set_position([box.x0, box.y0, box.width * 0.98, box.height])
         
         # Add rank reference lines
         if include_rank_data and stat in rank_data["D"]:
@@ -774,7 +783,7 @@ def plot_stats(include_rank_data=True):
         # Add change indicators
         for model_number, change in change_data.items():
             change_line = axs[i].axvline(
-                x=model_number, 
+                x=model_number-0.5, # -0.5 to put the line inbetween models
                 color='red', 
                 linestyle='--', 
                 alpha=0.5,
@@ -783,12 +792,13 @@ def plot_stats(include_rank_data=True):
             # Only add to legend once
             if not change_added:
                 all_handles.append(change_line)
-                all_labels.append('Major Change')
+                all_labels.append('Change')
             change_added = True
 
     # Create a single legend for the entire figure
+    legend = None
     if all_handles:
-        fig.legend(
+        legend = fig.legend(
             all_handles, 
             all_labels, 
             loc='upper right', 
@@ -799,9 +809,9 @@ def plot_stats(include_rank_data=True):
             shadow=True
         )
 
-    # Adjust layout to prevent overlap
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.93)
+    # # Adjust layout to prevent overlap
+    # plt.tight_layout()
+    # plt.subplots_adjust(top=0.93)
 
     # Add changes text underneath the plot
     if change_data:
@@ -815,9 +825,9 @@ def plot_stats(include_rank_data=True):
                 bbox=dict(boxstyle='round,pad=0.6', facecolor='lightblue', alpha=0.8, edgecolor='blue'),
                 wrap=True)
 
-    plt.show()
+    # plt.show()
 
-    plt.savefig(f"{directory_path}/self_play_data_statistics_{c.ruleset}_{c.data_version}.png")
+    plt.savefig(f"{directory_path}/self_play_data_statistics_{c.ruleset}_{c.data_version}.png", bbox_extra_artists=(legend,), bbox_inches='tight')
     print("Saved")
 
 
@@ -836,7 +846,18 @@ if __name__ == "__main__":
     # visualize_policy()
     plot_stats(include_rank_data=True)
 
+    # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
+
     # visualize_get_move_matrix(c, util_z_spin_board)
+
+    # test_network_versions(132, 122)
+    
+    # data = load_data(c, last_n_sets=20)
+    # c1 = Config(epochs=5)
+    # c2 = Config(epochs=5, dropout=0.75)
+    # test_configs([c1, c2], 200, data=data, load_from_best_model=False)
+
+    # instantiate_network(c, show_summary=True, save_network=False, plot_model=True)
 
 # Command for running python files
 # This is for running many tests at the same time
