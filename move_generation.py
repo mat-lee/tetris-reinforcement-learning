@@ -325,8 +325,6 @@ class MoveGenerator:
         
         def create_piece_mask(piece_type, rotation):
             """Create a binary mask for the piece at given rotation, preserving original coordinates"""
-            coords = self.mino_coords_dict[piece_type][rotation]
-            
             # Use the piece dictionary which already has the proper matrix representation
             # This preserves the original piece coordinates and matrix structure
             mask = self.piece_dict[piece_type]
@@ -374,7 +372,7 @@ class MoveGenerator:
                         
             return result.tolist()
         
-        def find_reachable_positions(movement_graph, start_x, start_y):
+        def find_reachable_positions(movement_graph, start_x, start_y, skip_start_placement):
             """BFS to find all positions reachable via left/right/down movement."""
             if start_y < 0 or start_y >= len(movement_graph):
                 return list(), list()
@@ -424,24 +422,25 @@ class MoveGenerator:
                         
                     # If position is reachable and not visited
                     if movement_graph[new_y][new_x + 2] == 1:
-                        queue.append((new_x, new_y))
+                        if (new_x, new_y) not in queue:
+                            queue.append((new_x, new_y))
                     elif movement_graph[new_y][new_x + 2] == 0:
                         is_boundary = True
                     
                     # Check if it's placeable
                     if dy == 1 and movement_graph[new_y][new_x + 2] == 0:
-                        is_placeable = True
+                        is_placeable = True 
                 
                 if is_boundary:
                     boundary_positions.append((x, y))
                 if is_placeable: # Don't add first iteration to placeable positions
-                    if not is_first_iteration:
+                    if not (is_first_iteration and skip_start_placement):
                         placeable_positions.append((x, y))
                 
                 is_first_iteration = False
                     
             return boundary_positions, placeable_positions
-        
+
         # Main algorithm starts here
         
         # Step 1: Create convolution graphs for each rotation
@@ -464,42 +463,57 @@ class MoveGenerator:
         # Add spawn position to queue
         rotation_queue.append((spawn_x, spawn_y, spawn_rotation, False, False))
         
+        # Perform rotations initially
+        for i in range(1, 4):
+            self.piece.location.x = spawn_x
+            self.piece.location.y = spawn_y
+            self.piece.location.rotation = spawn_rotation
+            self.piece.coordinates = self.piece.get_self_coords
+
+            if self.sim_player.try_wallkick(i):
+                if self.piece.location.y >= 0:
+                    rotation_queue.append((self.piece.location.x, self.piece.location.y, self.piece.location.rotation, self.piece.location.rotation_just_occurred, 
+                                            self.piece.location.rotation_just_occurred_and_used_last_tspin_kick))
+
         while rotation_queue:
             current_x, current_y, current_rotation, rotation_occurred, used_last_kick = rotation_queue.popleft()
             
-            # Check if it can be placed BEFORE checking validity due to t-spin rules
-            # Define booleans
-            is_placeable = (
-                current_y + 1 >= len(movement_graphs[current_rotation]) or  # At bottom of grid
-                current_x + 2 < 0 or current_x + 2 >= len(movement_graphs[current_rotation][0]) or  # Out of bounds
-                movement_graphs[current_rotation][current_y + 1][current_x + 2] == 0  # Blocked below
-            )
+            cell_value = movement_graphs[current_rotation][current_y][current_x + 2]
 
-            position_is_valid = (
+            position_is_not_valid = (
                 current_y < 0 or current_y >= len(movement_graphs[current_rotation]) or # Out of vertical bounds
                 current_x + 2 < 0 or current_x + 2 >= len(movement_graphs[current_rotation][0]) or # Out of horizontal bounds
-                movement_graphs[current_rotation][current_y][current_x + 2] != 0 # Not valid position (0 = blocked)
-            )
-
-            position_already_processed = (
-                movement_graphs[current_rotation][current_y][current_x + 2] == 2
+                cell_value == 0 # Not valid position (0 = blocked)
             )
 
             # Piece checking order of operations:
-            if not position_is_valid: # Out of bounds
+            if position_is_not_valid: # Out of bounds
                 continue
+
+            cell_value_below = movement_graphs[current_rotation][current_y + 1][current_x + 2]
+
+            is_placeable = (
+                current_y + 1 >= len(movement_graphs[current_rotation]) or  # At bottom of grid
+                current_x + 2 < 0 or current_x + 2 >= len(movement_graphs[current_rotation][0]) or  # Out of bounds
+                cell_value_below == 0  # Blocked below
+            )
+
+            already_placed = False
 
             if is_placeable:
                 # Every placeable position is added to the placement queue
                 new_location = PieceLocation(current_x, current_y, current_rotation, rotation_occurred, used_last_kick)
                 self.place_location_queue.append(new_location)
+                already_placed = True
                 
+            position_already_processed = cell_value == 2
+
             if position_already_processed: # Already processed non-placeable position
                 continue
 
             # Step 4: Find all reachable positions in current rotation's graph
             boundary, placeable = find_reachable_positions(
-                movement_graphs[current_rotation], current_x, current_y
+                movement_graphs[current_rotation], current_x, current_y, already_placed
             )
             
             # Add all reachable positions as valid placements (only if boundary below)
@@ -523,6 +537,9 @@ class MoveGenerator:
                             if self.piece.location.y >= 0:
                                 rotation_queue.append((self.piece.location.x, self.piece.location.y, self.piece.location.rotation, self.piece.location.rotation_just_occurred, 
                                                         self.piece.location.rotation_just_occurred_and_used_last_tspin_kick))
+
+            # Sort the rotation queue to ensure we process lower rotations first DEBUGGING
+            rotation_queue = deque(sorted(rotation_queue, key=lambda x: x[1]))
     
     def _convert_placements_to_policy(self):
         """Convert the placement queue to policy matrix format."""

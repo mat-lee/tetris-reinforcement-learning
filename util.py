@@ -421,6 +421,8 @@ def visualize_get_move_matrix(c, board):
     truth_moves = np.sum(truth_matrix)
     test_moves = np.sum(test_matrix)
 
+    print(truth_moves, test_moves)
+
     if test_moves != truth_moves:
         diff = np.logical_xor(test_matrix, truth_matrix)
         # print(game.players[game.turn].board.grid)
