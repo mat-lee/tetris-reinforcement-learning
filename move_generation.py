@@ -317,11 +317,51 @@ class MoveGenerator:
         4. If rotation succeeds, jump to corresponding position in new rotation's graph
         5. Continue traversal until all reachable positions found
         """
-        axes_of_rotation_dict = {
-            "O": 1, "Z": 2, "S": 2, "I": 2,
-            "L": 4, "J": 4, "T": 4,
+        rotation_copy_mapping = {
+            "O": {0: None, 1: 0, 2: 0, 3: 0},  # All copy from rotation 0
+            "I": {0: None, 1: None, 2: 0, 3: 1},  # 0&2 same, 1&3 same
+            "S": {0: None, 1: None, 2: 0, 3: 1},  # 0&2 same, 1&3 same  
+            "Z": {0: None, 1: None, 2: 0, 3: 1},  # 0&2 same, 1&3 same
+            "L": {0: None, 1: None, 2: None, 3: None},  # All unique
+            "J": {0: None, 1: None, 2: None, 3: None},  # All unique
+            "T": {0: None, 1: None, 2: None, 3: None},  # All unique
         }
-        axes_of_rotation = axes_of_rotation_dict[self.piece.type]
+        
+        # Define offset mappings for copied rotations
+        rotation_offsets = {
+            "O": {0: (0, 0), 1: (0, 0), 2: (0, 0), 3: (0, 0)},
+            "I": {0: (0, 0), 1: (0, 0), 2: (0, 0), 3: (-1, 0)},  # rot 3 = rot 1 + (-1, 0)
+            "S": {0: (0, 0), 1: (0, 0), 2: (0, 1), 3: (-1, 0)},  # rot 2 = rot 0 + (0,1), rot 3 = rot 1 + (-1,0)
+            "Z": {0: (0, 0), 1: (0, 0), 2: (0, 1), 3: (-1, 0)},  # rot 2 = rot 0 + (0,1), rot 3 = rot 1 + (-1,0)
+            "L": {0: (0, 0), 1: (0, 0), 2: (0, 0), 3: (0, 0)},
+            "J": {0: (0, 0), 1: (0, 0), 2: (0, 0), 3: (0, 0)},
+            "T": {0: (0, 0), 1: (0, 0), 2: (0, 0), 3: (0, 0)},
+        }
+
+        def apply_offset_to_graph(movement_graph, x_offset, y_offset):
+            """Apply offset to movement graph, preserving valid positions."""
+            if not movement_graph or not movement_graph[0]:
+                return movement_graph
+            
+            height = len(movement_graph)
+            width = len(movement_graph[0])
+            
+            # Create new graph with same dimensions, initialized to 0
+            new_graph = [[0 for _ in range(width)] for _ in range(height)]
+            
+            # Copy valid positions with offset applied
+            for y in range(height):
+                for x in range(width):
+                    if movement_graph[y][x] == 1:  # Only copy valid positions
+                        new_x = x + x_offset
+                        new_y = y + y_offset
+                        
+                        # Check if the new position is within bounds
+                        if (0 <= new_y < height and 0 <= new_x < width):
+                            new_graph[new_y][new_x] = 1
+            
+            return new_graph
+
         
         def create_piece_mask(piece_type, rotation):
             """Create a binary mask for the piece at given rotation, preserving original coordinates"""
@@ -446,11 +486,25 @@ class MoveGenerator:
         # Step 1: Create convolution graphs for each rotation
         # Store all 4 rotations even if they look the same (different wallkicks/spins)
         movement_graphs = {}
-        for rotation in range(4):  # Always store all 4 rotations
-            piece_mask = create_piece_mask(self.piece.type, rotation)
-            movement_graphs[rotation] = convolve_grid_with_piece(
-                self.sim_player.board.grid, piece_mask
-            )
+        copy_mapping = rotation_copy_mapping[self.piece.type]
+        
+        # First pass: compute unique rotations
+        for rotation in range(4):
+            copy_from = copy_mapping[rotation]
+            if copy_from is None:  # This rotation is unique, compute it
+                piece_mask = create_piece_mask(self.piece.type, rotation)
+                movement_graphs[rotation] = convolve_grid_with_piece(
+                    self.sim_player.board.grid, piece_mask
+                )
+        
+        # Second pass: copy and offset similar rotations
+        for rotation in range(4):
+            copy_from = copy_mapping[rotation]
+            if copy_from is not None:  # This rotation copies from another
+                offset_x, offset_y = rotation_offsets[self.piece.type][rotation]
+                movement_graphs[rotation] = apply_offset_to_graph(
+                    movement_graphs[copy_from], offset_x, offset_y
+                )
         
         # Step 2: Simple position tracking for rotations
         rotation_queue = deque()
