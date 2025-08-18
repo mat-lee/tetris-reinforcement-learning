@@ -14,6 +14,8 @@ import time
 
 util_t_spin_board = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'I'], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'I'], [0, 0, 0, 0, 0, 0, 0, 'Z', 0, 'I'], [0, 0, 0, 'Z', 0, 0, 'Z', 'Z', 'S', 'I'], [0, 0, 'Z', 'Z', 0, 0, 'Z', 'T', 'S', 'S'], [0, 0, 'Z', 'L', 0, 0, 0, 'T', 'T', 'S'], ['J', 'L', 'L', 'L', 'S', 'S', 0, 'T', 'O', 'O'], ['J', 'J', 'J', 'S', 'S', 0, 0, 'J', 'O', 'O'], ['I', 'I', 'I', 'I', 0, 0, 0, 'J', 'J', 'J']]
 util_z_spin_board = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'J'], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'J'], ['L', 0, 'T', 0, 0, 0, 0, 0, 'J', 'J'], ['L', 'T', 'T', 0, 0, 0, 0, 0, 0, 'T'], ['L', 'L', 'T', 'O', 'O', 0, 0, 0, 'T', 'T'], ['O', 'O', 'S', 'O', 'O', 0, 0, 0, 'S', 'T'], ['O', 'O', 'S', 'S', 'O', 'O', 0, 0, 'S', 'S'], ['L', 'L', 'I', 'S', 'O', 'O', 'T', 0, 'S', 'S'], [0, 'J', 'I', 'I', 'O', 'O', 0, 0, 'S', 'S'], [0, 'J', 'I', 'I', 'O', 'O', 0, 'S', 'S', 0], ['J', 'J', 'I', 'I', 0, 'I', 'I', 0, 'T', 0], [0, 'S', 'S', 'I', 0, 'I', 'I', 'T', 'T', 0], ['S', 'S', 'Z', 'Z', 0, 'I', 'I', 0, 'T', 0], [0, 'T', 0, 'Z', 'Z', 'I', 'I', 0, 'L', 'L'], ['T', 'T', 0, 0, 'J', 'J', 'J', 0, 0, 'L'], [0, 'T', 0, 0, 0, 0, 'J', 0, 0, 'L'], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1]]
+util_move_algo_board = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 'I', 0, 0, 0, 0, 0], [0, 0, 0, 0, 'I', 0, 0, 0, 0, 0], [0, 0, 0, 0, 'I', 0, 0, 0, 0, 0], [0, 0, 0, 0, 'I', 0, 0, 0, 0, 0]]
+util_move_algo_board_2 = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ['Z', 'Z', 0, 0, 0, 0, 0, 0, 0, 0], [0, 'Z', 'Z', 0, 0, 0, 0, 'S', 'S', 0], ['O', 'O', 0, 0, 0, 0, 'S', 'S', 'O', 'O'], ['O', 'O', 'Z', 0, 'I', 'I', 'I', 'I', 'O', 'O'], [0, 'Z', 'Z', 'S', 'S', 0, 'I', 'I', 'I', 'I'], [0, 'Z', 'S', 'S', 'T', 'T', 'T', 0, 0, 0], [0, 0, 0, 0, 0, 'T', 0, 0, 0, 0], [0, 0, 0, 0, 0, 'J', 'J', 'J', 0, 0], [0, 0, 0, 0, 0, 0, 0, 'J', 0, 0], [0, 0, 0, 0, 0, 0, 0, 'L', 'L', 0], [0, 0, 0, 0, 0, 0, 0, 0, 'L', 0], [0, 0, 0, 0, 0, 0, 0, 0, 'L', 0]]
 
 # ------------------------- Internal Functions -------------------------
 def battle_royale(interpreters, configs, names, num_games) -> dict:
@@ -236,7 +238,7 @@ def time_move_matrix(algo) -> None:
 
     c = Config(MAX_ITER=100, move_algorithm=algo)
 
-    num_games = 5
+    num_games = 8
 
     # Initialize pygame
     screen = pygame.display.set_mode( (WIDTH, HEIGHT))
@@ -262,7 +264,7 @@ def time_move_matrix(algo) -> None:
 
     END = time.time()
 
-    print((END-START)/moves)
+    print(f"Time: {(END-START)/moves}")
 
 def time_architectures(var, values) -> None:
     # Tests how fast an algorithm takes to make a move
@@ -303,7 +305,7 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     # Test how accurate an algorithm is
     # Returns the percent of moves an algorithm found compared to all possible moves
 
-    num_games = 10
+    num_games = 5
 
     # Initialize pygame
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -321,8 +323,16 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
         game.setup()
 
         while game.is_terminal == False:
-            truth_moves += np.sum(get_move_matrix(game.players[game.turn], algo=truth_algo))
-            test_moves += np.sum(get_move_matrix(game.players[game.turn], algo=test_algo))
+            truth_matrix = get_move_matrix(game.players[game.turn], algo=truth_algo)
+            test_matrix = get_move_matrix(game.players[game.turn], algo=test_algo)
+
+            truth_moves += np.sum(truth_matrix)
+            test_moves += np.sum(test_matrix)
+
+            if test_moves != truth_moves:
+                diff = np.logical_xor(test_matrix, truth_matrix)
+                print(game.players[game.turn].board.grid)
+                print(np.argwhere(diff))
 
             # Make a move using the default algorithm
             move, _, _ = MCTS(c, game, interpreter)
@@ -332,7 +342,7 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
             pygame.event.get()
             pygame.display.update()
     
-    print(test_moves / truth_moves * 100)
+    print(f"Accuracy: {test_moves / truth_moves * 100}")
 
 def visualize_piece_placements(game, moves, sleep_time=0.3):
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -402,8 +412,19 @@ def visualize_get_move_matrix(c, board):
 
     game.players[game.turn].piece = Piece(type="T")
     game.players[game.turn].piece.move_to_spawn()
-    game.players[game.turn].held_piece = "Z"
+    game.players[game.turn].held_piece = "T"
     game.players[game.turn].board.grid = board
+
+    truth_matrix = get_move_matrix(game.players[game.turn], algo="brute-force")
+    test_matrix = get_move_matrix(game.players[game.turn], algo="convolutional")
+
+    truth_moves = np.sum(truth_matrix)
+    test_moves = np.sum(test_matrix)
+
+    if test_moves != truth_moves:
+        diff = np.logical_xor(test_matrix, truth_matrix)
+        # print(game.players[game.turn].board.grid)
+        print(np.argwhere(diff))
 
     move_matrix = get_move_matrix(game.players[game.turn], algo=c.move_algorithm)
     moves = get_move_list(move_matrix, np.ones(shape=POLICY_SHAPE))
@@ -833,7 +854,7 @@ def plot_stats(include_rank_data=True):
 
 if __name__ == "__main__":
 
-    c=Config()
+    c=Config(move_algorithm='convolutional')
 
     # keras.utils.set_random_seed(937)
     
@@ -844,11 +865,11 @@ if __name__ == "__main__":
     # profile_game()
     # test_reflected_policy()
     # visualize_policy()
-    plot_stats(include_rank_data=True)
+    # plot_stats(include_rank_data=True)
 
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
 
-    # visualize_get_move_matrix(c, util_z_spin_board)
+    visualize_get_move_matrix(c, util_move_algo_board_2)
 
     # test_network_versions(132, 122)
     
@@ -858,6 +879,9 @@ if __name__ == "__main__":
     # test_configs([c1, c2], 200, data=data, load_from_best_model=False)
 
     # instantiate_network(c, show_summary=True, save_network=False, plot_model=True)
+
+    # test_algorithm_accuracy(truth_algo='brute-force', test_algo='convolutional')
+    # time_move_matrix(algo='convolutional')
 
 # Command for running python files
 # This is for running many tests at the same time

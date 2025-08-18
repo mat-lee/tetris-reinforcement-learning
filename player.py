@@ -133,7 +133,7 @@ class Player:
 
                     if kick == kicktable[-1] and dir != 2:
                         piece.location.rotation_just_occurred_and_used_last_tspin_kick = True
-                return
+                return True
 
     def force_place_piece(self, piece_location):
         self.piece.location = piece_location
