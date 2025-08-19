@@ -236,6 +236,8 @@ def time_move_matrix(algo) -> None:
     #   brute force                   0.729
     #   faster but loss               0.276
 
+    #   conv-brute-force              0.268
+
     c = Config(MAX_ITER=100, move_algorithm=algo)
 
     num_games = 8
@@ -329,10 +331,10 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
             truth_moves += np.sum(truth_matrix)
             test_moves += np.sum(test_matrix)
 
-            if test_moves != truth_moves:
-                diff = np.logical_xor(test_matrix, truth_matrix)
-                print(game.players[game.turn].board.grid)
-                print(np.argwhere(diff))
+            # if test_moves != truth_moves:
+            #     # diff = np.logical_xor(test_matrix, truth_matrix)
+            #     # print(game.players[game.turn].board.grid)
+            #     # print(np.argwhere(diff))
 
             # Make a move using the default algorithm
             move, _, _ = MCTS(c, game, interpreter)
@@ -867,11 +869,11 @@ if __name__ == "__main__":
     # profile_game()
     # test_reflected_policy()
     # visualize_policy()
-    # plot_stats(include_rank_data=True)
+    plot_stats(include_rank_data=True)
 
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
 
-    visualize_get_move_matrix(c, util_move_algo_board_2)
+    # visualize_get_move_matrix(c, util_move_algo_board_2)
 
     # test_network_versions(132, 122)
     

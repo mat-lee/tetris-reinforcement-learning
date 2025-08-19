@@ -477,25 +477,21 @@ class MoveGenerator:
 
         while rotation_queue:
             current_x, current_y, current_rotation, rotation_occurred, used_last_kick = rotation_queue.popleft()
-            
-            cell_value = movement_graphs[current_rotation][current_y][current_x + 2]
 
             position_is_not_valid = (
                 current_y < 0 or current_y >= len(movement_graphs[current_rotation]) or # Out of vertical bounds
                 current_x + 2 < 0 or current_x + 2 >= len(movement_graphs[current_rotation][0]) or # Out of horizontal bounds
-                cell_value == 0 # Not valid position (0 = blocked)
+                movement_graphs[current_rotation][current_y][current_x + 2] == 0 # Not valid position (0 = blocked)
             )
 
             # Piece checking order of operations:
             if position_is_not_valid: # Out of bounds
                 continue
 
-            cell_value_below = movement_graphs[current_rotation][current_y + 1][current_x + 2]
-
             is_placeable = (
                 current_y + 1 >= len(movement_graphs[current_rotation]) or  # At bottom of grid
                 current_x + 2 < 0 or current_x + 2 >= len(movement_graphs[current_rotation][0]) or  # Out of bounds
-                cell_value_below == 0  # Blocked below
+                movement_graphs[current_rotation][current_y + 1][current_x + 2] == 0  # Blocked below
             )
 
             already_placed = False
@@ -506,7 +502,7 @@ class MoveGenerator:
                 self.place_location_queue.append(new_location)
                 already_placed = True
                 
-            position_already_processed = cell_value == 2
+            position_already_processed = movement_graphs[current_rotation][current_y][current_x + 2] == 2
 
             if position_already_processed: # Already processed non-placeable position
                 continue
