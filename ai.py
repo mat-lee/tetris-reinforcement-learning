@@ -108,7 +108,9 @@ class Config():
 
         # Training Parameters
         training=False, # Set to true to use a variety of features
-        learning_rate=0.001, 
+        learning_rate=3e-4, 
+        weight_decay=1e-5,
+        global_clipnorm=0.5,
         loss_weights=[1, 1], 
         epochs=1, 
         batch_size=64,
@@ -119,7 +121,7 @@ class Config():
         use_experimental_features=True, # Before setting to true, check if it's in use
         save_all=False,
 
-        use_random_starting_moves=False, # If true, pick the first few moves randomly with respect to policy weights
+        use_random_starting_moves=True, # If true, pick the first few moves randomly with respect to policy weights
 
         use_playout_cap_randomization=True,
         playout_cap_chance=0.25,
@@ -163,6 +165,8 @@ class Config():
         self.RootSoftmaxTemp = RootSoftmaxTemp
         self.training = training
         self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.global_clipnorm = global_clipnorm
         self.loss_weights = loss_weights
         self.epochs = epochs
         self.batch_size = batch_size
@@ -586,7 +590,13 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
             keras.utils.plot_model(model, to_file=f"{directory_path}/model_{config.model_version}_img.png", show_shapes=True)
 
         # Loss is the sum of MSE of values and Cross entropy of policies
-        model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
+        model.compile(
+            optimizer=keras.optimizers.Adam(
+                learning_rate=config.learning_rate,
+                weight_decay=config.weight_decay,
+                global_clipnorm=config.global_clipnorm
+            ), 
+            loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
 
         if show_summary: model.summary()
 

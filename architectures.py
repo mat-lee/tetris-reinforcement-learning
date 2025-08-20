@@ -220,7 +220,7 @@ def gen_alphasame_nn(config) -> keras.Model:
             x = keras.layers.Dense(config.value_head_neurons)(x)
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dropout(config.dropout)(x) # Dropout
+            # x = keras.layers.Dropout(config.dropout)(x) # Dropout
             x = keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'))(x)
 
             return x
@@ -243,12 +243,12 @@ def gen_alphasame_nn(config) -> keras.Model:
             relu_1 = keras.layers.Activation('relu')
             conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
             batch_2 = keras.layers.BatchNormalization()
-            dropout_1 = keras.layers.Dropout(config.dropout)
+            # dropout_1 = keras.layers.Dropout(config.dropout)
             relu_2 = keras.layers.Activation('relu')
             conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
 
-            out_1 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_1)))))))
-            out_2 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_2)))))))
+            out_1 = conv_2(relu_2(batch_2(conv_1(relu_1(batch_1(in_1))))))
+            out_2 = conv_2(relu_2(batch_2(conv_1(relu_1(batch_1(in_2))))))
 
             out_1 = keras.layers.Add()([in_1, out_1])
             out_2 = keras.layers.Add()([in_2, out_2])
@@ -316,12 +316,12 @@ def gen_alphasame_nn(config) -> keras.Model:
 
             # Resume second half of the standard residual block
             batch_2 = keras.layers.BatchNormalization()
-            dropout_1 = keras.layers.Dropout(config.dropout)
+            # dropout_1 = keras.layers.Dropout(config.dropout)
             relu_2 = keras.layers.Activation('relu')
             conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
 
-            out_1 = conv_2(relu_2(dropout_1(batch_2(out_1))))
-            out_2 = conv_2(relu_2(dropout_1(batch_2(out_2))))
+            out_1 = conv_2(relu_2(batch_2(out_1)))
+            out_2 = conv_2(relu_2(batch_2(out_2)))
 
             out_1 = keras.layers.Add()([in_1, out_1])
             out_2 = keras.layers.Add()([in_2, out_2])

@@ -856,6 +856,19 @@ def plot_stats(include_rank_data=True):
     plt.savefig(f"{directory_path}/self_play_data_statistics_{c.ruleset}_{c.data_version}.png", bbox_extra_artists=(legend,), bbox_inches='tight')
     print("Saved")
 
+def make_new_model_and_train():
+    c = Config(epochs=1)
+
+    network = instantiate_network(c, show_summary=True, save_network=False)
+
+    data = load_data(c, last_n_sets=30)
+
+    for set in data:
+        train_network(c, network, set)
+        gc.collect()
+
+    network.save(f"{directory_path}/models/debug/new_model.keras")
+    print("Saved new model")
 
 if __name__ == "__main__":
 
@@ -870,7 +883,7 @@ if __name__ == "__main__":
     # profile_game()
     # test_reflected_policy()
     # visualize_policy()
-    plot_stats(include_rank_data=True)
+    # plot_stats(include_rank_data=True)
 
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
 
@@ -887,7 +900,11 @@ if __name__ == "__main__":
 
     # test_algorithm_accuracy(truth_algo='brute-force', test_algo='convolutional')
     # time_move_matrix(algo='convolutional')
-    time_move_matrix(algo='faster-but-loss')
+    # time_move_matrix(algo='faster-but-loss')
+
+    # make_new_model_and_train()
+
+    test_network_versions(218, 220)
 
 # Command for running python files
 # This is for running many tests at the same time
