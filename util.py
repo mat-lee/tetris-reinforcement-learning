@@ -236,7 +236,8 @@ def time_move_matrix(algo) -> None:
     #   brute force                   0.729
     #   faster but loss               0.276
 
-    #   conv-brute-force              0.268
+    #   convolution                   0.247
+    #   faster-but-loss               0.244
 
     c = Config(MAX_ITER=100, move_algorithm=algo)
 
@@ -886,6 +887,7 @@ if __name__ == "__main__":
 
     # test_algorithm_accuracy(truth_algo='brute-force', test_algo='convolutional')
     # time_move_matrix(algo='convolutional')
+    time_move_matrix(algo='faster-but-loss')
 
 # Command for running python files
 # This is for running many tests at the same time

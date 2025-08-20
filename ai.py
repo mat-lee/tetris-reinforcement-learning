@@ -71,7 +71,7 @@ class Config():
                          # If uses tflite, then interference and training are separate classes
                          # Otherwise, interference and training are the same class
         default_model=None,
-        move_algorithm='faster-but-loss', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
+        move_algorithm='convolutional', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
         # Architecture Parameters
         #   Fishlike model
