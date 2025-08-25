@@ -106,6 +106,11 @@ class Config():
         use_root_softmax=True,
         RootSoftmaxTemp=1.1,
 
+        use_value_shaping=True,              # if True, adjust value labels by holes/height
+        value_holes_weight=0.01 / 1.5,             # penalty per hole
+        value_height_weight=0.02 / 1.5,           # penalty per unit of height (agg or max)
+        value_height_mode='agg',             # 'agg' sum of column heights, or 'max' tallest column
+
         # Training Parameters
         training=False, # Set to true to use a variety of features
         learning_rate=0.001, 
@@ -119,7 +124,7 @@ class Config():
         use_experimental_features=True, # Before setting to true, check if it's in use
         save_all=False,
 
-        use_random_starting_moves=False, # If true, pick the first few moves randomly with respect to policy weights
+        use_random_starting_moves=True, # If true, pick the first few moves randomly with respect to policy weights
 
         use_playout_cap_randomization=True,
         playout_cap_chance=0.25,
@@ -160,6 +165,10 @@ class Config():
         self.FpuStrategy = FpuStrategy
         self.FpuValue = FpuValue
         self.use_root_softmax = use_root_softmax
+        self.use_value_shaping = use_value_shaping
+        self.value_holes_weight = value_holes_weight
+        self.value_height_weight = value_height_weight
+        self.value_height_mode  = value_height_mode
         self.RootSoftmaxTemp = RootSoftmaxTemp
         self.training = training
         self.learning_rate = learning_rate
@@ -571,6 +580,45 @@ def get_move_list(move_matrix, policy_matrix):
 # y:
 #   Policy: (19 x 25 x 11) = 5225 (Hold x (Rows - 1) x (Columns + 1) x Rotations)
 #   Value: (1)
+
+def count_holes_and_heights(board):
+    """
+    board: 2D list/np.array [rows, cols], 1=filled, 0=empty; row 0 is top.
+    Returns: holes (int), col_heights (list[int]), max_height (int), agg_height (int)
+    """
+    import numpy as _np
+    b = _np.asarray(board)
+    rows, cols = b.shape
+    col_heights = _np.zeros(cols, dtype=_np.int32)
+    for c in range(cols):
+        filled = _np.where(b[:, c] != 0)[0]
+        col_heights[c] = (rows - filled[0]) if filled.size else 0
+    holes = 0
+    for c in range(cols):
+        h = col_heights[c]
+        if h <= 0: 
+            continue
+        top = rows - h
+        col = b[top:, c]
+        holes += int((col == 0).sum())
+    max_h = int(col_heights.max()) if cols>0 else 0
+    agg_h = int(col_heights.sum())
+    return int(holes), col_heights.tolist(), max_h, agg_h
+
+def apply_value_shaping_to_label(base_value, board, config):
+    """Return shaped value label using holes/height penalties. Clamped to [-1,1] if tanh, or [0,1] otherwise."""
+    try:
+        holes, _, max_h, agg_h = count_holes_and_heights(board)
+        height_term = agg_h / len(board[0]) if getattr(config, 'value_height_mode', 'agg') == 'agg' else max_h
+        shaped = base_value - config.value_holes_weight * holes + config.value_height_weight * height_term
+        # Clamp
+        if getattr(config, 'use_tanh', True):
+            shaped = max(-1.0, min(1.0, shaped))
+        else:
+            shaped = max(0.0, min(1.0, shaped))
+        return shaped
+    except Exception:
+        return base_value
 
 def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights
@@ -1098,7 +1146,10 @@ def play_game(config, interference_network, game_number=None, screen=None):
             value = (-1 if config.use_tanh else 0)
         # Insert value before policy for each move of that player
         for move_idx in range(len(game_data[player_idx])):
-            game_data[player_idx][move_idx].insert(-1, value)
+
+            board = game_data[player_idx][move_idx][0]
+            shaped_value = apply_value_shaping_to_label(value, board, config) if (config.training and config.use_value_shaping) else value
+            game_data[player_idx][move_idx].insert(-1, shaped_value)
 
     # Reformat data to stack all moves into one continuous list
     data = game_data[0]

@@ -766,7 +766,8 @@ def plot_stats(include_rank_data=True):
     }
 
     change_data = {
-        72: "Kicktable was corrected from SRS-X to SRS+ and all-spins were fixed for the AI"
+        72: "Kicktable was corrected from SRS-X to SRS+ and all-spins were fixed for the AI",
+        224: "Added punishment for holes and height to value"
     }
 
     fig, axs = plt.subplots(len(df.columns), figsize=(6.5, 5.6 + 1.2 * len(df.columns)))
@@ -887,7 +888,7 @@ if __name__ == "__main__":
 
     # test_algorithm_accuracy(truth_algo='brute-force', test_algo='convolutional')
     # time_move_matrix(algo='convolutional')
-    time_move_matrix(algo='faster-but-loss')
+    # time_move_matrix(algo='faster-but-loss')
 
 # Command for running python files
 # This is for running many tests at the same time
