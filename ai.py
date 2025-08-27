@@ -89,8 +89,8 @@ class Config():
         l2_reg=3e-5,
 
         kernels=1,
-        o_side_neurons=16,
-        value_head_neurons=16,
+        o_side_neurons=32,
+        value_head_neurons=32,
 
         use_tanh=False, # If false means using sigmoid; affects data saving and model activation
         # Makes evaluation range from -1 to 1, while sigmoid ranges from 0 to 1
@@ -108,8 +108,8 @@ class Config():
 
         # Training Parameters
         training=False, # Set to true to use a variety of features
-        learning_rate=0.001, 
-        loss_weights=[1, 1], 
+        learning_rate=0.0003, 
+        loss_weights=[1, 1, 0.05, 0.05], 
         epochs=1, 
         batch_size=64,
 
@@ -586,7 +586,10 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
             keras.utils.plot_model(model, to_file=f"{directory_path}/model_{config.model_version}_img.png", show_shapes=True)
 
         # Loss is the sum of MSE of values and Cross entropy of policies
-        model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), 
+            loss=["mean_squared_error", "categorical_crossentropy", 'mse', 'mse'], 
+            loss_weights=config.loss_weights)
 
         if show_summary: model.summary()
 
@@ -622,6 +625,8 @@ def train_network_keras(config, model, set):
         features[i] = np.array(features[i])
 
     # Last two columns are value and policy
+    holes = features.pop()
+    height = features.pop()
     policies = features.pop()
     values = features.pop()
 
@@ -633,7 +638,7 @@ def train_network_keras(config, model, set):
     # Adjust learning rate HOW???
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
 
-    model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
+    model.fit(x=features, y=[values, policies, holes, height], batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
 
 def train_network_pytorch(config, model, set):
     features = list(map(list, zip(*set)))
@@ -707,6 +712,8 @@ def evaluate_from_tflite(game, interpreter):
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
+    output_details.sort(key=lambda x: x['name'])
+
     for i in range(len(X)):
         split_str = input_details[i]['name'].split(":")[0]
         
@@ -721,8 +728,12 @@ def evaluate_from_tflite(game, interpreter):
 
     interpreter.invoke()
 
-    value = interpreter.get_tensor(output_details[1]['index'])
-    policies = interpreter.get_tensor(output_details[0]['index'])
+    value = interpreter.get_tensor(output_details[0]['index'])
+    policies = interpreter.get_tensor(output_details[1]['index'])
+
+    # if len(output_details == 4):
+    #     height = interpreter.get_tensor(output_details[2]['index'])
+    #     holes = interpreter.get_tensor(output_details[3]['index'])
 
     # Both value and policies are returned as arrays
     value = value.item()
@@ -982,6 +993,45 @@ def get_game_stats(game, model_number):
     }
 
     return stats
+
+def col_heights_from_grid(grid):
+    rows, cols = len(grid), len(grid[0])
+    col_heights = np.zeros(cols, dtype=np.int32)
+    for c in range(cols):
+        first = -1
+        for r in range(rows):
+            if grid[r][c] != 0:
+                first = r
+                break
+        col_heights[c] = (rows - first) if first != -1 else 0
+    return col_heights
+
+def count_holes(grid, col_heights):
+    rows, cols = len(grid), len(grid[0])
+    holes = 0
+    for c in range(cols):
+        if col_heights[c] == 0:
+            continue
+        top = rows - col_heights[c]
+        for r in range(top, rows):
+            if grid[r][c] == 0:
+                holes += 1
+    return holes
+
+def calculate_board_metrics(grid):
+    col_heights = col_heights_from_grid(grid)
+    avg_h = int(col_heights.sum())
+
+    holes = count_holes(grid, col_heights)
+
+    # simple normalizations
+    holes_norm = min(1.0, holes / float((ROWS - 1) * COLS))
+    avg_norm   = min(1.0, avg_h / float(ROWS * COLS))
+
+    return {
+        "holes": holes_norm,
+        "avg_height": avg_norm,
+    }
 
 def play_game(config, interference_network, game_number=None, screen=None):
     # AI plays one game against itself

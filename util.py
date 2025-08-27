@@ -651,12 +651,25 @@ def convert_data_2_1_to_2_2(set):
         # extra_policy = np.zeros(shape=(POLICY_SHAPE[0] - 19, POLICY_SHAPE[1], POLICY_SHAPE[2]), dtype=int).tolist()
         # move[-1].extend(extra_policy)
 
-def convert_data_and_train(init_data_ver, conversion_function, last_n_sets, epochs):
-    c = Config(epochs=epochs)
+def convert_data_2_4_to_2_5(set):
+    # Add aux data to set
+    for move in set:
+        grid = move[0]
+        metrics = calculate_board_metrics(grid)
+        holes = metrics['holes']
+        avg_height = metrics['avg_height']
 
-    new_network = instantiate_network(c, show_summary=True, save_network=False)
+        move.append(avg_height)
+        move.append(holes)
 
-    filenames = get_data_filenames(c, data_ver=init_data_ver, last_n_sets=last_n_sets)
+def convert_data_and_train(c, init_data_ver, conversion_function, last_n_sets, epochs):
+    c.epochs = epochs
+    c.data_version = init_data_ver
+
+    # new_network = instantiate_network(c, nn_generator=c.default_model, show_summary=True, save_network=False)
+    new_network = load_model(c, 300)
+
+    filenames = get_data_filenames(c, last_n_sets=last_n_sets)
 
     path = f"{directory_path}/data/{c.ruleset}.{init_data_ver}"
 
@@ -855,11 +868,10 @@ def plot_stats(include_rank_data=True):
 
     plt.savefig(f"{directory_path}/self_play_data_statistics_{c.ruleset}_{c.data_version}.png", bbox_extra_artists=(legend,), bbox_inches='tight')
     print("Saved")
-
-
+    
 if __name__ == "__main__":
 
-    c=Config(move_algorithm='convolutional')
+    c=Config(default_model=gen_model_aux)
 
     # keras.utils.set_random_seed(937)
     
@@ -869,14 +881,14 @@ if __name__ == "__main__":
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
     # profile_game()
     # test_reflected_policy()
-    # visualize_policy()
-    plot_stats(include_rank_data=True)
+    visualize_policy()
+    # plot_stats(include_rank_data=True)
 
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
 
     # visualize_get_move_matrix(c, util_move_algo_board_2)
 
-    # test_network_versions(132, 122)
+    # test_network_versions(300, 400)
     
     # data = load_data(c, last_n_sets=20)
     # c1 = Config(epochs=5)
@@ -887,7 +899,9 @@ if __name__ == "__main__":
 
     # test_algorithm_accuracy(truth_algo='brute-force', test_algo='convolutional')
     # time_move_matrix(algo='convolutional')
-    time_move_matrix(algo='faster-but-loss')
+    # time_move_matrix(algo='faster-but-loss')
+
+    # convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
 
 # Command for running python files
 # This is for running many tests at the same time
