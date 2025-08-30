@@ -15,6 +15,10 @@ _Reinforcement‑learning agent for **turn‑based TETR.IO** (self‑play + MCTS
 
 ## 🎥 Demo
 
+
+https://github.com/user-attachments/assets/86f91867-77d1-4d46-bd22-3bae9afb2d26
+
+
 > The video shows coordinated play *and* a failure mode: the agent can fall into a **local minimum** that’s **exploitable** by specific setups. See **Research notes** for mitigations.
 
 ---
