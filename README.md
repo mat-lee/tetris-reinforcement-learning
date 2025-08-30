@@ -6,6 +6,7 @@ _Reinforcement‑learning agent for **turn‑based TETR.IO** (self‑play + MCTS
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](#)
 [![Backend](https://img.shields.io/badge/Backends-Keras%2FTFLite%20%7C%20PyTorch-6aa84f)](#)
 [![Status](https://img.shields.io/badge/status-experimental-orange)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen)](#)
 
 </div>
@@ -13,8 +14,6 @@ _Reinforcement‑learning agent for **turn‑based TETR.IO** (self‑play + MCTS
 ---
 
 ## 🎥 Demo
-
-https://github.com/user-attachments/assets/0d98cd95-5b2b-4534-aa58-2d029f14011a
 
 > The video shows coordinated play *and* a failure mode: the agent can fall into a **local minimum** that’s **exploitable** by specific setups. See **Research notes** for mitigations.
 
@@ -40,11 +39,8 @@ It’s intentionally small and hackable—ideal for experiments and coursework.
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-# 2) Install deps (adjust to your environment)
-pip install numpy pandas matplotlib pygame
-pip install tensorflow              # or: pip install tensorflow[and-cuda]
-# (Optional alt backend)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# 2) Install dependencies from requirements.txt
+pip install -r requirements.txt
 
 # 3) Run the simulator / training loop
 python simulation.py
@@ -62,45 +58,34 @@ Most behavior is controlled by a `Config` in **`ai.py`**. Example:
 from ai import Config, instantiate_network, self_play_loop
 
 cfg = Config(
-    # I/O & backend
-    model='keras',            # 'keras' | 'pytorch'
-    use_tflite=True,          # (keras only) fast inference
-    model_version=5.9,        # Storage/models/<ruleset>.<model_version>
-    data_version=2.4,         # Storage/data/<ruleset>.<data_version>
-    ruleset='s2',             # 's1' | 's2'
-
-    # Network (residual CNN)
+    model='keras',
+    use_tflite=True,
+    model_version=5.9,
+    data_version=2.4,
+    ruleset='s2',
     blocks=10,
     filters=16,
     dropout=0.25,
     l2_reg=3e-5,
     o_side_neurons=16,
     value_head_neurons=16,
-
-    # MCTS / PUCT
     MAX_ITER=160,
     CPUCT=0.75,
     DPUCT=1,
-    FpuStrategy='reduction',  # or 'absolute'
+    FpuStrategy='reduction',
     FpuValue=0.4,
     use_root_softmax=True,
     RootSoftmaxTemp=1.1,
-
-    # Exploration
     use_dirichlet_noise=True,
     DIRICHLET_ALPHA=0.02,
     DIRICHLET_S=25,
     DIRICHLET_EXPLORATION=0.25,
     use_dirichlet_s=True,
-
-    # Training
     training=False,
     learning_rate=1e-3,
-    loss_weights=[1, 1],      # [value, policy]
+    loss_weights=[1, 1],
     epochs=1,
     batch_size=64,
-
-    # Data
     data_loading_style='merge',
     augment_data=True,
     shuffle=True
@@ -122,6 +107,7 @@ self_play_loop(cfg, skip_first_set=False)
 ├─ architectures.py    # Residual CNN; policy/value heads (Keras & PyTorch)
 ├─ simulation.py       # Entry point (run this)
 ├─ util.py             # Utilities (profiling, experiments, test boards)
+├─ requirements.txt    # Dependencies
 └─ README.md
 ```
 
@@ -156,4 +142,28 @@ Issues and PRs are welcome. Small, focused changes with a brief note or demo GIF
 
 ## 📄 License
 
-Add your preferred open‑source license (MIT/Apache‑2.0/BSD‑3‑Clause) to the repo.
+This project is licensed under the **MIT License** – see the [LICENSE](LICENSE) file for details.
+
+```text
+MIT License
+
+Copyright (c) 2025 [Your Name]
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
