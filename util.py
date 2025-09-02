@@ -6,7 +6,9 @@ from player import Player
 
 import ast
 from collections import namedtuple
+import imageio.v3 as iio
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import numpy as np
 import pandas as pd
 import pygame
@@ -715,6 +717,33 @@ def visualize_policy():
     plt.savefig(f"{directory_path}/policy_visualization_{c.model_version}.png")
     print("saved")
 
+def visualize_policy_from_data():
+    # Visualize the policy of a network
+    c=Config()
+
+    data = load_data(c, last_n_sets=1)
+    data = data[0][:50]
+
+    frames = []
+
+    for move in data:
+        policy = move[-1]
+        fig, axs = plt.subplots(1, POLICY_SHAPE[0], figsize=(40, 3))
+        fig.suptitle('Policy visualization', y=0.98)
+
+        for i in range(len(policy_index_to_piece)):
+            axs[i].imshow(policy[i], cmap='viridis')
+
+        # Draw and convert to RGB array
+        canvas = FigureCanvas(fig)
+        canvas.draw()
+        img = np.array(canvas.buffer_rgba())[:, :, :3]  # (H, W, 3) array
+
+        frames.append(img)
+        plt.close(fig)
+
+    iio.imwrite(f"{directory_path}/sinewave.mp4", frames, fps=10)
+
 def test_generate_move_matrix():
     c = Config()
     grid = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ['I', 0, 0, 0, 0, 0, 0, 0, 0, 'Z'], ['I', 0, 0, 0, 0, 0, 0, 0, 'Z', 'Z'], ['I', 0, 0, 0, 0, 0, 0, 0, 'Z', 'J'], ['I', 'T', 0, 'I', 'T', 0, 0, 0, 0, 'J'], ['T', 'T', 0, 'I', 'T', 'T', 'S', 0, 'J', 'J'], ['L', 'T', 'L', 'I', 'T', 0, 'S', 'S', 'S', 0], ['L', 0, 'L', 'I', 'J', 'O', 'O', 'S', 'S', 'S'], [0, 'T', 0, 'O', 'O', 'O', 'O', 0, 'Z', 'Z'], [0, 'T', 'T', 'O', 'O', 0, 'S', 'S', 'S', 'S'], [0, 'T', 'O', 'O', 0, 'S', 'S', 'S', 'S', 0], [0, 0, 'O', 'O', 0, 0, 0, 'Z', 'J', 0], [0, 0, 'I', 0, 0, 0, 'Z', 'Z', 'J', 0], [0, 0, 'I', 0, 0, 0, 'Z', 'J', 'J', 0], [0, 0, 'I', 0, 0, 'T', 0, 'J', 0, 0], [0, 0, 'I', 0, 'L', 'T', 'T', 'J', 0, 0], [0, 0, 'L', 'L', 'L', 'T', 'J', 'J', 0, 0], [0, 0, 0, 0, 'O', 'O', 0, 'Z', 'Z', 0], [0, 0, 0, 0, 'O', 'O', 0, 0, 'Z', 'Z'], [0, 0, 0, 0, 0, 'I', 'I', 'I', 'I', 0], [0, 0, 0, 0, 0, 0, 'S', 'S', 0, 0], [0, 0, 0, 0, 0, 'S', 'S', 0, 0, 0], [0, 0, 0, 0, 0, 0, 'L', 'L', 'L', 0], ['I', 'I', 'I', 'I', 0, 0, 'L', 'J', 'J', 'J']]
@@ -870,7 +899,7 @@ if __name__ == "__main__":
     # profile_game()
     # test_reflected_policy()
     # visualize_policy()
-    plot_stats(include_rank_data=True)
+    # plot_stats(include_rank_data=True)
 
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
 
@@ -887,7 +916,9 @@ if __name__ == "__main__":
 
     # test_algorithm_accuracy(truth_algo='brute-force', test_algo='convolutional')
     # time_move_matrix(algo='convolutional')
-    time_move_matrix(algo='faster-but-loss')
+    # time_move_matrix(algo='faster-but-loss')
+
+    visualize_policy_from_data()
 
 # Command for running python files
 # This is for running many tests at the same time
