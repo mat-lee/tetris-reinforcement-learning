@@ -3,7 +3,7 @@ from ai import *
 ### File for running the simulation commands
 show_training = True
 
-DefaultConfig = Config(model='keras', default_model=gen_alphasame_nn, visual=show_training)
+DefaultConfig = Config(model='keras', default_model=gen_model_aux, visual=show_training)
 
 # Create a network if none exist already
 if highest_model_number(DefaultConfig) == -1:

@@ -61,8 +61,8 @@ class Config():
         visual=True, # Whether to display the training
 
         # For naming data and models
-        model_version=5.9,
-        data_version=2.4,
+        model_version=6.0,
+        data_version=2.5,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -71,7 +71,7 @@ class Config():
                          # If uses tflite, then interference and training are separate classes
                          # Otherwise, interference and training are the same class
         default_model=None,
-        move_algorithm='convolutional', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
+        move_algorithm='faster-conv', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
         # Architecture Parameters
         #   Fishlike model
@@ -109,7 +109,7 @@ class Config():
         # Training Parameters
         training=False, # Set to true to use a variety of features
         learning_rate=0.001, 
-        loss_weights=[1, 1], 
+        loss_weights=[1, 1, 0.05, 0.05], 
         epochs=1, 
         batch_size=64,
 
@@ -586,7 +586,12 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
             keras.utils.plot_model(model, to_file=f"{directory_path}/model_{config.model_version}_img.png", show_shapes=True)
 
         # Loss is the sum of MSE of values and Cross entropy of policies
-        model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
+        
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), 
+            loss=["mean_squared_error", "categorical_crossentropy", 'mse', 'mse'], 
+            loss_weights=config.loss_weights
+        )
 
         if show_summary: model.summary()
 
@@ -622,6 +627,8 @@ def train_network_keras(config, model, set):
         features[i] = np.array(features[i])
 
     # Last two columns are value and policy
+    holes = features.pop()
+    height = features.pop()
     policies = features.pop()
     values = features.pop()
 
@@ -633,7 +640,7 @@ def train_network_keras(config, model, set):
     # Adjust learning rate HOW???
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
 
-    model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
+    model.fit(x=features, y=[values, policies, holes, height], batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
 
 def train_network_pytorch(config, model, set):
     features = list(map(list, zip(*set)))
@@ -707,6 +714,8 @@ def evaluate_from_tflite(game, interpreter):
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
+    output_details.sort(key=lambda x: x['name'])
+
     for i in range(len(X)):
         split_str = input_details[i]['name'].split(":")[0]
         
@@ -721,8 +730,9 @@ def evaluate_from_tflite(game, interpreter):
 
     interpreter.invoke()
 
-    value = interpreter.get_tensor(output_details[1]['index'])
-    policies = interpreter.get_tensor(output_details[0]['index'])
+
+    value = interpreter.get_tensor(output_details[0]['index'])
+    policies = interpreter.get_tensor(output_details[1]['index'])
 
     # Both value and policies are returned as arrays
     value = value.item()
@@ -983,6 +993,45 @@ def get_game_stats(game, model_number):
 
     return stats
 
+def col_heights_from_grid(grid):
+    rows, cols = len(grid), len(grid[0])
+    col_heights = np.zeros(cols, dtype=np.int32)
+    for c in range(cols):
+        first = -1
+        for r in range(rows):
+            if grid[r][c] != 0:
+                first = r
+                break
+        col_heights[c] = (rows - first) if first != -1 else 0
+    return col_heights
+
+def count_holes(grid, col_heights):
+    rows, cols = len(grid), len(grid[0])
+    holes = 0
+    for c in range(cols):
+        if col_heights[c] == 0:
+            continue
+        top = rows - col_heights[c]
+        for r in range(top, rows):
+            if grid[r][c] == 0:
+                holes += 1
+    return holes
+
+def calculate_board_metrics(grid):
+    col_heights = col_heights_from_grid(grid)
+    avg_h = int(col_heights.sum())
+
+    holes = count_holes(grid, col_heights)
+
+    # simple normalizations
+    holes_norm = min(1.0, holes / float((ROWS - 1) * COLS))
+    avg_norm   = min(1.0, avg_h / float(ROWS * COLS))
+
+    return {
+        "holes": holes_norm,
+        "avg_height": avg_norm,
+    }
+
 def play_game(config, interference_network, game_number=None, screen=None):
     # AI plays one game against itself
     # Returns a tuple: (game_data, player_stats)
@@ -1097,8 +1146,13 @@ def play_game(config, interference_network, game_number=None, screen=None):
         else:
             value = (-1 if config.use_tanh else 0)
         # Insert value before policy for each move of that player
+        # Additionally include auxiliary targets
         for move_idx in range(len(game_data[player_idx])):
             game_data[player_idx][move_idx].insert(-1, value)
+            # Add auxiliary targets
+            board_metrics = calculate_board_metrics(game_data[player_idx][move_idx][0])
+            game_data[player_idx][move_idx].append(board_metrics["holes"])
+            game_data[player_idx][move_idx].append(board_metrics["avg_height"])
 
     # Reformat data to stack all moves into one continuous list
     data = game_data[0]

@@ -240,6 +240,8 @@ def time_move_matrix(algo) -> None:
 
     #   convolution                   0.247
     #   faster-but-loss               0.244
+    #   faster-conv                   0.187 94%
+    #   ultra-conv                    0.159 
 
     c = Config(MAX_ITER=100, move_algorithm=algo)
 
@@ -289,8 +291,7 @@ def time_architectures(var, values) -> None:
         scores[str(value)] = END - START
     print(scores)
 
-def profile_game() -> None:
-    c = Config()
+def profile_game(c) -> None:
     game = Game(c.ruleset)
     game.setup()
 
@@ -301,7 +302,7 @@ def profile_game() -> None:
 
     # Profile game
     with cProfile.Profile() as pr:
-        play_game(c, network, 777, show_game=True, screen=screen)
+        play_game(c, network, 777, screen=screen)
     stats = pstats.Stats(pr)
     stats.sort_stats(pstats.SortKey.TIME)
     stats.print_stats(20)
@@ -914,11 +915,12 @@ if __name__ == "__main__":
 
     # instantiate_network(c, show_summary=True, save_network=False, plot_model=True)
 
-    # test_algorithm_accuracy(truth_algo='brute-force', test_algo='convolutional')
-    # time_move_matrix(algo='convolutional')
+    # test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-conv')
+    time_move_matrix(algo='faster-conv')
+    # profile_game(Config(move_algorithm='ultra-conv'))
     # time_move_matrix(algo='faster-but-loss')
 
-    visualize_policy_from_data()
+    # visualize_policy_from_data()
 
 # Command for running python files
 # This is for running many tests at the same time
