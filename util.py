@@ -523,10 +523,8 @@ def test_data_parameters(
     
     print(var)
 
-def test_network_versions(ver_1, ver_2):
+def test_network_versions(c, ver_1, ver_2):
     # Making sure that the newest iteration of a network is better than earlier versions
-    c = Config()
-
     model_1 = get_interference_network(c, load_model(c, ver_1))
     model_2 = get_interference_network(c, load_model(c, ver_2))
 
@@ -678,17 +676,32 @@ def convert_data_and_train(c, init_data_ver, conversion_function, last_n_sets, e
 
     i = 0
 
+    data = {}
+
     for filename in filenames:
         i += 1
         set = ujson.load(open(f"{path}/{filename}", 'r'))
         conversion_function(set)
     
         # Train challenger network
-        train_network(c, new_network, set)
+        history = train_network(c, new_network, set)
+        loss_values = history.history
+        for key in loss_values:
+            if key not in data:
+                data[key] = []
+            data[key].extend(loss_values[key])
         gc.collect()
         
         if i % 5 == 0:
             new_network.save(f"{directory_path}/models/debug/{i}.keras")
+    
+    for key, data in data.items():
+        plt.plot(data, label=key)
+    plt.title('Training Loss Over Time')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend(loc='upper right')
+    plt.savefig(f"{directory_path}/training_curve_{c.ruleset}_{c.data_version}_to_{c.model_version}.png")
         
     new_network.save(f"{directory_path}/models/debug/{i}.keras")
 
@@ -904,7 +917,7 @@ if __name__ == "__main__":
 
     c=Config(move_algorithm='convolutional')
 
-    # keras.utils.set_random_seed(937)
+    # tf.keras.utils.set_random_seed(937)
     
     ##### Setting learning rate DOES NOT WORK
 
@@ -919,7 +932,7 @@ if __name__ == "__main__":
 
     # visualize_get_move_matrix(c, util_move_algo_board_2)
 
-    # test_network_versions(132, 122)
+    test_network_versions(Config(model_version=5.9), 236, 500)
     
     # data = load_data(c, last_n_sets=20)
     # c1 = Config(epochs=5)
@@ -935,7 +948,8 @@ if __name__ == "__main__":
 
     # visualize_policy_from_data()
     
-    convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
+    # convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
 # Command for running python files
 # This is for running many tests at the same time
-"/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/util.py"
+"/Users/matthewlee/Documents/Code/Tetris Game/src/.venv_old/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/util.py"
+"/Users/matthewlee/Documents/Code/Tetris Game/src/.venvtf220/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/util.py"

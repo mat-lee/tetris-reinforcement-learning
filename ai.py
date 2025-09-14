@@ -25,11 +25,13 @@ import os
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
 
-from tensorflow import keras
 from keras import backend as K
 import tensorflow as tf
 from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
+
+import torch
+from torch import nn
 
 # Reduce tensorflow text
 # tf.get_logger().setLevel('ERROR')
@@ -583,12 +585,12 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
 
     if config.model == 'keras':
         if plot_model == True:
-            keras.utils.plot_model(model, to_file=f"{directory_path}/model_{config.model_version}_img.png", show_shapes=True)
+            tf.keras.utils.plot_model(model, to_file=f"{directory_path}/model_{config.model_version}_img.png", show_shapes=True)
 
         # Loss is the sum of MSE of values and Cross entropy of policies
         
         model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), 
+            optimizer=tf.keras.optimizers.Adam(learning_rate=config.learning_rate), 
             loss={
                 'value': "mean_squared_error", 
                 'policy': "categorical_crossentropy", 
@@ -616,9 +618,9 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
 
 def train_network(config, model, set):
     if config.model == 'keras':
-        train_network_keras(config, model, set)
+        return train_network_keras(config, model, set)
     elif config.model == 'pytorch':
-        train_network_pytorch(config, model, set)
+        return train_network_pytorch(config, model, set)
 
 def train_network_keras(config, model, set):
     # Keras has 2GB limit (?)
@@ -640,7 +642,7 @@ def train_network_keras(config, model, set):
     # Reshape policies
     policies = np.array(policies).reshape((-1, POLICY_SIZE))
 
-    # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
+    # callback = tf.keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
     # Adjust learning rate HOW???
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
@@ -652,9 +654,9 @@ def train_network_keras(config, model, set):
                                 'aux_height': height,  # Note: height maps to aux_height
                                 'aux_holes': holes     # Note: holes maps to aux_holes
                                 }, 
-                        batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
-
-    print("Tracked metrics:", list(history.history.keys()))
+                        batch_size=64, epochs=config.epochs, shuffle=config.shuffle, verbose=2)
+    
+    return history
 
 def train_network_pytorch(config, model, set):
     features = list(map(list, zip(*set)))
@@ -743,7 +745,6 @@ def evaluate_from_tflite(game, interpreter):
         interpreter.set_tensor(i, X[idx])
 
     interpreter.invoke()
-
 
     value = interpreter.get_tensor(output_details[0]['index'])
     policies = interpreter.get_tensor(output_details[1]['index'])
@@ -1468,7 +1469,7 @@ def load_model(config, model_number):
     if config.model == 'keras':
         path = f"{config.model_dir}/{model_number}.keras"
 
-        model = keras.models.load_model(path)
+        model = tf.keras.models.load_model(path)
     elif config.model == 'pytorch':
         path = f"{config.model_dir}/{model_number}"
 

@@ -1,10 +1,11 @@
 # File for managing different neural networks architectures.
 from const import *
 
-import torch
-from torch import nn
-import torch.nn.functional as F
+# import torch
+# from torch import nn
+# import torch.nn.functional as F
 
+"""
 class ResidualBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -159,12 +160,10 @@ class AlphaSame(nn.Module):
 
 
 
+"""
 
 
 
-
-
-from tensorflow import keras
 import tensorflow as tf
 
 
@@ -191,7 +190,7 @@ def create_input_layers():
 
     for i, shape in enumerate(shapes):
         # Add input
-        input = keras.Input(shape=shape, name=f"{i}")
+        input = tf.keras.Input(shape=shape, name=f"{i}")
         inputs.append(input)
 
         num_inputs = len(shapes)
@@ -200,28 +199,28 @@ def create_input_layers():
             if shape == shapes[0]:
                 active_grid = input
             else:
-                active_features.append(keras.layers.Flatten()(input))
+                active_features.append(tf.keras.layers.Flatten()(input))
         # Other player's features
         elif i < (num_inputs - 1): # Ignore last input, take remaining half
             if shape == shapes[0]:
                 opponent_grid = input
             else:
-                opponent_features.append(keras.layers.Flatten()(input))
+                opponent_features.append(tf.keras.layers.Flatten()(input))
         # Other features
         else:
-            non_player_features.append(keras.layers.Flatten()(input))
+            non_player_features.append(tf.keras.layers.Flatten()(input))
     
     return inputs, active_grid, active_features, opponent_grid, opponent_features, non_player_features
 
-def gen_alphasame_nn(config) -> keras.Model:
+def gen_alphasame_nn(config) -> tf.keras.Model:
     def ValueHead():
         # Returns value; found at the end of the network
         def inside(x):
-            x = keras.layers.Dense(config.value_head_neurons)(x)
-            x = keras.layers.BatchNormalization()(x)
-            x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dropout(config.dropout)(x) # Dropout
-            x = keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'))(x)
+            x = tf.keras.layers.Dense(config.value_head_neurons)(x)
+            x = tf.keras.layers.BatchNormalization()(x)
+            x = tf.keras.layers.Activation('relu')(x)
+            x = tf.keras.layers.Dropout(config.dropout)(x) # Dropout
+            x = tf.keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'))(x)
 
             return x
         return inside
@@ -230,7 +229,7 @@ def gen_alphasame_nn(config) -> keras.Model:
         # Returns policy list; found at the end of the network
         def inside(x):
             # Generate probability distribution
-            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+            x = tf.keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
 
             return x
         return inside
@@ -239,19 +238,19 @@ def gen_alphasame_nn(config) -> keras.Model:
     def ResidualLayer():
         # Uses skip conections
         def inside(in_1, in_2):
-            batch_1 = keras.layers.BatchNormalization()
-            relu_1 = keras.layers.Activation('relu')
-            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
-            batch_2 = keras.layers.BatchNormalization()
-            dropout_1 = keras.layers.Dropout(config.dropout)
-            relu_2 = keras.layers.Activation('relu')
-            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_1 = tf.keras.layers.BatchNormalization()
+            relu_1 = tf.keras.layers.Activation('relu')
+            conv_1 = tf.keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_2 = tf.keras.layers.BatchNormalization()
+            dropout_1 = tf.keras.layers.Dropout(config.dropout)
+            relu_2 = tf.keras.layers.Activation('relu')
+            conv_2 = tf.keras.layers.Conv2D(config.filters, (3, 3), padding="same")
 
             out_1 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_1)))))))
             out_2 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_2)))))))
 
-            out_1 = keras.layers.Add()([in_1, out_1])
-            out_2 = keras.layers.Add()([in_2, out_2])
+            out_1 = tf.keras.layers.Add()([in_1, out_1])
+            out_2 = tf.keras.layers.Add()([in_2, out_2])
 
             return out_1, out_2
         return inside
@@ -259,15 +258,15 @@ def gen_alphasame_nn(config) -> keras.Model:
     def GlobalPoolingLayer():
         # Uses skip conections and global pooling
         def inside(in_1, in_2):
-            batch_1 = keras.layers.BatchNormalization()
-            relu_1 = keras.layers.Activation('relu')
-            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_1 = tf.keras.layers.BatchNormalization()
+            relu_1 = tf.keras.layers.Activation('relu')
+            conv_1 = tf.keras.layers.Conv2D(config.filters, (3, 3), padding="same")
 
             out_1 = conv_1(relu_1(batch_1(in_1)))
             out_2 = conv_1(relu_1(batch_1(in_2)))
 
-            # lambda_pool_1 = keras.layers.Lambda(lambda x: x[..., :config.cpool])
-            # lambda_rest_1 = keras.layers.Lambda(lambda x: x[..., config.cpool:])
+            # lambda_pool_1 = tf.keras.layers.Lambda(lambda x: x[..., :config.cpool])
+            # lambda_rest_1 = tf.keras.layers.Lambda(lambda x: x[..., config.cpool:])
 
             # Split channels
             out_1_pool = out_1[:, :, :, :config.cpool]
@@ -277,15 +276,15 @@ def gen_alphasame_nn(config) -> keras.Model:
             out_2_rest = out_2[:, :, :, config.cpool:]
 
             # Use batch norm and relu on pooling layers
-            pool_batch_1 = keras.layers.BatchNormalization()
-            pool_relu_1 = keras.layers.Activation('relu')
+            pool_batch_1 = tf.keras.layers.BatchNormalization()
+            pool_relu_1 = tf.keras.layers.Activation('relu')
 
             out_1_pool_act = pool_relu_1(pool_batch_1(out_1_pool))
             out_2_pool_act = pool_relu_1(pool_batch_1(out_2_pool))
 
             # Global average and global pooling on the first cpool channels
-            avg_pool_1 = keras.layers.GlobalAveragePooling2D()
-            max_pool_1 = keras.layers.GlobalMaxPooling2D()
+            avg_pool_1 = tf.keras.layers.GlobalAveragePooling2D()
+            max_pool_1 = tf.keras.layers.GlobalMaxPooling2D()
 
             out_1_average_pooled = avg_pool_1(out_1_pool_act)
             out_2_average_pooled = avg_pool_1(out_2_pool_act)
@@ -293,38 +292,38 @@ def gen_alphasame_nn(config) -> keras.Model:
             out_1_max_pooled = max_pool_1(out_1_pool)
             out_2_max_pooled = max_pool_1(out_2_pool)
 
-            out_1_pooled = keras.layers.Concatenate()([out_1_average_pooled, out_1_max_pooled])
-            out_2_pooled = keras.layers.Concatenate()([out_2_average_pooled, out_2_max_pooled])
+            out_1_pooled = tf.keras.layers.Concatenate()([out_1_average_pooled, out_1_max_pooled])
+            out_2_pooled = tf.keras.layers.Concatenate()([out_2_average_pooled, out_2_max_pooled])
 
             # Fully connected layer
-            dense_1 = keras.layers.Dense(config.filters - config.cpool)
+            dense_1 = tf.keras.layers.Dense(config.filters - config.cpool)
 
             out_1_dense = dense_1(out_1_pooled)
             out_2_dense = dense_1(out_2_pooled)
 
             # Reshape to match the remaining channels
-            out_1_biases = keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_1_dense)
-            out_2_biases = keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_2_dense)
+            out_1_biases = tf.keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_1_dense)
+            out_2_biases = tf.keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_2_dense)
 
             # Add the biases to the remaining channels
-            out_1_biased = keras.layers.Add()([out_1_rest, out_1_biases])
-            out_2_biased = keras.layers.Add()([out_2_rest, out_2_biases])
+            out_1_biased = tf.keras.layers.Add()([out_1_rest, out_1_biases])
+            out_2_biased = tf.keras.layers.Add()([out_2_rest, out_2_biases])
 
             # Concatenate the pooled and biased channels
-            out_1 = keras.layers.Concatenate(axis=-1)([out_1_pool, out_1_biased])
-            out_2 = keras.layers.Concatenate(axis=-1)([out_2_pool, out_2_biased])
+            out_1 = tf.keras.layers.Concatenate(axis=-1)([out_1_pool, out_1_biased])
+            out_2 = tf.keras.layers.Concatenate(axis=-1)([out_2_pool, out_2_biased])
 
             # Resume second half of the standard residual block
-            batch_2 = keras.layers.BatchNormalization()
-            dropout_1 = keras.layers.Dropout(config.dropout)
-            relu_2 = keras.layers.Activation('relu')
-            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_2 = tf.keras.layers.BatchNormalization()
+            dropout_1 = tf.keras.layers.Dropout(config.dropout)
+            relu_2 = tf.keras.layers.Activation('relu')
+            conv_2 = tf.keras.layers.Conv2D(config.filters, (3, 3), padding="same")
 
             out_1 = conv_2(relu_2(dropout_1(batch_2(out_1))))
             out_2 = conv_2(relu_2(dropout_1(batch_2(out_2))))
 
-            out_1 = keras.layers.Add()([in_1, out_1])
-            out_2 = keras.layers.Add()([in_2, out_2])
+            out_1 = tf.keras.layers.Add()([in_1, out_1])
+            out_2 = tf.keras.layers.Add()([in_2, out_2])
 
             return out_1, out_2
         return inside
@@ -333,25 +332,25 @@ def gen_alphasame_nn(config) -> keras.Model:
 
     # Start with a convolutional layer
     # Because each grid needs the same network, use the same layers for each side
-    conv_1 = keras.layers.Conv2D(config.filters, (5, 5), padding="same")
+    conv_1 = tf.keras.layers.Conv2D(config.filters, (5, 5), padding="same")
     
     a_grid = conv_1(a_grid)
     o_grid = conv_1(o_grid)
 
     # Take other features and use a dense layer to add channelwise
-    dense_1 = keras.layers.Dense(config.filters)
+    dense_1 = tf.keras.layers.Dense(config.filters)
 
-    a_features = keras.layers.Concatenate()(a_features)
-    o_features = keras.layers.Concatenate()(o_features)
+    a_features = tf.keras.layers.Concatenate()(a_features)
+    o_features = tf.keras.layers.Concatenate()(o_features)
 
     a_features = dense_1(a_features)
     o_features = dense_1(o_features)
 
-    a_biases = keras.layers.Reshape((1, 1, config.filters))(a_features)
-    o_biases = keras.layers.Reshape((1, 1, config.filters))(o_features)
+    a_biases = tf.keras.layers.Reshape((1, 1, config.filters))(a_features)
+    o_biases = tf.keras.layers.Reshape((1, 1, config.filters))(o_features)
 
-    a_grid = keras.layers.Add()([a_grid, a_biases])
-    o_grid = keras.layers.Add()([o_grid, o_biases])
+    a_grid = tf.keras.layers.Add()([a_grid, a_biases])
+    o_grid = tf.keras.layers.Add()([o_grid, o_biases])
 
     # 10 layers: 8 residual, 2 global pooling
     # Evenly space blocks
@@ -365,86 +364,86 @@ def gen_alphasame_nn(config) -> keras.Model:
         
         a_grid, o_grid = layer(a_grid, o_grid)
     
-    batch_1 = keras.layers.BatchNormalization()
-    relu_1 = keras.layers.Activation('relu')
+    batch_1 = tf.keras.layers.BatchNormalization()
+    relu_1 = tf.keras.layers.Activation('relu')
 
     a_grid = relu_1(batch_1(a_grid))
     o_grid = relu_1(batch_1(o_grid))
     
     # 1x1 Kernel
-    kernel_1 = keras.layers.Conv2D(config.kernels, (1, 1))
+    kernel_1 = tf.keras.layers.Conv2D(config.kernels, (1, 1))
     a_grid = kernel_1(a_grid)
     o_grid = kernel_1(o_grid)
 
-    flatten_1 = keras.layers.Flatten()
+    flatten_1 = tf.keras.layers.Flatten()
     a_grid = flatten_1(a_grid)
     o_grid = flatten_1(o_grid)
 
-    batch_2 = keras.layers.BatchNormalization()
-    relu_2 = keras.layers.Activation('relu')
+    batch_2 = tf.keras.layers.BatchNormalization()
+    relu_2 = tf.keras.layers.Activation('relu')
     a_grid = relu_2(batch_2(a_grid))
     o_grid = relu_2(batch_2(o_grid))
 
     # Shrink opponent grid info
-    o_grid = keras.layers.Dense(config.o_side_neurons)(o_grid)
-    o_grid = keras.layers.BatchNormalization()(o_grid)
-    o_grid = keras.layers.Activation('relu')(o_grid)
+    o_grid = tf.keras.layers.Dense(config.o_side_neurons)(o_grid)
+    o_grid = tf.keras.layers.BatchNormalization()(o_grid)
+    o_grid = tf.keras.layers.Activation('relu')(o_grid)
 
     # Combine with other features
-    x = keras.layers.Concatenate()([a_grid, o_grid, *non_player_features])
+    x = tf.keras.layers.Concatenate()([a_grid, o_grid, *non_player_features])
 
     value_output = ValueHead()(x)
     policy_output = PolicyHead()(x)
 
-    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output])
+    model = tf.keras.Model(inputs=inputs, outputs=[value_output, policy_output])
 
     return model
 
-def gen_model_aux(config) -> keras.Model:
+def gen_model_aux(config) -> tf.keras.Model:
     """
     Neural network that separates spatial board understanding from piece information.
     Auxiliary heads only predict spatial board properties (height, holes).
     """
     def ValueHead():
         def inside(x):
-            x = keras.layers.Dense(config.value_head_neurons)(x)
-            x = keras.layers.BatchNormalization()(x)
-            x = keras.layers.Activation('relu')(x)
-            x = keras.layers.Dropout(config.dropout)(x)
-            x = keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'), name="value")(x)
+            x = tf.keras.layers.Dense(config.value_head_neurons)(x)
+            x = tf.keras.layers.BatchNormalization()(x)
+            x = tf.keras.layers.Activation('relu')(x)
+            x = tf.keras.layers.Dropout(config.dropout)(x)
+            x = tf.keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'), name="value")(x)
             return x
         return inside
 
     def PolicyHead():
         def inside(x):
-            x = keras.layers.Dense(POLICY_SIZE, activation="softmax", name="policy")(x)
+            x = tf.keras.layers.Dense(POLICY_SIZE, activation="softmax", name="policy")(x)
             return x
         return inside
 
     def ResidualLayer():
         def inside(in_1, in_2):
-            batch_1 = keras.layers.BatchNormalization()
-            relu_1 = keras.layers.Activation('relu')
-            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
-            batch_2 = keras.layers.BatchNormalization()
-            dropout_1 = keras.layers.Dropout(config.dropout)
-            relu_2 = keras.layers.Activation('relu')
-            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_1 = tf.keras.layers.BatchNormalization()
+            relu_1 = tf.keras.layers.Activation('relu')
+            conv_1 = tf.keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_2 = tf.keras.layers.BatchNormalization()
+            dropout_1 = tf.keras.layers.Dropout(config.dropout)
+            relu_2 = tf.keras.layers.Activation('relu')
+            conv_2 = tf.keras.layers.Conv2D(config.filters, (3, 3), padding="same")
 
             out_1 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_1)))))))
             out_2 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_2)))))))
 
-            out_1 = keras.layers.Add()([in_1, out_1])
-            out_2 = keras.layers.Add()([in_2, out_2])
+            out_1 = tf.keras.layers.Add()([in_1, out_1])
+            out_2 = tf.keras.layers.Add()([in_2, out_2])
 
             return out_1, out_2
         return inside
     
     def GlobalPoolingLayer():
         def inside(in_1, in_2):
-            batch_1 = keras.layers.BatchNormalization()
-            relu_1 = keras.layers.Activation('relu')
-            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_1 = tf.keras.layers.BatchNormalization()
+            relu_1 = tf.keras.layers.Activation('relu')
+            conv_1 = tf.keras.layers.Conv2D(config.filters, (3, 3), padding="same")
 
             out_1 = conv_1(relu_1(batch_1(in_1)))
             out_2 = conv_1(relu_1(batch_1(in_2)))
@@ -456,51 +455,51 @@ def gen_model_aux(config) -> keras.Model:
             out_2_rest = out_2[:, :, :, config.cpool:]
 
             # Apply batch norm and relu to pooling channels
-            pool_batch_1 = keras.layers.BatchNormalization()
-            pool_relu_1 = keras.layers.Activation('relu')
+            pool_batch_1 = tf.keras.layers.BatchNormalization()
+            pool_relu_1 = tf.keras.layers.Activation('relu')
 
             out_1_pool_act = pool_relu_1(pool_batch_1(out_1_pool))
             out_2_pool_act = pool_relu_1(pool_batch_1(out_2_pool))
 
             # Global pooling
-            avg_pool_1 = keras.layers.GlobalAveragePooling2D()
-            max_pool_1 = keras.layers.GlobalMaxPooling2D()
+            avg_pool_1 = tf.keras.layers.GlobalAveragePooling2D()
+            max_pool_1 = tf.keras.layers.GlobalMaxPooling2D()
 
             out_1_average_pooled = avg_pool_1(out_1_pool_act)
             out_2_average_pooled = avg_pool_1(out_2_pool_act)
             out_1_max_pooled = max_pool_1(out_1_pool)
             out_2_max_pooled = max_pool_1(out_2_pool)
 
-            out_1_pooled = keras.layers.Concatenate()([out_1_average_pooled, out_1_max_pooled])
-            out_2_pooled = keras.layers.Concatenate()([out_2_average_pooled, out_2_max_pooled])
+            out_1_pooled = tf.keras.layers.Concatenate()([out_1_average_pooled, out_1_max_pooled])
+            out_2_pooled = tf.keras.layers.Concatenate()([out_2_average_pooled, out_2_max_pooled])
 
             # Dense layer
-            dense_1 = keras.layers.Dense(config.filters - config.cpool)
+            dense_1 = tf.keras.layers.Dense(config.filters - config.cpool)
             out_1_dense = dense_1(out_1_pooled)
             out_2_dense = dense_1(out_2_pooled)
 
             # Reshape and add biases
-            out_1_biases = keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_1_dense)
-            out_2_biases = keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_2_dense)
+            out_1_biases = tf.keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_1_dense)
+            out_2_biases = tf.keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_2_dense)
 
-            out_1_biased = keras.layers.Add()([out_1_rest, out_1_biases])
-            out_2_biased = keras.layers.Add()([out_2_rest, out_2_biases])
+            out_1_biased = tf.keras.layers.Add()([out_1_rest, out_1_biases])
+            out_2_biased = tf.keras.layers.Add()([out_2_rest, out_2_biases])
 
             # Concatenate channels
-            out_1 = keras.layers.Concatenate(axis=-1)([out_1_pool, out_1_biased])
-            out_2 = keras.layers.Concatenate(axis=-1)([out_2_pool, out_2_biased])
+            out_1 = tf.keras.layers.Concatenate(axis=-1)([out_1_pool, out_1_biased])
+            out_2 = tf.keras.layers.Concatenate(axis=-1)([out_2_pool, out_2_biased])
 
             # Continue residual block
-            batch_2 = keras.layers.BatchNormalization()
-            dropout_1 = keras.layers.Dropout(config.dropout)
-            relu_2 = keras.layers.Activation('relu')
-            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_2 = tf.keras.layers.BatchNormalization()
+            dropout_1 = tf.keras.layers.Dropout(config.dropout)
+            relu_2 = tf.keras.layers.Activation('relu')
+            conv_2 = tf.keras.layers.Conv2D(config.filters, (3, 3), padding="same")
 
             out_1 = conv_2(relu_2(dropout_1(batch_2(out_1))))
             out_2 = conv_2(relu_2(dropout_1(batch_2(out_2))))
 
-            out_1 = keras.layers.Add()([in_1, out_1])
-            out_2 = keras.layers.Add()([in_2, out_2])
+            out_1 = tf.keras.layers.Add()([in_1, out_1])
+            out_2 = tf.keras.layers.Add()([in_2, out_2])
 
             return out_1, out_2
         return inside
@@ -508,7 +507,7 @@ def gen_model_aux(config) -> keras.Model:
     inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
 
     # Initial convolution for spatial features only
-    conv_1 = keras.layers.Conv2D(config.filters, (5, 5), padding="same")
+    conv_1 = tf.keras.layers.Conv2D(config.filters, (5, 5), padding="same")
     
     a_grid = conv_1(a_grid)
     o_grid = conv_1(o_grid)
@@ -525,54 +524,54 @@ def gen_model_aux(config) -> keras.Model:
         a_grid, o_grid = layer(a_grid, o_grid)
     
     # Final spatial processing
-    batch_1 = keras.layers.BatchNormalization()
-    relu_1 = keras.layers.Activation('relu')
+    batch_1 = tf.keras.layers.BatchNormalization()
+    relu_1 = tf.keras.layers.Activation('relu')
 
     a_grid = relu_1(batch_1(a_grid))
     o_grid = relu_1(batch_1(o_grid))
     
     # Extract spatial features
-    kernel_1 = keras.layers.Conv2D(config.kernels, (1, 1))
+    kernel_1 = tf.keras.layers.Conv2D(config.kernels, (1, 1))
     a_grid_spatial = kernel_1(a_grid)
     o_grid_spatial = kernel_1(o_grid)
 
-    flatten_1 = keras.layers.Flatten()
+    flatten_1 = tf.keras.layers.Flatten()
     a_grid_spatial = flatten_1(a_grid_spatial)
     o_grid_spatial = flatten_1(o_grid_spatial)
 
-    batch_2 = keras.layers.BatchNormalization()
-    relu_2 = keras.layers.Activation('relu')
+    batch_2 = tf.keras.layers.BatchNormalization()
+    relu_2 = tf.keras.layers.Activation('relu')
     a_grid_spatial = relu_2(batch_2(a_grid_spatial))
     o_grid_spatial = relu_2(batch_2(o_grid_spatial))
 
     # Compress opponent spatial features
-    o_grid_spatial = keras.layers.Dense(config.o_side_neurons)(o_grid_spatial)
-    o_grid_spatial = keras.layers.BatchNormalization()(o_grid_spatial)
-    o_grid_spatial = keras.layers.Activation('relu')(o_grid_spatial)
+    o_grid_spatial = tf.keras.layers.Dense(config.o_side_neurons)(o_grid_spatial)
+    o_grid_spatial = tf.keras.layers.BatchNormalization()(o_grid_spatial)
+    o_grid_spatial = tf.keras.layers.Activation('relu')(o_grid_spatial)
 
     # Process piece information separately (no shared layers with spatial features)
-    a_pieces_flat = keras.layers.Flatten()(a_features[0])  # First element is pieces
-    o_pieces_flat = keras.layers.Flatten()(o_features[0])
+    a_pieces_flat = tf.keras.layers.Flatten()(a_features[0])  # First element is pieces
+    o_pieces_flat = tf.keras.layers.Flatten()(o_features[0])
 
-    piece_dense = keras.layers.Dense(64)
+    piece_dense = tf.keras.layers.Dense(64)
     a_piece_processed = piece_dense(a_pieces_flat)
     o_piece_processed = piece_dense(o_pieces_flat)
 
-    a_piece_processed = keras.layers.BatchNormalization()(a_piece_processed)
-    o_piece_processed = keras.layers.BatchNormalization()(o_piece_processed)
-    a_piece_processed = keras.layers.Activation('relu')(a_piece_processed)
-    o_piece_processed = keras.layers.Activation('relu')(o_piece_processed)
+    a_piece_processed = tf.keras.layers.BatchNormalization()(a_piece_processed)
+    o_piece_processed = tf.keras.layers.BatchNormalization()(o_piece_processed)
+    a_piece_processed = tf.keras.layers.Activation('relu')(a_piece_processed)
+    o_piece_processed = tf.keras.layers.Activation('relu')(o_piece_processed)
 
     # Combine remaining non-spatial features
     other_a_features = a_features[1:]  # Skip pieces, keep b2b, combo, garbage
     other_o_features = o_features[1:]
 
     # Auxiliary heads - only spatial board properties
-    aux_height = keras.layers.Dense(1, activation="sigmoid", name="aux_height")(a_grid_spatial)
-    aux_holes = keras.layers.Dense(1, activation="sigmoid", name="aux_holes")(a_grid_spatial)
+    aux_height = tf.keras.layers.Dense(1, activation="sigmoid", name="aux_height")(a_grid_spatial)
+    aux_holes = tf.keras.layers.Dense(1, activation="sigmoid", name="aux_holes")(a_grid_spatial)
 
     # Main heads - combine spatial and piece information
-    combined_features = keras.layers.Concatenate()([
+    combined_features = tf.keras.layers.Concatenate()([
         a_grid_spatial, 
         a_piece_processed,
         *other_a_features,
@@ -585,7 +584,7 @@ def gen_model_aux(config) -> keras.Model:
     value_output = ValueHead()(combined_features)
     policy_output = PolicyHead()(combined_features)
 
-    model = keras.Model(
+    model = tf.keras.Model(
         inputs=inputs, 
         outputs={
             'value': value_output,

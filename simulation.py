@@ -13,7 +13,7 @@ if highest_model_number(DefaultConfig) == -1:
 self_play_loop(DefaultConfig, skip_first_set=False)
 
 # Command
-"/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/simulation.py"
+"/Users/matthewlee/Documents/Code/Tetris Game/src/.venvtf220/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/simulation.py"
 
 # Removing hidden ds_store files:
 # find . -name ".DS_Store" -delete 

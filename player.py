@@ -197,6 +197,8 @@ class Player:
 
         # Place the pieces and check rows that minos will be placed
         for col, row in piece.get_mino_coords(piece.location.x, place_y, piece.location.rotation, piece.type):
+            if grid[row][col] != 0:
+                raise Exception("Trying to place a piece on an occupied space")
             grid[row][col] = piece.type
             if row not in rows:
                 rows.append(row)
