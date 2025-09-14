@@ -4,6 +4,8 @@ from stats import Stats
 from piece import Piece
 from const import *
 
+from numba import
+
 import random
 
 class Player:
@@ -44,14 +46,19 @@ class Player:
             # If the block can't spawn lose
             self.game_over = True
 
-    def collision(self, coords):
-        for col, row in coords:
-            if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
-                return True
-            elif self.board.grid[row][col] != 0:
-                return True
-
-        return False
+    @njit
+    def collision(self, coords):    
+        """Optimized collision detection using NumPy"""
+        # Extract columns and rows for vectorized operations
+        cols, rows = coords[:, 0], coords[:, 1]
+        
+        # Check bounds using vectorized comparison
+        out_of_bounds = np.any((rows < 0) | (rows >= ROWS) | (cols < 0) | (cols >= COLS))
+        if out_of_bounds:
+            return True
+        
+        # Check board collisions using advanced indexing
+        return np.any(self.board.grid[rows, cols] != 0)
 
     @property
     def ghost_y(self):
@@ -64,28 +71,25 @@ class Player:
         collided = False
         while collided == False:
             ghost_y += 1
-            coordinate_list = [[col, row + 1] for col, row in coordinate_list]
+            coordinate_list = coordinate_list + np.array([0, 1], dtype=np.int8)
 
-            for col, row in coordinate_list:
-                if row < 0 or row > ROWS - 1:
-                    collided = True
-                elif self.board.grid[row][col] != 0:
-                    collided = True
+            if self.collision(coordinate_list):
+                collided = True
             
         return ghost_y - 1
 
     def can_move(self, piece, x_offset=0, y_offset=0):
-        grid = self.board.grid
-        for col, row in piece.coordinates:
-            if (row + y_offset < 0
-             or row + y_offset > ROWS - 1
-             or col + x_offset < 0
-             or col + x_offset > COLS - 1):
-                return False
-            elif grid[row + y_offset][col + x_offset] != 0:
-                return False
+        """Vectorized movement validation"""
+        # Calculate new positions
+        new_coords = piece.coordinates + np.array([x_offset, y_offset])
         
-        return True
+        # Check bounds
+        cols, rows = new_coords[:, 0], new_coords[:, 1]
+        if np.any((rows < 0) | (rows >= ROWS) | (cols < 0) | (cols >= COLS)):
+            return False
+        
+        # Check board collisions
+        return not np.any(self.board.grid[rows, cols] != 0)
 
     def move_right(self):
         if self.can_move(self.piece, x_offset=1):
@@ -111,29 +115,36 @@ class Player:
             kicktable = wallkicks[initial_rotation][final_rotation]
 
         rotated_piece_coordinates = piece.get_mino_coords(piece.location.x, piece.location.y, final_rotation, piece.type)
-        for kick in kicktable:
-            for col, row in rotated_piece_coordinates:
-                if (row - kick[1] < 0
-                 or row - kick[1] > ROWS - 1
-                 or col + kick[0] < 0
-                 or col + kick[0] > COLS - 1):
-                    break
-                elif self.board.grid[row - kick[1]][col + kick[0]] != 0:
-                    break
-            else:
-                piece.location.x += kick[0]
-                piece.location.y += -kick[1]
-                piece.location.rotation = final_rotation
-                piece.coordinates = [[col + kick[0], row - kick[1]] for col, row in rotated_piece_coordinates]
+        for kick in kicktable: # kicktable is a numpy array itself
+            # KICKS ARE NEGATED IN Y DIR IN CONST so it works just noting this here
+            test_coords = rotated_piece_coordinates + kick
 
-                # Additionally, check if the piece is a T and the last kick in the kicktable was used:
-                if piece.type == "T":
-                    piece.location.rotation_just_occurred = True
-                    piece.location.rotation_just_occurred_and_used_last_tspin_kick = False
+            # Vectorized bounds and collision check
+            cols, rows = test_coords[:, 0], test_coords[:, 1]
+            
+            # Check bounds
+            if np.any((rows < 0) | (rows >= ROWS) | (cols < 0) | (cols >= COLS)):
+                continue
+                
+            # Check collisions
+            if np.any(self.board.grid[rows, cols] != 0):
+                continue
 
-                    if kick == kicktable[-1] and dir != 2:
-                        piece.location.rotation_just_occurred_and_used_last_tspin_kick = True
-                return True
+            # Valid kick
+            piece.location.x += kick[0]
+            piece.location.y += kick[1]
+            piece.location.rotation = final_rotation
+            piece.coordinates = test_coords
+
+            # Additionally, check if the piece is a T and the last kick in the kicktable was used:
+            if piece.type == "T":
+                piece.location.rotation_just_occurred = True
+                piece.location.rotation_just_occurred_and_used_last_tspin_kick = False
+
+                if np.array_equal(kick, kicktable[-1]) and dir != 2:
+                    piece.location.rotation_just_occurred_and_used_last_tspin_kick = True
+            return True
+        return False
 
     def force_place_piece(self, piece_location):
         self.piece.location = piece_location
@@ -161,12 +172,12 @@ class Player:
         # Spins
         # Check for a t-spin
         if piece.type == "T" and piece.location.rotation_just_occurred:
-            corners = [[0, 0], [2, 0], [2, 2], [0,  2]]
+            corners = np.array([[0, 0], [2, 0], [2, 2], [0,  2]]) + np.array([piece.location.x, place_y])
             corner_filled = 4 * [False]
 
             for i in range(4):
-                row = corners[i][1] + place_y
-                col = corners[i][0] + piece.location.x
+                row = corners[i][1]
+                col = corners[i][0]
                 if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
                     corner_filled[i] = True
                 elif grid[row][col] != 0:
@@ -196,39 +207,33 @@ class Player:
                 is_mini = True
 
         # Place the pieces and check rows that minos will be placed
-        for col, row in piece.get_mino_coords(piece.location.x, place_y, piece.location.rotation, piece.type):
-            grid[row][col] = piece.type
-            if row not in rows:
-                rows.append(row)
+        final_coords = piece.get_mino_coords(piece.location.x, place_y, piece.location.rotation, piece.type)
+        piece_value = piece_type_to_number[piece.type]
+        grid[final_coords[:, 1], final_coords[:, 0]] = piece_value
+        rows = np.unique(final_coords[:, 1])
         
         self.piece = None
 
         # Check which rows should be cleared
         for row in rows:
-            if all(mino != 0 for mino in grid[row]): # careful with ghost type
+            if np.all(grid[row] != 0): # careful with ghost type
                 cleared_rows.append(row)
         
         rows_cleared = len(cleared_rows)
 
         # If there are any rows cleared, sort the list so they don't overlap
-        if len(cleared_rows) > 0:
+        if rows_cleared > 0:
             cleared_rows.sort()
 
         # Move rows down one and make a empty line at the top
         for cleared_row in cleared_rows:
-            for row in range(cleared_row)[::-1]:
-                for col in range(COLS):
-                    grid[row + 1][col] = grid[row][col]
-
+            grid[1:cleared_row+1] = grid[0:cleared_row]
             self.board.empty_line(0)
 
         if rows_cleared > 0:
-            is_all_clear = True
-            for row in range(rows_cleared, ROWS): # rows_cleared num of empty lines at top
-                for col in range(COLS):
-                    if grid[row][col] != 0: # careful with ghost type
-                        is_all_clear = False
-                        break
+            # Check if every cell from row `rows_cleared` down is 0
+            # Careful with ghost type
+            is_all_clear = np.all(grid[rows_cleared:] == 0)
 
         attack = stats.get_attack(rows_cleared, is_tspin, is_mini, is_all_clear, piece.type) # also updates stats
         stats.pieces += 1
@@ -317,7 +322,7 @@ class Player:
             piece = self.piece
 
             ghost_y = self.ghost_y
-            self.draw_piece(surface, piece.location.x, ghost_y, piece.location.rotation, piece.type, color_dict["ghost"])
+            self.draw_piece(surface, piece.location.x, ghost_y, piece.location.rotation, piece.type, color_dict[2]) # 2 corresponds to ghost
 
     def show_grid_lines(self, surface):
         for row in range(ROWS - GRID_ROWS, ROWS + 1):
@@ -335,7 +340,7 @@ class Player:
             piece = self.piece
 
             for col, row in piece.coordinates:
-                self.draw_mino(surface, col, row, color_dict[piece.type])
+                self.draw_mino(surface, col, row, color_dict[piece_type_to_number[piece.type]])
     
     def show_minos(self, surface):
         for row in range(ROWS):
@@ -355,7 +360,7 @@ class Player:
                 
                 coords = Piece.get_mino_coords(x_0, y_0 + i * 3, 0, piece)
                 for col, row in coords:
-                    self.draw_mino(surface, col, row, color_dict[piece])
+                    self.draw_mino(surface, col, row, color_dict[piece_type_to_number[piece]])
                             
     def show_hold(self, surface):
         held_piece = self.held_piece
@@ -365,7 +370,7 @@ class Player:
 
             coords = Piece.get_mino_coords(x_0, y_0, 0, held_piece)
             for col, row in coords:
-                self.draw_mino(surface, col, row, color_dict[held_piece])
+                self.draw_mino(surface, col, row, color_dict[piece_type_to_number[held_piece]])
 
     def show_garbage(self, screen):
         # Show amount of incoming garbage

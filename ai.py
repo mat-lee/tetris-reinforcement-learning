@@ -71,7 +71,7 @@ class Config():
                          # If uses tflite, then interference and training are separate classes
                          # Otherwise, interference and training are the same class
         default_model=gen_model_aux,
-        move_algorithm='faster-conv', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
+        move_algorithm='convolutional', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only, 'convolutional' for a convolution based algorithm
 
         # Architecture Parameters
         #   Fishlike model
@@ -855,7 +855,15 @@ def reverse_if_needed(data, condition):
 # Methods for getting game data
 # All of them orient the info in the perspective of the active player
 def get_grids(game):
-    grids = [[x[:] for x in player.board.grid] for player in game.players]
+    grids = []
+    for player in game.players:
+        g = player.board.grid
+        if isinstance(g, np.ndarray):
+            g_copy = g.copy()                  # <- real copy of the whole array
+        else:
+            g_copy = [row[:] for row in g]     # list-of-lists case
+        grids.append(g_copy)
+    
     for grid in grids:
         simplify_grid(grid)
     return reverse_if_needed(grids, game.turn == 1)

@@ -1,6 +1,8 @@
 from const import *
 from piece_location import PieceLocation
 
+import numpy as np
+
 class Piece:
     '''
     The piece matrix and the center of the piece have a location attribute
@@ -12,7 +14,7 @@ class Piece:
         self.location = PieceLocation(x=x_0, y=y_0)
 
         self.type = type
-        self.coordinates = [[], [], [], []]
+        self.coordinates = np.zeros((4, 2), dtype=np.int8)
 
     def get_spawn_location(self):
         # Move a newly created "O" piece to the right
@@ -29,7 +31,10 @@ class Piece:
     def move(self, x_offset=0, y_offset=0):
         self.location.x += x_offset
         self.location.y += y_offset
-        self.coordinates = [[col + x_offset, row + y_offset] for col, row in self.coordinates]
+
+        # Vectorized addition
+        offset_vector = np.array([x_offset, y_offset], dtype=np.int16)
+        self.coordinates += offset_vector
 
         self.location.rotation_just_occurred = False
         self.location.rotation_just_occurred_and_used_last_tspin_kick = False
@@ -39,7 +44,8 @@ class Piece:
         new_piece.location.rotation = self.location.rotation
         new_piece.location.rotation_just_occurred = self.location.rotation_just_occurred
         new_piece.location.rotation_just_occurred_and_used_last_tspin_kick = self.location.rotation_just_occurred_and_used_last_tspin_kick
-        new_piece.coordinates = self.coordinates
+        
+        new_piece.coordinates = self.coordinates.copy()
     
         return new_piece
 
@@ -51,6 +57,7 @@ class Piece:
     def get_mino_coords(x_0, y_0, rotation, type):
         coordinate_list = mino_coords_dict[type][rotation]
         # [col, row]
-        coordinate_list = [[x_0 + col, y_0 + row] for col, row in coordinate_list]
+        # Vectorized addition
+        offset_vector = np.array([x_0, y_0], dtype=np.int16)
         
-        return coordinate_list
+        return coordinate_list + offset_vector

@@ -910,7 +910,6 @@ if __name__ == "__main__":
 
     # plot_dirichlet_noise()
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
-    # profile_game()
     # test_reflected_policy()
     # visualize_policy()
     # plot_stats(include_rank_data=True)
@@ -929,13 +928,13 @@ if __name__ == "__main__":
     # instantiate_network(c, show_summary=True, save_network=False, plot_model=True)
 
     # test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-conv')
-    # time_move_matrix(algo='faster-conv')
-    # profile_game(Config(move_algorithm='ultra-conv'))
+    time_move_matrix(algo='faster-but-loss')
+    # profile_game(Config())
     # time_move_matrix(algo='faster-but-loss')
 
     # visualize_policy_from_data()
     
-    convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
+    # convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
 # Command for running python files
 # This is for running many tests at the same time
 "/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/util.py"

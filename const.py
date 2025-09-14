@@ -1,5 +1,6 @@
 import pygame
 from numpy import prod
+import numpy as np
 
 # Board Dimensions:
 ROWS = 26
@@ -179,18 +180,29 @@ piece_dict = {
     ]
 }
 
+piece_type_to_number = {
+    "ghost": 2,
+    "Z": 3,
+    "L": 4,
+    "O": 5,
+    "S": 6,
+    "I": 7,
+    "J": 8,
+    "T": 9
+}
+
 # Color values:
 color_dict = {
-    0:         (0,   0,   0),   # Empty
-    1:         (85,  85, 85),   # Garbage
-    "ghost":   (32,  32,  32),  # Ghost piece
-    "Z":       (255, 1,   0),   #1
-    "L":       (254, 170, 0),   #2
-    "O":       (255, 254, 2),   #3
-    "S":       (0,   234, 1),   #4
-    "I":       (0,   211, 255), #5
-    "J":       (0,   0,   255), #6
-    "T":       (170, 0,   254)  #7
+    0:       (0,   0,   0),   # Empty
+    1:       (85,  85, 85),   # Garbage
+    2:       (32,  32,  32),  # Ghost piece
+    3:       (255, 1,   0),   # Z
+    4:       (254, 170, 0),   # L
+    5:       (255, 254, 2),   # O
+    6:       (0,   234, 1),   # S
+    7:       (0,   211, 255), # I
+    8:       (0,   0,   255), # J
+    9:       (170, 0,   254)  # T
 }
 
 # Wallkick tables
@@ -517,15 +529,40 @@ piece_hover_coordinates = {
     ],
 }
 
-if __name__ == "__main__":
-    def negate_index_1(list):
-        return [[x[0], -x[1]] for x in list]
+# Convert mino_coords_dict and wallkicks to use NumPy arrays for efficiency
+
+def convert_mino_coords_to_numpy(mino_coords_dict):
+    """
+    Convert mino_coords_dict from nested lists to NumPy arrays
+    """
+
+    numpy_coords = {}
     
-    l = [
-            [-1, 0],
-            [-1, -2],
-            [-1, -1],
-            [0, -2],
-            [0, -1]
-        ]
-    print(negate_index_1(l))
+    for piece_type, rotations in mino_coords_dict.items():
+        numpy_coords[piece_type] = {}
+        for rotation, coords in rotations.items():
+            numpy_coords[piece_type][rotation] = np.array(coords, dtype=np.int8)
+    
+    return numpy_coords
+
+def convert_wallkicks_to_numpy(wallkicks):
+    """
+    Convert wallkicks from nested lists to NumPy arrays
+
+    ALSO NEGATES THE Y VALUES
+    """
+
+    numpy_kicks = {}
+    
+    for from_rot, to_dict in wallkicks.items():
+        numpy_kicks[from_rot] = {}
+        for to_rot, kicks in to_dict.items():
+            # Negate the Y values
+            kicks = [[x, -y] for x, y in kicks]
+            numpy_kicks[from_rot][to_rot] = np.array(kicks, dtype=np.int8)
+    
+    return numpy_kicks
+
+mino_coords_dict = convert_mino_coords_to_numpy(mino_coords_dict)
+wallkicks = convert_wallkicks_to_numpy(wallkicks)
+i_wallkicks = convert_wallkicks_to_numpy(i_wallkicks)
