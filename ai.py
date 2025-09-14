@@ -70,7 +70,7 @@ class Config():
         use_tflite=True, # If true uses tflite, otherwise uses keras directly. Only for keras models
                          # If uses tflite, then interference and training are separate classes
                          # Otherwise, interference and training are the same class
-        default_model=None,
+        default_model=gen_model_aux,
         move_algorithm='faster-conv', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
         # Architecture Parameters
@@ -109,7 +109,7 @@ class Config():
         # Training Parameters
         training=False, # Set to true to use a variety of features
         learning_rate=0.001, 
-        loss_weights=[1, 1, 0.05, 0.05], 
+        loss_weights=[1.0, 1.0, 0.05, 0.05], 
         epochs=1, 
         batch_size=64,
 
@@ -572,14 +572,14 @@ def get_move_list(move_matrix, policy_matrix):
 #   Policy: (19 x 25 x 11) = 5225 (Hold x (Rows - 1) x (Columns + 1) x Rotations)
 #   Value: (1)
 
-def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False):
+def instantiate_network(config: Config, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights
     # 1: For each grid, apply the same neural network, and then use 1x1 kernel and concatenate
     # 1 -> 2: For opponent grid, apply fully connected layer
     # Concatenate active player's kernels/features with opponent's dense layer and non-player specific features
     # Apply value head and policy head 
 
-    model = nn_generator(config)
+    model = config.default_model(config)
 
     if config.model == 'keras':
         if plot_model == True:
@@ -589,8 +589,13 @@ def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summ
         
         model.compile(
             optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), 
-            loss=["mean_squared_error", "categorical_crossentropy", 'mse', 'mse'], 
-            loss_weights=config.loss_weights
+            loss={
+                'value': "mean_squared_error", 
+                'policy': "categorical_crossentropy", 
+                'aux_height': 'mse', 
+                'aux_holes': 'mse'
+                },
+            loss_weights={name: config.loss_weights[i] for i, name in enumerate(['value', 'policy', 'aux_height', 'aux_holes'])}
         )
 
         if show_summary: model.summary()
@@ -640,7 +645,16 @@ def train_network_keras(config, model, set):
     # Adjust learning rate HOW???
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
 
-    model.fit(x=features, y=[values, policies, holes, height], batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
+    history = model.fit(x=features, 
+                            y={
+                                'value': values,
+                                'policy': policies, 
+                                'aux_height': height,  # Note: height maps to aux_height
+                                'aux_holes': holes     # Note: holes maps to aux_holes
+                                }, 
+                        batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
+
+    print("Tracked metrics:", list(history.history.keys()))
 
 def train_network_pytorch(config, model, set):
     features = list(map(list, zip(*set)))

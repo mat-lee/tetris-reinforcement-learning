@@ -411,13 +411,13 @@ def gen_model_aux(config) -> keras.Model:
             x = keras.layers.BatchNormalization()(x)
             x = keras.layers.Activation('relu')(x)
             x = keras.layers.Dropout(config.dropout)(x)
-            x = keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'))(x)
+            x = keras.layers.Dense(1, activation=('tanh' if config.use_tanh else 'sigmoid'), name="value")(x)
             return x
         return inside
 
     def PolicyHead():
         def inside(x):
-            x = keras.layers.Dense(POLICY_SIZE, activation="softmax")(x)
+            x = keras.layers.Dense(POLICY_SIZE, activation="softmax", name="policy")(x)
             return x
         return inside
 
@@ -587,7 +587,12 @@ def gen_model_aux(config) -> keras.Model:
 
     model = keras.Model(
         inputs=inputs, 
-        outputs=[value_output, policy_output, aux_height, aux_holes]
+        outputs={
+            'value': value_output,
+            'policy': policy_output, 
+            'aux_height': aux_height,
+            'aux_holes': aux_holes
+        }
     )
 
     return model

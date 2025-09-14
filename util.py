@@ -654,12 +654,25 @@ def convert_data_2_1_to_2_2(set):
         # extra_policy = np.zeros(shape=(POLICY_SHAPE[0] - 19, POLICY_SHAPE[1], POLICY_SHAPE[2]), dtype=int).tolist()
         # move[-1].extend(extra_policy)
 
-def convert_data_and_train(init_data_ver, conversion_function, last_n_sets, epochs):
-    c = Config(epochs=epochs)
+def convert_data_2_4_to_2_5(set):
+    # Add aux data to set
+    for move in set:
+        grid = move[0]
+        metrics = calculate_board_metrics(grid)
+        holes = metrics['holes']
+        avg_height = metrics['avg_height']
+
+        move.append(avg_height)
+        move.append(holes)
+
+def convert_data_and_train(c, init_data_ver, conversion_function, last_n_sets, epochs):
+    c.epochs = epochs
+    c.data_version = init_data_ver
 
     new_network = instantiate_network(c, show_summary=True, save_network=False)
+    # new_network = load_model(c, 300)
 
-    filenames = get_data_filenames(c, data_ver=init_data_ver, last_n_sets=last_n_sets)
+    filenames = get_data_filenames(c, last_n_sets=last_n_sets)
 
     path = f"{directory_path}/data/{c.ruleset}.{init_data_ver}"
 
@@ -916,12 +929,13 @@ if __name__ == "__main__":
     # instantiate_network(c, show_summary=True, save_network=False, plot_model=True)
 
     # test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-conv')
-    time_move_matrix(algo='faster-conv')
+    # time_move_matrix(algo='faster-conv')
     # profile_game(Config(move_algorithm='ultra-conv'))
     # time_move_matrix(algo='faster-but-loss')
 
     # visualize_policy_from_data()
-
+    
+    convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
 # Command for running python files
 # This is for running many tests at the same time
 "/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/util.py"

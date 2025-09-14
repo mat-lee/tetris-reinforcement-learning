@@ -14,25 +14,27 @@ param_space = [
     # Real(0.0, 1.0, name='FpuValue'),
     # Categorical([False, True], name='use_root_softmax'),
 
-    # Real(0.0001, 0.01, name='learning_rate'),
-    # Real(0.0, 10.0, name='policy_loss_weight'),
+    Real(0.0001, 0.01, name='learning_rate'),
+    Real(0.0, 1.0, name='loss_weight_1'),
+    Real(0.0, 1.0, name='loss_weight_2'),
+    Real(0.0, 1.0, name='loss_weight_3'),
     # Categorical(['merge', 'distinct'], name='data_loading_style'),
     # Categorical([False, True], name='augment_data'),
     # Categorical([False, True], name='save_all'),
     # Categorical([False, True], name='use_playout_cap_randomization'),
-    # Real(0.0, 1.0, name='DIRICHLET_ALPHA'),
+    Real(0.0, 1.0, name='DIRICHLET_ALPHA'),
     # Categorical([False, True], name='use_dirichlet_s'),
     # Categorical([False, True], name='use_forced_playouts_and_policy_target_pruning'),
     # Integer(0.0, 3.0, name='CForcedPlayout'),
 ]
 
-training_games = 1 # Number of training games per training loop
-training_loops = 1 # Number of training loops
-eval_games = 1 # Number of evaluation games
+training_games = 100 # Number of training games per training loop
+training_loops = 2 # Number of training loops
+eval_games = 100 # Number of evaluation games
 visual = True
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 i = 0
-baseline_model_number = 0 # The model number of the baseline network to compare against
+baseline_model_number = 3 # The model number of the baseline network to compare against
 
 def evaluate_challenger(baseline_config, challenger_config, challenger_interpreter, num_games, screen):
     # Returns the percentage of games won by the challenger network against the baseline network
@@ -55,8 +57,12 @@ def objective_function(**params):
     challenger_config.training = True
 
     for param in params:
-        if param == 'policy_loss_weight':
-            challenger_config.loss_weights = [1, params[param]]
+        if param == 'loss_weight_1':
+            challenger_config.loss_weights[1] = params[param]
+        elif param == 'loss_weight_2':
+            challenger_config.loss_weights[2] = params[param]
+        elif param == 'loss_weight_3':
+            challenger_config.loss_weights[3] = params[param]
         else:
             setattr(challenger_config, param, params[param])
 
@@ -96,7 +102,7 @@ if __name__ == "__main__":
     result = gp_minimize(
         func=objective_function,       # Objective function
         dimensions=param_space,        # Parameter space
-        n_calls=10,                    # Number of evaluations
+        n_calls=32,                    # Number of evaluations
         random_state=42                # For reproducibility
     )
 
