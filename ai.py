@@ -86,7 +86,7 @@ class Config():
 
         #   Only use one of dropout or l2_reg
         dropout=0.25,
-        l2_reg=3e-5,
+        l2_reg=0.0001,
 
         kernels=1,
         o_side_neurons=16,
@@ -106,10 +106,12 @@ class Config():
         use_root_softmax=True,
         RootSoftmaxTemp=1.1,
 
+        temperature=0.3,
+
         # Training Parameters
-        training=False, # Set to true to use a variety of features
+        training=False, # Set to true to use a variety of features, LEAVE FALSE AS DEFAULT
         learning_rate=0.001, 
-        loss_weights=[1.0, 1.0, 0.05, 0.05], 
+        loss_weights=[1.0, 1.0, 0.0, 0.0], 
         epochs=1, 
         batch_size=64,
 
@@ -161,6 +163,7 @@ class Config():
         self.FpuValue = FpuValue
         self.use_root_softmax = use_root_softmax
         self.RootSoftmaxTemp = RootSoftmaxTemp
+        self.temperature = temperature
         self.training = training
         self.learning_rate = learning_rate
         self.loss_weights = loss_weights
@@ -469,37 +472,35 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
 
     # print(MAX_DEPTH, total_branch//number_branch)
 
-    # Choose a move based on the number of visits
+    # ----- Prune policy BEFORE choosing a move -----
+    # Find the move with the highest number of playouts
     root = tree.get_node("root")
     root_children_id = root.successors(tree.identifier)
     max_n = 0
     max_id = None
 
     root_child_n_list = []
-    root_child_policy_list = []
+    root_child_id_list = []
+
+    root_child_policy_list = [] # debugging
 
     for root_child_id in root_children_id:
         root_child = tree.get_node(root_child_id)
         root_child_n = root_child.data.visit_count
         root_child_n_list.append(root_child_n)
-        root_child_policy_list.append(root_child.data.policy)
+        root_child_id_list.append(root_child_id)
 
         if root_child_n >= max_n: # It's possible n is 0 if there are no possible moves
             max_n = root_child_n
             max_id = root_child.identifier
-
-    # fig, axs = plt.subplots(2)
-    # fig.suptitle('N Compared to policy')
-    # # axs[0].plot(post_noise_policy)
-    # axs[0].plot(root_child_policy_list)
-    # axs[1].plot(root_child_n_list)
-    # plt.savefig(f"{directory_path}/root_n_{config.MAX_ITER}_depth_{config.model_version}.png")
-    # print("saved")
+        
+        root_child_policy_list.append(root_child.data.policy) # debugging
 
     data = tree.get_node(max_id).data
     move = data.move
 
     # Prune policy
+    post_prune_n_list = None
     if config.use_forced_playouts_and_policy_target_pruning and config.training and not fast_iter:
         post_prune_n_list = []
 
@@ -530,6 +531,41 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                         else: break
         
             post_prune_n_list.append(tree.get_node(root_child_id).data.visit_count)
+
+    if post_prune_n_list is not None and False: # debugging forced playout pruning
+        pre_prune_num_moves = len([x for x in root_child_n_list if x > 0])
+        post_prune_num_moves = len([x for x in post_prune_n_list if x > 0])
+
+        print(f"Move diversity: {pre_prune_num_moves} → {post_prune_num_moves} moves")
+
+    # ----- Pick a move randomly using temperature according to PRUNED visit counts -----
+    selected_id = None
+    
+    def select_action_with_temperature(visit_counts, temperature):
+        if temperature == 0:
+            # Deterministic - pick most visited
+            return np.argmax(visit_counts)
+        else:
+            # Stochastic - higher temp = more random
+            probs = visit_counts ** (1 / temperature)
+            probs = probs / np.sum(probs)
+
+            idx = random.choices(range(len(probs)), weights=probs, k=1)[0]
+            return idx
+    
+    # Use post pruned n if pruning occurred
+    # Set temperature to 0 if not training
+    temp = config.temperature if config.training else 0
+
+    if post_prune_n_list:
+        selected_idx = select_action_with_temperature(np.array(post_prune_n_list), temp)
+    else:
+        selected_idx = select_action_with_temperature(np.array(root_child_n_list), temp)
+    selected_id = root_child_id_list[selected_idx]
+
+    # Redfine data/move
+    data = tree.get_node(selected_id).data
+    move = data.move
 
     # If the move was fast, don't save
     save_move = not fast_iter
@@ -586,16 +622,16 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
             keras.utils.plot_model(model, to_file=f"{directory_path}/model_{config.model_version}_img.png", show_shapes=True)
 
         # Loss is the sum of MSE of values and Cross entropy of policies
-        
+        # def smooth_categorical_crossentropy(y_true, y_pred, smoothing=0.1):
+        #     """Custom loss with label smoothing"""
+        #     num_classes = tf.cast(tf.shape(y_true)[-1], tf.float32)
+        #     y_true_smooth = y_true * (1.0 - smoothing) + smoothing / num_classes
+        #     return tf.keras.losses.categorical_crossentropy(y_true_smooth, y_pred)
+
         model.compile(
             optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), 
-            loss={
-                'value': "mean_squared_error", 
-                'policy': "categorical_crossentropy", 
-                'aux_height': 'mse', 
-                'aux_holes': 'mse'
-                },
-            loss_weights={name: config.loss_weights[i] for i, name in enumerate(['value', 'policy', 'aux_height', 'aux_holes'])}
+            loss=["mean_squared_error", "categorical_crossentropy", 'mse', 'mse'],
+            loss_weights=config.loss_weights
         )
 
         if show_summary: model.summary()
@@ -646,15 +682,13 @@ def train_network_keras(config, model, set):
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
 
     history = model.fit(x=features, 
-                            y={
-                                'value': values,
-                                'policy': policies, 
-                                'aux_height': height,  # Note: height maps to aux_height
-                                'aux_holes': holes     # Note: holes maps to aux_holes
-                                }, 
-                        batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
+              y=[values, policies, height, holes], 
+              batch_size=64, 
+              epochs=config.epochs, 
+              shuffle=config.shuffle
+              )
 
-    print("Tracked metrics:", list(history.history.keys()))
+    # print("Tracked metrics:", list(history.history.keys()))
 
 def train_network_pytorch(config, model, set):
     features = list(map(list, zip(*set)))
@@ -997,10 +1031,13 @@ def reflect_policy(policy_matrix):
     
     return reflected_policy_matrix
 
-def get_game_stats(game, model_number):
+def get_game_stats(config, game, data_number, model_number):
     # Returns a dictionary with player statistics
     stats = {
         "model_number": model_number,
+        "model_version": config.model_version,
+        "data_number": data_number,
+        "data_version": config.data_version,
         "app": game.players[0].stats.lines_sent  / game.players[0].stats.pieces,
         "dspp": game.players[0].stats.lines_cleared / game.players[0].stats.pieces
     }
@@ -1172,11 +1209,12 @@ def play_game(config, interference_network, game_number=None, screen=None):
     data = game_data[0]
     data.extend(game_data[1])
 
-    stats = get_game_stats(game, highest_model_number(config))
+    # Data doesn't exist yet; current max is current - 1
+    stats = get_game_stats(config, game, highest_data_number(config) + 1, highest_model_number(config))
 
     return data, stats
 
-def make_training_set(config, interference_network, num_games, save_game=True, save_stats=True, screen=None):
+def make_training_set(config, interference_network, num_games, save_game=False, save_stats=False, screen=None):
     # Creates a dataset of several AI games.
     series_data = []
     series_stats = []
@@ -1197,12 +1235,15 @@ def make_training_set(config, interference_network, num_games, save_game=True, s
     if save_stats == True:
         averaged_stats = {
             "model_number": series_stats[0]["model_number"],
+            "model_version": series_stats[0]["model_version"],
+            "data_number": series_stats[0]["data_number"],
+            "data_version": series_stats[0]["data_version"],
             "app": round(sum([x["app"] for x in series_stats]) / len(series_stats), 3),
             "dspp": round(sum([x["dspp"] for x in series_stats]) / len(series_stats), 3)
         }
 
-        with open(f"{config.data_dir}/stats.txt", 'a+') as out_file:
-            out_file.write(f"{next_set}: {averaged_stats}\n")
+        with open(f"{directory_path}/data/stats.txt", 'a+') as out_file:
+            out_file.write(f"{averaged_stats}\n")
     
     else:
         return series_data
@@ -1392,7 +1433,7 @@ def self_play_loop(config, skip_first_set=False):
         if not skip_first_set:
             for i in range(TRAINING_LOOPS):
                 # Make data file with trianing config
-                make_training_set(training_config, challenger_interference_network, TRAINING_GAMES, screen=screen)
+                make_training_set(training_config, challenger_interference_network, num_games=TRAINING_GAMES, save_game=True, save_stats=True, screen=screen)
                 print("Finished set")
         else:
             # Skip and stop skipping in future
