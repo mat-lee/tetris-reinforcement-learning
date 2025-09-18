@@ -62,7 +62,7 @@ class Config():
 
         # For naming data and models
         model_version=5.9,
-        data_version=2.4,
+        data_version=2.5,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -515,10 +515,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
     # Set temperature to 0 if not training
     temp = config.temperature if config.training else 0
 
-    if post_prune_n_list:
-        selected_idx = select_action_with_temperature(np.array(post_prune_n_list), temp)
-    else:
-        selected_idx = select_action_with_temperature(np.array(root_child_n_list), temp)
+    selected_idx = select_action_with_temperature(np.array(root_child_n_list), temp)
     selected_id = root_child_id_list[selected_idx]
 
     move = tree.get_node(selected_id).data.move
