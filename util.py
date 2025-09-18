@@ -240,6 +240,8 @@ def time_move_matrix(algo) -> None:
 
     #   convolution                   0.247
     #   faster-but-loss               0.244
+    #   faster-conv                   0.187 94%
+    #   ultra-conv                    0.159 
 
     c = Config(MAX_ITER=100, move_algorithm=algo)
 
@@ -289,8 +291,7 @@ def time_architectures(var, values) -> None:
         scores[str(value)] = END - START
     print(scores)
 
-def profile_game() -> None:
-    c = Config()
+def profile_game(c) -> None:
     game = Game(c.ruleset)
     game.setup()
 
@@ -301,7 +302,7 @@ def profile_game() -> None:
 
     # Profile game
     with cProfile.Profile() as pr:
-        play_game(c, network, 777, show_game=True, screen=screen)
+        play_game(c, network, 777, screen=screen)
     stats = pstats.Stats(pr)
     stats.sort_stats(pstats.SortKey.TIME)
     stats.print_stats(20)
@@ -653,12 +654,25 @@ def convert_data_2_1_to_2_2(set):
         # extra_policy = np.zeros(shape=(POLICY_SHAPE[0] - 19, POLICY_SHAPE[1], POLICY_SHAPE[2]), dtype=int).tolist()
         # move[-1].extend(extra_policy)
 
-def convert_data_and_train(init_data_ver, conversion_function, last_n_sets, epochs):
-    c = Config(epochs=epochs)
+def convert_data_2_4_to_2_5(set):
+    # Add aux data to set
+    for move in set:
+        grid = move[0]
+        metrics = calculate_board_metrics(grid)
+        holes = metrics['holes']
+        avg_height = metrics['avg_height']
+
+        move.append(avg_height)
+        move.append(holes)
+
+def convert_data_and_train(c, init_data_ver, conversion_function, last_n_sets, epochs):
+    c.epochs = epochs
+    c.data_version = init_data_ver
 
     new_network = instantiate_network(c, show_summary=True, save_network=False)
+    # new_network = load_model(c, 300)
 
-    filenames = get_data_filenames(c, data_ver=init_data_ver, last_n_sets=last_n_sets)
+    filenames = get_data_filenames(c, last_n_sets=last_n_sets)
 
     path = f"{directory_path}/data/{c.ruleset}.{init_data_ver}"
 
@@ -727,7 +741,7 @@ def visualize_policy_from_data():
     frames = []
 
     for move in data:
-        policy = move[-1]
+        policy = move[-3] # value policy height holes
         fig, axs = plt.subplots(1, POLICY_SHAPE[0], figsize=(40, 3))
         fig.suptitle('Policy visualization', y=0.98)
 
@@ -885,10 +899,91 @@ def plot_stats(include_rank_data=True):
     plt.savefig(f"{directory_path}/self_play_data_statistics_{c.ruleset}_{c.data_version}.png", bbox_extra_artists=(legend,), bbox_inches='tight')
     print("Saved")
 
+def migrate_stats_data():
+    """
+    Migrates stats data from old format to new format.
+    
+    Old format: data_number: {'model_number': 72, 'app': 0.109, 'dspp': 0.169}
+    New format: {"model_number": model_number, "model_version": config.model_version, 
+                "data_number": data_number, "data_version": config.data_version, 
+                "app": app, "dspp": dspp}
+    """
+    
+    # Only check specific data versions as requested
+    data_versions = [2.3, 2.4]
+    model_version = 5.9 # The model version used to make the data
+    print(f"Processing data versions: {data_versions}")
+    
+    # Prepare output file - check if it exists to determine if we should append
+    output_file = f"{directory_path}/data/stats.txt"
+    
+    file_mode = 'a' if os.path.exists(output_file) else 'w'
+    if file_mode == 'a':
+        print(f"Appending to existing {output_file}")
+    else:
+        print(f"Creating new {output_file}")
+    
+    # Process each data version
+    total_records = 0
+    
+    with open(output_file, file_mode) as output_f:
+        for data_version in data_versions:
+            config = Config(data_version=data_version)
+            stats_path = f"{config.data_dir}/stats.txt"
+            
+            print(f"Processing {stats_path}...")
+            
+            try:
+                with open(stats_path, 'r') as f:
+                    lines = f.readlines()
+                    
+                for line_num, line in enumerate(lines, 1):
+                    line = line.strip()
+                    if not line:  # Skip empty lines
+                        continue
+                        
+                    try:
+                        # Parse the old format: data_number: {'model_number': 72, 'app': 0.109, 'dspp': 0.169}
+                        if ": " not in line:
+                            print(f"Warning: Invalid format in {stats_path} line {line_num}: {line}")
+                            continue
+                            
+                        data_number_str, dict_str = line.split(": ", 1)
+                        data_number = int(data_number_str)
+                        old_data = ast.literal_eval(dict_str)
+                        
+                        # Create new format record
+                        new_record = {
+                            "model_number": old_data.get("model_number"),
+                            "model_version": model_version,
+                            "data_number": data_number,
+                            "data_version": config.data_version,
+                            "app": old_data.get("app"),
+                            "dspp": old_data.get("dspp")
+                        }
+                        
+                        # Write directly to file
+                        output_f.write(ujson.dumps(new_record) + "\n")
+                        total_records += 1
+                        
+                    except (ValueError, SyntaxError) as e:
+                        print(f"Error parsing line {line_num} in {stats_path}: {e}")
+                        print(f"Line content: {line}")
+                        continue
+                        
+            except FileNotFoundError:
+                print(f"Error: Could not read {stats_path}")
+            except Exception as e:
+                print(f"Unexpected error processing {stats_path}: {e}")
+    
+    print(f"\nMigration complete!")
+    print(f"Processed {total_records} new records")
+    print(f"Data written to: {output_file}")
 
 if __name__ == "__main__":
 
-    c=Config(move_algorithm='convolutional')
+    c=Config()
+    # data = load_data(c, last_n_sets=20)
 
     # keras.utils.set_random_seed(937)
     
@@ -908,17 +1003,22 @@ if __name__ == "__main__":
     # test_network_versions(132, 122)
     
     # data = load_data(c, last_n_sets=20)
-    # c1 = Config(epochs=5)
-    # c2 = Config(epochs=5, dropout=0.75)
+    # c1 = Config(data_version=2.4, default_model=gen_model_aux)
+    # c2 = Config(data_version=2.4, default_model=gen_test1)
     # test_configs([c1, c2], 200, data=data, load_from_best_model=False)
 
     # instantiate_network(c, show_summary=True, save_network=False, plot_model=True)
 
-    # test_algorithm_accuracy(truth_algo='brute-force', test_algo='convolutional')
-    # time_move_matrix(algo='convolutional')
+    # test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-conv')
+    # time_move_matrix(algo='faster-conv')
+    # profile_game(Config(move_algorithm='ultra-conv'))
     # time_move_matrix(algo='faster-but-loss')
 
-    visualize_policy_from_data()
+    # visualize_policy_from_data()
+    
+    convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
+
+    # migrate_stats_data()
 
 # Command for running python files
 # This is for running many tests at the same time

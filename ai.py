@@ -70,7 +70,7 @@ class Config():
         use_tflite=True, # If true uses tflite, otherwise uses keras directly. Only for keras models
                          # If uses tflite, then interference and training are separate classes
                          # Otherwise, interference and training are the same class
-        default_model=None,
+        default_model=gen_alphasame_nn,
         move_algorithm='convolutional', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
         # Architecture Parameters
@@ -106,6 +106,8 @@ class Config():
         use_root_softmax=True,
         RootSoftmaxTemp=1.1,
 
+        temperature=0.0,
+
         # Training Parameters
         training=False, # Set to true to use a variety of features
         learning_rate=0.001, 
@@ -116,7 +118,7 @@ class Config():
         data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
         augment_data=True,
         shuffle=True,
-        use_experimental_features=True, # Before setting to true, check if it's in use
+        use_experimental_features=False, # Before setting to true, check if it's in use
         save_all=False,
 
         use_random_starting_moves=False, # If true, pick the first few moves randomly with respect to policy weights
@@ -161,6 +163,7 @@ class Config():
         self.FpuValue = FpuValue
         self.use_root_softmax = use_root_softmax
         self.RootSoftmaxTemp = RootSoftmaxTemp
+        self.temperature = temperature
         self.training = training
         self.learning_rate = learning_rate
         self.loss_weights = loss_weights
@@ -469,41 +472,64 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
 
     # print(MAX_DEPTH, total_branch//number_branch)
 
-    # Choose a move based on the number of visits
+    # ----- Pick a move randomly using temperature BEFORE pruning visit counts -----
+
+    # Find the move with the highest number of playouts
     root = tree.get_node("root")
     root_children_id = root.successors(tree.identifier)
     max_n = 0
     max_id = None
 
     root_child_n_list = []
-    root_child_policy_list = []
+    root_child_id_list = []
+
+    root_child_policy_list = [] # debugging
 
     for root_child_id in root_children_id:
         root_child = tree.get_node(root_child_id)
         root_child_n = root_child.data.visit_count
         root_child_n_list.append(root_child_n)
-        root_child_policy_list.append(root_child.data.policy)
+        root_child_id_list.append(root_child_id)
 
         if root_child_n >= max_n: # It's possible n is 0 if there are no possible moves
             max_n = root_child_n
             max_id = root_child.identifier
+        
+        root_child_policy_list.append(root_child.data.policy) # debugging
 
-    # fig, axs = plt.subplots(2)
-    # fig.suptitle('N Compared to policy')
-    # # axs[0].plot(post_noise_policy)
-    # axs[0].plot(root_child_policy_list)
-    # axs[1].plot(root_child_n_list)
-    # plt.savefig(f"{directory_path}/root_n_{config.MAX_ITER}_depth_{config.model_version}.png")
-    # print("saved")
+    selected_id = None
+    
+    def select_action_with_temperature(visit_counts, temperature):
+        if temperature == 0:
+            # Deterministic - pick most visited
+            return np.argmax(visit_counts)
+        else:
+            # Stochastic - higher temp = more random
+            probs = visit_counts ** (1 / temperature)
+            probs = probs / np.sum(probs)
 
-    data = tree.get_node(max_id).data
-    move = data.move
+            idx = random.choices(range(len(probs)), weights=probs, k=1)[0]
+            return idx
+    
+    # Use post pruned n if pruning occurred
+    # Set temperature to 0 if not training
+    temp = config.temperature if config.training else 0
 
+    if post_prune_n_list:
+        selected_idx = select_action_with_temperature(np.array(post_prune_n_list), temp)
+    else:
+        selected_idx = select_action_with_temperature(np.array(root_child_n_list), temp)
+    selected_id = root_child_id_list[selected_idx]
+
+    move = tree.get_node(selected_id).data.move
+
+    # ----- Prune policy AFTER choosing a move -----
     # Prune policy
+    post_prune_n_list = None
     if config.use_forced_playouts_and_policy_target_pruning and config.training and not fast_iter:
         post_prune_n_list = []
 
-        most_playouts_child = tree.get_node(max_id)
+        most_playouts_child = tree.get_node(max_id) # Uses max_id, not selected_id
         most_playouts_CPUCT = most_playouts_child.data.value_avg + config.CPUCT * most_playouts_child.data.policy * math.sqrt(root.data.visit_count) / (config.DPUCT + most_playouts_child.data.visit_count)
         
         for root_child_id in root_children_id:
@@ -530,6 +556,12 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                         else: break
         
             post_prune_n_list.append(tree.get_node(root_child_id).data.visit_count)
+
+    if post_prune_n_list is not None and False: # debugging forced playout pruning
+        pre_prune_num_moves = len([x for x in root_child_n_list if x > 0])
+        post_prune_num_moves = len([x for x in post_prune_n_list if x > 0])
+
+        print(f"Move diversity: {pre_prune_num_moves} → {post_prune_num_moves} moves")
 
     # If the move was fast, don't save
     save_move = not fast_iter
@@ -572,21 +604,25 @@ def get_move_list(move_matrix, policy_matrix):
 #   Policy: (19 x 25 x 11) = 5225 (Hold x (Rows - 1) x (Columns + 1) x Rotations)
 #   Value: (1)
 
-def instantiate_network(config: Config, nn_generator=gen_alphasame_nn, show_summary=True, save_network=True, plot_model=False):
+def instantiate_network(config: Config, show_summary=True, save_network=True, plot_model=False):
     # Creates a network with random weights
     # 1: For each grid, apply the same neural network, and then use 1x1 kernel and concatenate
     # 1 -> 2: For opponent grid, apply fully connected layer
     # Concatenate active player's kernels/features with opponent's dense layer and non-player specific features
     # Apply value head and policy head 
 
-    model = nn_generator(config)
+    model = config.default_model(config)
 
     if config.model == 'keras':
         if plot_model == True:
             keras.utils.plot_model(model, to_file=f"{directory_path}/model_{config.model_version}_img.png", show_shapes=True)
 
         # Loss is the sum of MSE of values and Cross entropy of policies
-        model.compile(optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate), loss=["mean_squared_error", "categorical_crossentropy"], loss_weights=config.loss_weights)
+        model.compile(optimizer=keras.optimizers.Adam(
+            learning_rate=config.learning_rate), 
+            loss=["mean_squared_error", "categorical_crossentropy"], 
+            loss_weights=config.loss_weights
+            )
 
         if show_summary: model.summary()
 
@@ -633,7 +669,11 @@ def train_network_keras(config, model, set):
     # Adjust learning rate HOW???
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
 
-    model.fit(x=features, y=[values, policies], batch_size=64, epochs=config.epochs, shuffle=config.shuffle)
+    history = model.fit(x=features, 
+                        y=[values, policies], 
+                        batch_size=64, 
+                        epochs=config.epochs, 
+                        shuffle=config.shuffle)
 
 def train_network_pytorch(config, model, set):
     features = list(map(list, zip(*set)))
@@ -707,6 +747,8 @@ def evaluate_from_tflite(game, interpreter):
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
+    output_details.sort(key=lambda x: x['name'])
+
     for i in range(len(X)):
         split_str = input_details[i]['name'].split(":")[0]
         
@@ -721,8 +763,8 @@ def evaluate_from_tflite(game, interpreter):
 
     interpreter.invoke()
 
-    value = interpreter.get_tensor(output_details[1]['index'])
-    policies = interpreter.get_tensor(output_details[0]['index'])
+    value = interpreter.get_tensor(output_details[0]['index'])
+    policies = interpreter.get_tensor(output_details[1]['index'])
 
     # Both value and policies are returned as arrays
     value = value.item()
@@ -973,15 +1015,57 @@ def reflect_policy(policy_matrix):
     
     return reflected_policy_matrix
 
-def get_game_stats(game, model_number):
+def get_game_stats(config, game, data_number, model_number):
     # Returns a dictionary with player statistics
     stats = {
         "model_number": model_number,
+        "model_version": config.model_version,
+        "data_number": data_number,
+        "data_version": config.data_version,
         "app": game.players[0].stats.lines_sent  / game.players[0].stats.pieces,
         "dspp": game.players[0].stats.lines_cleared / game.players[0].stats.pieces
     }
 
     return stats
+
+def col_heights_from_grid(grid):
+    rows, cols = len(grid), len(grid[0])
+    col_heights = np.zeros(cols, dtype=np.int32)
+    for c in range(cols):
+        first = -1
+        for r in range(rows):
+            if grid[r][c] != 0:
+                first = r
+                break
+        col_heights[c] = (rows - first) if first != -1 else 0
+    return col_heights
+
+def count_holes(grid, col_heights):
+    rows, cols = len(grid), len(grid[0])
+    holes = 0
+    for c in range(cols):
+        if col_heights[c] == 0:
+            continue
+        top = rows - col_heights[c]
+        for r in range(top, rows):
+            if grid[r][c] == 0:
+                holes += 1
+    return holes
+
+def calculate_board_metrics(grid):
+    col_heights = col_heights_from_grid(grid)
+    avg_h = int(col_heights.sum())
+
+    holes = count_holes(grid, col_heights)
+
+    # simple normalizations
+    holes_norm = min(1.0, holes / float((ROWS - 1) * COLS))
+    avg_norm   = min(1.0, avg_h / float(ROWS * COLS))
+
+    return {
+        "holes": holes_norm,
+        "avg_height": avg_norm,
+    }
 
 def play_game(config, interference_network, game_number=None, screen=None):
     # AI plays one game against itself
@@ -1100,15 +1184,21 @@ def play_game(config, interference_network, game_number=None, screen=None):
         for move_idx in range(len(game_data[player_idx])):
             game_data[player_idx][move_idx].insert(-1, value)
 
+            # Add auxiliary targets
+            if False:
+                board_metrics = calculate_board_metrics(game_data[player_idx][move_idx][0])
+                game_data[player_idx][move_idx].append(board_metrics["holes"])
+                game_data[player_idx][move_idx].append(board_metrics["avg_height"])
+
     # Reformat data to stack all moves into one continuous list
     data = game_data[0]
     data.extend(game_data[1])
 
-    stats = get_game_stats(game, highest_model_number(config))
+    stats = get_game_stats(config, game, highest_data_number(config) + 1, highest_model_number(config))
 
     return data, stats
 
-def make_training_set(config, interference_network, num_games, save_game=True, save_stats=True, screen=None):
+def make_training_set(config, interference_network, num_games, save_game=False, save_stats=True, screen=None):
     # Creates a dataset of several AI games.
     series_data = []
     series_stats = []
@@ -1129,12 +1219,15 @@ def make_training_set(config, interference_network, num_games, save_game=True, s
     if save_stats == True:
         averaged_stats = {
             "model_number": series_stats[0]["model_number"],
+            "model_version": series_stats[0]["model_version"],
+            "data_number": series_stats[0]["data_number"],
+            "data_version": series_stats[0]["data_version"],
             "app": round(sum([x["app"] for x in series_stats]) / len(series_stats), 3),
             "dspp": round(sum([x["dspp"] for x in series_stats]) / len(series_stats), 3)
         }
 
-        with open(f"{config.data_dir}/stats.txt", 'a+') as out_file:
-            out_file.write(f"{next_set}: {averaged_stats}\n")
+        with open(f"{directory_path}/data/stats.txt", 'a+') as out_file:
+            out_file.write(f"{averaged_stats}\n")
     
     else:
         return series_data
@@ -1324,7 +1417,7 @@ def self_play_loop(config, skip_first_set=False):
         if not skip_first_set:
             for i in range(TRAINING_LOOPS):
                 # Make data file with trianing config
-                make_training_set(training_config, challenger_interference_network, TRAINING_GAMES, screen=screen)
+                make_training_set(training_config, challenger_interference_network, num_games=TRAINING_GAMES, save_game=True, save_stats=True, screen=screen)
                 print("Finished set")
         else:
             # Skip and stop skipping in future
