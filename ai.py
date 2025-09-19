@@ -1,3 +1,4 @@
+# # Prior to importing tensorflow, disable debug logs
 from architectures import *
 from const import *
 from game import Game
@@ -8,6 +9,7 @@ import copy
 from collections import deque
 import gc
 #import json
+import logging
 import math
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,11 +22,6 @@ import time
 import treelib
 import ujson
 
-# # Prior to importing tensorflow, disable debug logs
-import os
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-
-
 from tensorflow import keras
 from keras import backend as K
 import tensorflow as tf
@@ -32,8 +29,10 @@ from tensorflow.python.ops import math_ops
 from sklearn.model_selection import train_test_split
 
 # Reduce tensorflow text
-# tf.get_logger().setLevel('ERROR')
-# tf.autograph.set_verbosity(0)
+tf.get_logger().setLevel(logging.ERROR)
+
+# Suppress TensorFlow Lite warnings specifically
+tf.get_logger().setLevel('ERROR')
 
 from torch.utils.data import DataLoader
 
@@ -1303,16 +1302,20 @@ def get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
 
     # Get n games
     for filename in os.listdir(path):
-        # Ignore files that don't start with numbers
-        if filename.split('.')[0].isdigit() == False:
+        try:
+            # Ignore files that don't start with numbers
+            if filename.split('.')[0].isdigit() == False:
+                continue
+
+            data_number = int(filename.split('.')[0])
+            if data_number > max_set - last_n_sets:
+                # Load data
+                filenames.append(filename)
+
+                sets += 1
+        except:
+            # ds_store file
             continue
-
-        data_number = int(filename.split('.')[0])
-        if data_number > max_set - last_n_sets:
-            # Load data
-            filenames.append(filename)
-
-            sets += 1
     
     print(sets)
     # Shuffle data
@@ -1436,6 +1439,8 @@ def self_play_loop(config, skip_first_set=False):
             GATING_THRESHOLD, 
             GATING_THRESHOLD_TYPE,
             BATTLE_GAMES, 
+            network_1_title='Challenger',
+            network_2_title='Best',
             screen=screen
         )
         if win:
@@ -1555,9 +1560,12 @@ def highest_model_number(config):
         os.makedirs(path, exist_ok=True)
 
         for filename in os.listdir(path):
-            model_number = int(filename.split('.')[0])
-            if model_number > max:
-                max = model_number
+            try:
+                model_number = int(filename.split('.')[0])
+                if model_number > max:
+                    max = model_number
+            except:
+                continue
 
     elif config.model == 'pytorch':
         path = config.model_dir
@@ -1579,12 +1587,15 @@ def highest_data_number(config):
     os.makedirs(path, exist_ok=True)
 
     for filename in os.listdir(path):
-        if filename.split('.')[0].isdigit() == False:
-            continue
+        try:
+            if filename.split('.')[0].isdigit() == False:
+                continue
 
-        data_number = int(filename.split('.')[0])
-        if data_number > max:
-            max = data_number
+            data_number = int(filename.split('.')[0])
+            if data_number > max:
+                max = data_number
+        except:
+            continue
 
     return max
 

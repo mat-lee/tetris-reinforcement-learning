@@ -1,3 +1,15 @@
+import logging
+import os
+import warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+import absl.logging
+absl.logging.set_verbosity(absl.logging.ERROR)
+
+# Suppress Python warnings
+warnings.filterwarnings('ignore')
+
 from ai import *
 
 ### File for running the simulation commands
