@@ -1246,7 +1246,7 @@ def load_data_and_train_model(config, model, data=None):
         if config.shuffle == True:
             random.shuffle(data)
 
-        print(len(data))
+        print(f"Training with {len(data)} samples over {len(filenames)} sets")
         train_network(config, model, data)
 
         gc.collect()
@@ -1256,14 +1256,14 @@ def load_data_and_train_model(config, model, data=None):
             data = load_data(config, last_n_sets=SETS_TO_TRAIN_WITH)
 
             for set in data:
-                print(len(set))
+                print(f"Training with {len(set)} samples")
                 train_network(config, model, set)
 
         else:
             if config.shuffle == True:
                 random.shuffle(data)
             for set in data:
-                print(len(set))
+                print(f"Training with {len(set)} samples")
                 train_network(config, model, set)
 
         gc.collect()
@@ -1317,7 +1317,7 @@ def get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
             # ds_store file
             continue
     
-    print(sets)
+    # print(sets)
     # Shuffle data
     if config.shuffle:
         random.shuffle(filenames)
@@ -1375,23 +1375,23 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
         if threshold is not None:
             if threshold_type == 'more':
                 if wins[0] > threshold * games:
-                    print(*wins)
+                    # print(*wins)
                     return wins, True
                 elif wins[1] >= (1 - threshold) * games:
-                    print(*wins)
+                    # print(*wins)
                     return wins, False
             elif threshold_type == 'moreorequal':
                 if wins[0] >= threshold * games:
-                    print(*wins)
+                    # print(*wins)
                     return wins, True
                 elif wins[1] > (1 - threshold) * games:
-                    print(*wins)
+                    # print(*wins)
                     return wins, False
         # else:
             # raise NotImplementedError
 
     # If neither side eaches a cutoff, return None
-    print(*wins)
+    # print(*wins)
     return wins, None
 
 def self_play_loop(config, skip_first_set=False):
@@ -1415,10 +1415,11 @@ def self_play_loop(config, skip_first_set=False):
 
         # Play a training set and train the network on past sets.
         if not skip_first_set:
+            print(f"Starting training loop {iter} with network version {highest_model_number(config)}")
             for i in range(TRAINING_LOOPS):
                 # Make data file with trianing config
                 make_training_set(training_config, challenger_interference_network, num_games=TRAINING_GAMES, save_game=True, save_stats=True, screen=screen)
-                print("Finished set")
+                print("Finished making training set")
         else:
             # Skip and stop skipping in future
             skip_first_set = False
@@ -1427,11 +1428,14 @@ def self_play_loop(config, skip_first_set=False):
         load_data_and_train_model(config, challenger_train_network, data=None)
         challenger_interference_network = get_interference_network(config, challenger_train_network)
 
-        print("Finished loop")
+        print("Finished training network")
 
         # If new network is improved, save it and make it the default
         # Otherwise, repeat
-        _, win = battle_networks(
+        next_ver = highest_model_number(config) + 1
+        print(f"Battling a challenger against version {next_ver - 1}")
+
+        win_loss, win = battle_networks(
             challenger_interference_network, 
             config, 
             best_interference_network, 
@@ -1443,9 +1447,12 @@ def self_play_loop(config, skip_first_set=False):
             network_2_title='Best',
             screen=screen
         )
+
+        print(f"Challenger {win_loss[0]} - {win_loss[1]} Best")
+
         if win:
             # Challenger network becomes next highest version
-            next_ver = highest_model_number(config) + 1
+            print(f"Challenger version {next_ver} won and is now the best network")
 
             if config.model == 'keras':
                 challenger_train_network.save(f"{directory_path}/models/{config.ruleset}.{config.model_version}/{next_ver}.keras")
@@ -1604,7 +1611,9 @@ def highest_data_number(config):
 def blockPrint():
     if HIDE_PRINTS:
         sys.stdout = open(os.devnull, 'w')
+        sys.stderr = open(os.devnull, 'w')
 
 # Restore
 def enablePrint():
     sys.stdout = sys.__stdout__
+    sys.__stderr__
