@@ -769,108 +769,146 @@ def test_generate_move_matrix():
     moves = get_move_list(moves, np.ones(shape=POLICY_SHAPE))
     print(moves)
 
-def plot_stats(include_rank_data=True):
-    c = Config()
-    # stats_paths = [f"{c.data_dir}/stats.txt"]
-    stats_paths = [f"{Config(data_version=2.3).data_dir}/stats.txt",
-                   f"{Config(data_version=2.4).data_dir}/stats.txt",]
+import matplotlib as mpl
 
+# Make figures crisp by default
+mpl.rcParams.update({
+    "figure.dpi": 150,      # notebook / on-screen
+    "savefig.dpi": 300,     # file output
+    "lines.linewidth": 0.9, # default thinner lines
+    "axes.linewidth": 0.8,
+    "patch.antialiased": True,
+    "text.antialiased": True,
+})
+
+def plot_stats(model_version=None, data_version=None, average_by_model=False, include_rank_data=True):
+    """
+    Plot app and dspp statistics from a single stats file for specific versions.
+    """
     data = {}
+    stats_path = f"{directory_path}/data/stats.txt"
 
-    for stats_path in stats_paths:
-        with open(stats_path, 'r') as f:
-            lines = f.readlines()
-
-            for line in lines:
-                line = line.strip("\n")
-                line = line.split(": ", 1)[1]
+    with open(stats_path, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            line = line.strip("\n")
+            if not line:
+                continue
+            try:
                 dicts = ast.literal_eval(line)
-                for stat in dicts:
-                    if stat not in data:
-                        data[stat] = [dicts[stat]]
+
+                # Filter by versions
+                if model_version is not None:
+                    if isinstance(model_version, list):
+                        if dicts['model_version'] not in model_version:
+                            continue
                     else:
-                        data[stat].append(dicts[stat])
+                        if dicts['model_version'] != model_version:
+                            continue
+
+                if data_version is not None:
+                    if isinstance(data_version, list):
+                        if dicts['data_version'] not in data_version:
+                            continue
+                    else:
+                        if dicts['data_version'] != data_version:
+                            continue
+
+                # Collect
+                for stat in dicts:
+                    data.setdefault(stat, []).append(dicts[stat])
+
+            except Exception:
+                continue
 
     df = pd.DataFrame(data)
-    df = df.groupby("model_number").mean()
+    if df.empty or 'app' not in df.columns or 'dspp' not in df.columns:
+        print("No valid data found with app/dspp columns")
+        return None, None
+
+    if average_by_model:
+        df = df.groupby(['model_number', 'model_version'])[['app', 'dspp']].mean().reset_index()
 
     rank_data = {
         "D": {"app": 0.154, "dspp": 0.034, "color": "#8f7591"},
         "C": {"app": 0.235, "dspp": 0.058, "color": "#733d8e"},
         "B": {"app": 0.290, "dspp": 0.081, "color": "#4f64c9"},
         "A": {"app": 0.360, "dspp": 0.105, "color": "#47ac52"},
-        # "S-": {"app": 0.426, "dspp": 0.122, "color": "#b1972a"},
         "S": {"app": 0.467, "dspp": 0.133, "color": "#e1a71c"},
-        # "S+": {"app": 0.517, "dspp": 0.141, "color": "#d9af0d"},
         "SS": {"app": 0.586, "dspp": 0.154, "color": "#db8a1e"},
         "U": {"app": 0.673, "dspp": 0.169, "color": "#ff3913"},
-        # "X": {"app": 0.757, "dspp": 0.174, "color": "#ff45ff"},
-        # "X+": {"app": 0.849, "dspp": 0.177, "color": "#653c8d"},
     }
 
     change_data = {
-        72: "Kicktable was corrected from SRS-X to SRS+ and all-spins were fixed for the AI"
+        (5.9, 2.4): "Kicktable was corrected from SRS-X to SRS+ and all-spins were fixed for the AI",
+        (5.9, 2.6): "Changed temperature from 0.0 -> 0.1, CForcedPlayout 2 -> 1, DIRICHLET_ALPHA 0.02 -> 0.05, SETS_TO_TRAIN_WITH 10 -> 5"
     }
 
-    fig, axs = plt.subplots(len(df.columns), figsize=(6.5, 5.6 + 1.2 * len(df.columns)))
+    # Slightly wider figure; constrained_layout to avoid overlap and preserve sharpness
+    fig, axs = plt.subplots(2, figsize=(7.5, 6.8 + 1.2 * 2), constrained_layout=True)
     fig.suptitle('Selfplay Data Statistics')
 
-    # Collect all legend handles and labels
-    all_handles = []
-    all_labels = []
+    all_handles, all_labels = [], []
     rank_added = False
     change_added = False
+    stats = ['app', 'dspp']
 
-    for i, stat in enumerate(df.columns):
-        # Plot main data
-        line = axs[i].plot(df[stat], label=f'{stat} data')[0]
-        axs[i].set_xlabel("Model number")
-        axs[i].set_ylabel(f"{stat}")
+    for i, stat in enumerate(stats):
+        # Thin line, antialiased, no markers to avoid clutter
+        axs[i].plot(
+            df[stat].values,
+            label=f'{stat}',
+            linewidth=0.9,
+            antialiased=True
+        )
+        axs[i].set_xlabel("Model number" if average_by_model else "Training step")
+        axs[i].set_ylabel(stat)
 
+        # subtle grid to help see small changes
+        axs[i].grid(True, linewidth=0.5, alpha=0.3)
 
-        # Shrink plot width to make space for legend
+        # Move plot a touch right (kept from your original intent)
         box = axs[i].get_position()
-        axs[i].set_position([box.x0, box.y0, box.width * 0.98, box.height])
-        
-        # Add rank reference lines
+        axs[i].set_position([box.x0, box.y0, box.width * 0.985, box.height])
+
         if include_rank_data and stat in rank_data["D"]:
-            for rank in rank_data:
-                if stat in rank_data[rank]:
+            for rank, rinfo in rank_data.items():
+                if stat in rinfo:
                     rank_line = axs[i].axhline(
-                        y=rank_data[rank][stat], 
-                        color=rank_data[rank]["color"], 
-                        alpha=0.6, 
-                        linestyle='-', 
-                        linewidth=1
+                        y=rinfo[stat],
+                        color=rinfo["color"],
+                        alpha=0.5,
+                        linestyle='-',
+                        linewidth=0.6,  # thinner ref lines
+                        zorder=0
                     )
-                    # Only add to legend once
                     if not rank_added:
                         all_handles.append(rank_line)
                         all_labels.append(f'Rank {rank}')
             rank_added = True
-        
-        # Add change indicators
-        for model_number, change in change_data.items():
-            change_line = axs[i].axvline(
-                x=model_number-0.5, # -0.5 to put the line inbetween models
-                color='red', 
-                linestyle='--', 
-                alpha=0.5,
-                linewidth=1
-            )
-            # Only add to legend once
-            if not change_added:
-                all_handles.append(change_line)
-                all_labels.append('Change')
-            change_added = True
 
-    # Create a single legend for the entire figure
-    legend = None
+        # Change indicators (thin dashed)
+        for (mv, dv), change in change_data.items():
+            matching = df[(df.get('model_version') == mv) & (df.get('data_version') == dv)] if {'model_version','data_version'}.issubset(df.columns) else pd.DataFrame()
+            if not matching.empty:
+                x_pos = (matching.index[0] if not average_by_model else matching['model_number'].iloc[0])
+                change_line = axs[i].axvline(
+                    x=x_pos,
+                    color='red',
+                    linestyle='--',
+                    alpha=0.5,
+                    linewidth=0.6
+                )
+                if not change_added:
+                    all_handles.append(change_line)
+                    all_labels.append('Change')
+                    change_added = True
+
     if all_handles:
-        legend = fig.legend(
-            all_handles, 
-            all_labels, 
-            loc='upper right', 
+        fig.legend(
+            all_handles,
+            all_labels,
+            loc='upper right',
             bbox_to_anchor=(0.98, 0.98),
             fontsize=9,
             frameon=True,
@@ -878,26 +916,22 @@ def plot_stats(include_rank_data=True):
             shadow=True
         )
 
-    # # Adjust layout to prevent overlap
-    # plt.tight_layout()
-    # plt.subplots_adjust(top=0.93)
-
-    # Add changes text underneath the plot
     if change_data:
-        # Create text for changes
-        change_text = "Changes:\n" + "\n".join([f"• Model {k}: {v}" for k, v in change_data.items()])
-        
-        fig.text(0.02, 0.01, change_text, 
-                fontsize=7, 
-                verticalalignment='bottom',
-                horizontalalignment='left',
-                bbox=dict(boxstyle='round,pad=0.6', facecolor='lightblue', alpha=0.8, edgecolor='blue'),
-                wrap=True)
+        change_text = "Changes:\n" + "\n".join([f"• Model {mv}, Data {dv}: {desc}" for (mv, dv), desc in change_data.items()])
+        fig.text(
+            0.02, 0.01, change_text,
+            fontsize=7,
+            va='bottom',
+            ha='left',
+            bbox=dict(boxstyle='round,pad=0.6', facecolor='lightblue', alpha=0.8, edgecolor='blue'),
+            wrap=True
+        )
 
-    # plt.show()
+    png_path = f"{directory_path}/self_play_data_statistics_test.png"
+    plt.savefig(png_path, bbox_inches='tight', facecolor='white')
+    print(f"Saved {png_path}")
 
-    plt.savefig(f"{directory_path}/self_play_data_statistics_{c.ruleset}_{c.data_version}.png", bbox_extra_artists=(legend,), bbox_inches='tight')
-    print("Saved")
+    return fig, axs
 
 def migrate_stats_data():
     """
@@ -980,9 +1014,119 @@ def migrate_stats_data():
     print(f"Processed {total_records} new records")
     print(f"Data written to: {output_file}")
 
-if __name__ == "__main__":
+def test_policy_piece_invariance(c):
+    c.MAX_ITER = 2
+    game = Game(c.ruleset)
+    game.setup()
 
-    c=Config()
+    model_path = f"{directory_path}/models/debug/test_model.keras"
+    print(f"Loading model from {model_path}")
+    model = get_interpreter(keras.models.load_model(model_path))
+
+    policies = []
+
+    # After a certain number of moves, the policy is examined
+    moves = 10
+
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption(f"Viewing policy of the network")
+    pygame.event.get() # Required for visuals?
+
+    while game.is_terminal == False and len(game.history.states) < moves:
+        move, _, _ = MCTS(c, game, model)
+        game.make_move(move)
+
+        game.show(screen)
+        pygame.display.update()
+
+    for piece in MINOS:
+        game.players[game.turn].piece = Piece(type=piece)
+        game.players[game.turn].piece.move_to_spawn()
+        game.players[game.turn].held_piece = piece
+
+        value, policy = evaluate(c, game, model)
+
+        policies.append(policy)
+    
+    for i in range(len(policies)):
+        for j in range(i + 1, len(policies)):
+            # Compute cosine similarity
+            cos_sim = np.sum(policies[i] * policies[j]) / (np.linalg.norm(policies[i]) * np.linalg.norm(policies[j]))
+            print(f"Cosine similarity between {MINOS[i]} and {MINOS[j]}: {cos_sim}")
+    
+    fig, axs = plt.subplots(len(MINOS), POLICY_SHAPE[0], figsize=(40, 3 * len(MINOS)))
+    fig.suptitle('Policy visualization', y=0.98)
+    for i, piece in enumerate(MINOS):
+        for j in range(len(policy_index_to_piece)):
+            axs[i, j].imshow(policies[i][j], cmap='viridis')
+
+    plt.tight_layout()
+    plt.savefig(f"{directory_path}/policy_piece_invariance_{c.model_version}.png")
+    print("Saved figure and printed cosine similarities")
+
+def test_simple_piece_network_piece_invariance():
+    """
+    Test a very simple network that only takes piece input to see if it can learn piece invariance.
+    """
+
+    # A very simple network to test piece invariance
+    piece_input = keras.Input(shape=(len(MINOS) * 7,), name='piece_input')
+    policy = keras.layers.Dense(POLICY_SIZE, activation='softmax')(piece_input)
+
+    model = keras.Model(inputs=piece_input, outputs=policy)
+
+
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.001),
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+
+    model.summary()
+
+    # Make training data and train model
+    policies = []
+    pieces = []
+    data = load_data(Config(data_version=2.4), last_n_sets=20)
+    for set in data:
+        for move in set:
+            policy = move[-1]
+            # print(np.argwhere(np.array(policy)))
+            policy = np.array(policy).reshape(POLICY_SIZE,)
+            policies.append(policy)
+
+            piece_matrix = move[1]
+            piece_matrix = np.array(piece_matrix).reshape(len(MINOS) * 7,)
+
+            pieces.append(piece_matrix) # Piece is second item, first player
+
+    model.fit(np.array(pieces), np.array(policies), epochs=1, batch_size=32)
+
+    # Visualize policy for each piece
+    policies = []
+    for piece in MINOS:
+        piece_one_hot = np.zeros((7, len(MINOS)))
+        piece_one_hot[0, MINOS.index(piece)] = 1
+
+        piece_one_hot = piece_one_hot.flatten().reshape((1, len(MINOS) * 7))
+
+        policy = model.predict(piece_one_hot)[0]
+        policy = policy.reshape(POLICY_SHAPE)
+
+        policies.append(policy)
+
+    fig, axs = plt.subplots(len(MINOS), POLICY_SHAPE[0], figsize=(40, 3 * len(MINOS)))
+    fig.suptitle('Policy visualization', y=0.98)
+    for i, piece in enumerate(MINOS):
+        for j in range(len(policy_index_to_piece)):
+            axs[i, j].imshow(policies[i][j], cmap='viridis')
+    
+    plt.tight_layout()
+    plt.savefig(f"{directory_path}/simple_piece_policy_piece_invariance.png")
+    print("Saved figure")
+
+if __name__ == "__main__":
+    
+    c = Config()
+
     # data = load_data(c, last_n_sets=20)
 
     # keras.utils.set_random_seed(937)
@@ -994,7 +1138,7 @@ if __name__ == "__main__":
     # profile_game()
     # test_reflected_policy()
     # visualize_policy()
-    # plot_stats(include_rank_data=True)
+    plot_stats(data_version=2.6, include_rank_data=True)
 
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
 
@@ -1016,9 +1160,18 @@ if __name__ == "__main__":
 
     # visualize_policy_from_data()
     
-    convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
+    # convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
 
     # migrate_stats_data()
+
+    # test_policy_piece_invariance(c)
+    # test_simple_piece_network_piece_invariance()
+
+    # c = Config(default_model=gen_test_model, data_version=2.4)
+
+    # model = instantiate_network(c, show_summary=True, save_network=False)
+    # load_data_and_train_model(c, model, last_n_sets=20)
+    # model.save(f"{directory_path}/models/debug/test_model.keras")
 
 # Command for running python files
 # This is for running many tests at the same time

@@ -61,7 +61,7 @@ class Config():
 
         # For naming data and models
         model_version=5.9,
-        data_version=2.5,
+        data_version=2.6,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -105,7 +105,7 @@ class Config():
         use_root_softmax=True,
         RootSoftmaxTemp=1.1,
 
-        temperature=0.0,
+        temperature=0.1,
 
         # Training Parameters
         training=False, # Set to true to use a variety of features
@@ -127,13 +127,13 @@ class Config():
         playout_cap_mult=5,
 
         use_dirichlet_noise=True,
-        DIRICHLET_ALPHA=0.02,
+        DIRICHLET_ALPHA=0.05,
         DIRICHLET_S=25,
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
 
         use_forced_playouts_and_policy_target_pruning=True,
-        CForcedPlayout=2,
+        CForcedPlayout=1,
     ):
         self.visual = visual
         self.model_version = model_version
@@ -1228,13 +1228,13 @@ def make_training_set(config, interference_network, num_games, save_game=False, 
     else:
         return series_data
 
-def load_data_and_train_model(config, model, data=None):
+def load_data_and_train_model(config, model, data=None, last_n_sets=SETS_TO_TRAIN_WITH):
     path = config.data_dir
 
     if config.data_loading_style == "merge":
         if data == None:
             data = []
-            filenames = get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH)
+            filenames = get_data_filenames(config, last_n_sets=last_n_sets)
 
             for filename in filenames:
                 set = ujson.load(open(f"{path}/{filename}", 'r'))
@@ -1253,7 +1253,7 @@ def load_data_and_train_model(config, model, data=None):
 
     elif config.data_loading_style == 'distinct':
         if data == None:
-            data = load_data(config, last_n_sets=SETS_TO_TRAIN_WITH)
+            data = load_data(config, last_n_sets=last_n_sets)
 
             for set in data:
                 print(f"Training with {len(set)} samples")
