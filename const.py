@@ -12,13 +12,6 @@ COLS = 10
 # AI settings
 MAX_MOVES = 1000
 
-TRAINING_GAMES = 100
-TRAINING_LOOPS = 1
-SETS_TO_TRAIN_WITH = 5
-BATTLE_GAMES = 200
-GATING_THRESHOLD = 0.5
-GATING_THRESHOLD_TYPE = 'more' # 'moreorequal' or 'more'
-
 # Controls:
 k_move_left    = pygame.K_LEFT
 k_move_right   = pygame.K_RIGHT

@@ -95,6 +95,13 @@ class Config():
         # Makes evaluation range from -1 to 1, while sigmoid ranges from 0 to 1
 
         # MCTS Parameters
+        training_games=100, # Number of training games per training loop
+        training_loops=1, # Number of training loops before evaluation
+        sets_to_train_with=10, # Number of past sets to train with
+        battle_games=200, # Number of evaluation games
+        gating_threshold=0.55, # Minimum winrate to replace the best model
+        gating_threshold_type='moreorequal', # 'moreorequal' or 'more'
+
         MAX_ITER=160, 
         CPUCT=0.75, # CPUCT is the scalar multiple of the policy term in PUCT
         DPUCT=1, # DPUCT is an additive scalar in the denominator of in PUCT
@@ -115,6 +122,7 @@ class Config():
         batch_size=64,
 
         data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
+        decay_factor=0.9, # Only for 'merge' data loading style and when data is None
         augment_data=True,
         shuffle=True,
         use_experimental_features=False, # Before setting to true, check if it's in use
@@ -155,6 +163,12 @@ class Config():
         self.o_side_neurons = o_side_neurons
         self.value_head_neurons = value_head_neurons
         self.use_tanh = use_tanh
+        self.training_games = training_games
+        self.training_loops = training_loops
+        self.sets_to_train_with = sets_to_train_with
+        self.battle_games = battle_games
+        self.gating_threshold = gating_threshold
+        self.gating_threshold_type = gating_threshold_type
         self.MAX_ITER = MAX_ITER
         self.CPUCT = CPUCT
         self.DPUCT = DPUCT
@@ -169,6 +183,7 @@ class Config():
         self.epochs = epochs
         self.batch_size = batch_size
         self.data_loading_style = data_loading_style
+        self.decay_factor = decay_factor
         self.augment_data = augment_data
         self.shuffle = shuffle
         self.use_experimental_features = use_experimental_features
@@ -389,7 +404,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                         new_state.value_avg = max (0, config.FpuValue)
                     elif config.FpuStrategy == 'reduction':
                         # value is the parent node's value
-                        new_state.value_avg = max(0 if config.use_tanh else -1, value - config.FpuValue * math.sqrt(total_expanded_policy)) # Lower bound of 0
+                        new_state.value_avg = max(-1 if config.use_tanh else 0, value - config.FpuValue * math.sqrt(total_expanded_policy)) # Lower bound of 0
 
                         # In the paper it sets FpuValue to 0 at the root node when dirichlet noise is enabled
                         # However, at the root node the policy total is always 0 for my mcts so that's reduntant
@@ -1228,32 +1243,42 @@ def make_training_set(config, interference_network, num_games, save_game=False, 
     else:
         return series_data
 
-def load_data_and_train_model(config, model, data=None, last_n_sets=SETS_TO_TRAIN_WITH):
+def load_data_and_train_model(config, model, data=None):
     path = config.data_dir
 
     if config.data_loading_style == "merge":
         if data == None:
             data = []
-            filenames = get_data_filenames(config, last_n_sets=last_n_sets)
+            filenames = get_data_filenames(config)
+
+            filenames.sort(key=lambda x: int(x.split('.')[0]), reverse=True) # Sort by descending order
+
+            age = 0
 
             for filename in filenames:
+                weight_decay = config.decay_factor ** age
+
                 set = ujson.load(open(f"{path}/{filename}", 'r'))
 
-                data.extend(set)
+                data.extend(random.sample(set, int(len(set) * weight_decay))) # Randomly sample
+
+                age += 1
         else:
+            print("Not using weight decay")
             data = [x for set in data for x in set] # Flatten list
 
         if config.shuffle == True:
             random.shuffle(data)
 
-        print(f"Training with {len(data)} samples over {len(filenames)} sets")
+        print(f"Training with {len(data)} samples over {len(filenames)} sets with decay factor {config.decay_factor}")
         train_network(config, model, data)
 
         gc.collect()
 
     elif config.data_loading_style == 'distinct':
+        raise Exception("Not fully fleshed out")
         if data == None:
-            data = load_data(config, last_n_sets=last_n_sets)
+            data = load_data(config)
 
             for set in data:
                 print(f"Training with {len(set)} samples")
@@ -1270,7 +1295,7 @@ def load_data_and_train_model(config, model, data=None, last_n_sets=SETS_TO_TRAI
     
     else: raise NotImplementedError
 
-def load_data(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
+def load_data(config) -> list:
     # Load data from the past n games
     # Returns a list where each indice is a set
 
@@ -1281,7 +1306,7 @@ def load_data(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
     path = config.data_dir
 
     # Get filenames and load them
-    for filename in get_data_filenames(config, last_n_sets=last_n_sets):
+    for filename in get_data_filenames(config):
         set = ujson.load(open(f"{path}/{filename}", 'r'))
         data.append(set)
 
@@ -1291,7 +1316,7 @@ def load_data(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
     print(sets, len_sets)
     return data
 
-def get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
+def get_data_filenames(config) -> list:
     # Returns a list of data filenames
     filenames = []
     max_set = highest_data_number(config)
@@ -1308,7 +1333,7 @@ def get_data_filenames(config, last_n_sets=SETS_TO_TRAIN_WITH) -> list:
                 continue
 
             data_number = int(filename.split('.')[0])
-            if data_number > max_set - last_n_sets:
+            if data_number > max_set - config.sets_to_train_with:
                 # Load data
                 filenames.append(filename)
 
@@ -1416,9 +1441,9 @@ def self_play_loop(config, skip_first_set=False):
         # Play a training set and train the network on past sets.
         if not skip_first_set:
             print(f"Starting training loop {iter} with network version {highest_model_number(config)}")
-            for i in range(TRAINING_LOOPS):
+            for i in range(config.training_loops):
                 # Make data file with trianing config
-                make_training_set(training_config, challenger_interference_network, num_games=TRAINING_GAMES, save_game=True, save_stats=True, screen=screen)
+                make_training_set(training_config, challenger_interference_network, num_games=config.training_games, save_game=True, save_stats=True, screen=screen)
                 print("Finished making training set")
         else:
             # Skip and stop skipping in future
@@ -1440,9 +1465,9 @@ def self_play_loop(config, skip_first_set=False):
             config, 
             best_interference_network, 
             config, 
-            GATING_THRESHOLD, 
-            GATING_THRESHOLD_TYPE,
-            BATTLE_GAMES, 
+            config.gating_threshold, 
+            config.gating_threshold_type,
+            config.battle_games, 
             network_1_title='Challenger',
             network_2_title='Best',
             screen=screen

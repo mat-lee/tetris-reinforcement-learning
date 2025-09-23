@@ -14,7 +14,7 @@ from ai import *
 
 ### File for running the simulation commands
 show_training = True
-skip_first_set = False
+skip_first_set = False # If you want to jump straight to model training/evaluation
 
 DefaultConfig = Config(visual=show_training)
 
