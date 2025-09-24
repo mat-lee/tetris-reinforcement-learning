@@ -60,8 +60,8 @@ class Config():
         visual=True, # Whether to display the training
 
         # For naming data and models
-        model_version=5.9,
-        data_version=2.6,
+        model_version=6.0,
+        data_version=2.7,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -107,7 +107,7 @@ class Config():
         DPUCT=1, # DPUCT is an additive scalar in the denominator of in PUCT
 
         FpuStrategy='reduction', # 'reduction' subtracts FpuValue from parent eval, 'absolute' uses FpuValue
-        FpuValue=0.4,
+        FpuValue=0.1,
 
         use_root_softmax=True,
         RootSoftmaxTemp=1.1,
@@ -214,6 +214,21 @@ class Config():
         # Returns the path to the data file
         return f"{directory_path}/data/{self.ruleset}.{self.data_version}"
 
+    @property
+    def value_max(self):
+        return 1
+
+    @property
+    def value_mid(self):
+        return (0 if self.use_tanh else 0.5)
+
+    @property
+    def value_min(self):
+        return (-1 if self.use_tanh else 0)
+    
+    def negate_value(self, value):
+        return (-value if self.use_tanh else 1 - value)
+
 class NodeState():
     """Node class for storing the game in the tree.
     
@@ -255,18 +270,15 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
     max_iterations = None
     fast_iter = False # Used to disable dirichlet noise for fast iterations
 
-    # Randomly assigns moves to higher and lower playouts
+    # Randomly assigns the MCTS to a higher or lower playouts
     if config.training and config.use_playout_cap_randomization:
-        if random.random() < config.playout_cap_chance:
+        if random.random() < config.playout_cap_chance: # long
             max_iterations = math.ceil(config.playout_cap_mult * (config.MAX_ITER / (config.playout_cap_chance * (config.playout_cap_mult - 1) + 1)))
-        else:
+        else: # short
             max_iterations = math.floor(config.MAX_ITER / (config.playout_cap_chance * (config.playout_cap_mult - 1) + 1))
             fast_iter = True
-    else:
+    else: # default
         max_iterations = config.MAX_ITER
-
-    if config.FpuStrategy == 'reduction':
-        total_expanded_policy = 0
 
     while iter < max_iterations:
         iter += 1
@@ -288,7 +300,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             max_child_id = None
             parent_visits = node.data.visit_count
 
-            number_branch += 1
+            number_branch += 1 # debug for branching factor
             
             # Debuging
             Qs = []
@@ -333,6 +345,8 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             if DEPTH > MAX_DEPTH:
                 MAX_DEPTH = DEPTH
 
+        playout_node_id = node.identifier
+
         # If not the root node, place piece in node
         if not node.is_root():
             prior_node = tree.get_node(node.predecessor(tree.identifier))
@@ -341,13 +355,8 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             node_state.game = game_copy
             node_state.game.make_move(node_state.move, add_bag=False, add_history=False)
 
-            # Keep track of total expanded policy
-            # Root node has no policy prior
-            if config.FpuStrategy == 'reduction':
-                total_expanded_policy += node_state.policy
-
-        # Don't update policy, move_list, or generate new nodes if the game is over       
-        if node_state.game.is_terminal == False:
+        # Update policy, move_list and generate new nodes
+        if node_state.game.is_terminal == False: # Avoid is node game is over
             value, policy = evaluate(config, node_state.game, interference_network)
             # value, policy = random_evaluate()
                 
@@ -358,16 +367,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn], algo=config.move_algorithm)
                 move_list = get_move_list(move_matrix, policy)
 
-                assert len(move_list) > 0, [node_state.game.players[node_state.game.turn].board.grid, 
-                                            node_state.game.players[1 - node_state.game.turn].board.grid,
-                                            node_state.game.players[node_state.game.turn].piece.type,
-                                            node_state.game.players[node_state.game.turn].queue.pieces,
-                                            node_state.game.players[node_state.game.turn].held_piece,
-                                            iter,
-                                            DEPTH,
-                                            MAX_DEPTH,
-                                            np.sum(move_matrix),
-                                            np.min(policy)] # There should always be a legal move, or the game would be over
+                assert len(move_list) > 0 # There should always be a legal move
 
                 # Calculate policy for new leaves
                 policies, moves = map(list, zip(*move_list))
@@ -399,12 +399,13 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                     assert new_state.policy > 0
 
                     # New node value
-                    # Set First Play Urgency value
                     if config.FpuStrategy == 'absolute':
-                        new_state.value_avg = max (0, config.FpuValue)
+                        new_state.value_avg = max(config.value_min, config.FpuValue)
                     elif config.FpuStrategy == 'reduction':
-                        # value is the parent node's value
-                        new_state.value_avg = max(-1 if config.use_tanh else 0, value - config.FpuValue * math.sqrt(total_expanded_policy)) # Lower bound of 0
+                        # Total explored policy for new leaf node is 0
+                        # Flip the perspective
+                        parent_value = config.negate_value(value)
+                        new_state.value_avg = max(config.value_min, parent_value)
 
                         # In the paper it sets FpuValue to 0 at the root node when dirichlet noise is enabled
                         # However, at the root node the policy total is always 0 for my mcts so that's reduntant
@@ -426,11 +427,11 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         else: 
             winner = node_state.game.winner
             if winner == node_state.game.turn: # If active player wins
-                value = 1
+                value = config.value_max
             elif winner == 1 - node_state.game.turn: # If opponent wins
-                value = (-1 if config.use_tanh else 0)
+                value = config.value_min
             else: # Draw
-                value = (0 if config.use_tanh else 0.5)
+                value = config.value_mid
 
         # If root node and in self play, add exploration noise to children
         if (config.training and not fast_iter and config.use_dirichlet_noise and node.is_root()):
@@ -462,7 +463,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         # When you make a make a move and evaluate it, the turn flips so
         # the evaluation is from the perspective of the other player, 
         # thus you have to flip the value
-        value = (-value if config.use_tanh else 1 - value)
+        value = config.negate_value(value)
 
         # Go back up the tree and updates nodes
         # Propogate positive values for the player made the move, and negative for the other player
@@ -472,7 +473,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             node_state = node.data
             node_state.visit_count += 1
             # Revert value if the other player just went
-            node_state.value_sum += (value if node_state.game.turn == final_node_turn else (-value if config.use_tanh else 1 - value))
+            node_state.value_sum += (value if node_state.game.turn == final_node_turn else config.negate_value(value))
             node_state.value_avg = node_state.value_sum / node_state.visit_count
 
             upwards_id = node.predecessor(tree.identifier)
@@ -481,10 +482,46 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         # Repeat for root node
         node_state = node.data
         node_state.visit_count += 1
-        node_state.value_sum += (value if node_state.game.turn == final_node_turn else (-value if config.use_tanh else 1 - value))
+        node_state.value_sum += (value if node_state.game.turn == final_node_turn else config.negate_value(value))
         node_state.value_avg = node_state.value_sum / node_state.visit_count
 
-    # print(MAX_DEPTH, total_branch//number_branch)
+        # print(MAX_DEPTH, total_branch//number_branch)
+
+        # After playouts are updated, update Fpu values
+
+        # Update Fpu values if FpuStragegy is 'reduction'
+        # If the parent is the root, no updates will occur
+        # The var 'node' is the node that was just played out
+        # Go back to the parent, and update all its children's ("node"`s siblings) fpu
+        node = tree.get_node(playout_node_id)
+
+        if not node.is_root() and config.FpuStrategy == 'reduction':
+            parent_id = node.predecessor(tree.identifier)
+            parent = tree.get_node(parent_id)
+
+            if not parent.is_root():
+                parent_value = parent.data.value_avg
+
+                node_explored_policy = 0
+
+                # 1) Find expanded policy for the parent node
+                sibling_ids = parent.successors(tree.identifier)
+                for sibling_id in sibling_ids:
+                    sibling_data = tree.get_node(sibling_id).data
+
+                    # Check if node has been visited
+                    if sibling_data.visit_count > 0:
+                        node_explored_policy += sibling_data.policy
+
+                # 2) Update children nodes
+                for sibling_id in sibling_ids:
+                    sibling_data = tree.get_node(sibling_id).data
+
+                    # Check if node hasn't been visited
+                    if sibling_data.visit_count == 0:
+                        # negate parent value
+                        sibling_data.value_avg = max(config.value_min, config.negate_value(parent_value) - config.FpuValue * math.sqrt(node_explored_policy))
+
 
     # ----- Pick a move randomly using temperature BEFORE pruning visit counts -----
 
@@ -1186,11 +1223,11 @@ def play_game(config, interference_network, game_number=None, screen=None):
     winner = game.winner
     for player_idx in range(len(game_data)):
         if winner == -1: # Draw
-            value = (0 if config.use_tanh else 0.5)
+            value = config.value_mid # draw 0 or 0.5
         elif winner == player_idx:
-            value = 1
+            value = config.value_max # win 1 or 1
         else:
-            value = (-1 if config.use_tanh else 0)
+            value = config.value_min # loss -1 or 0
         # Insert value before policy for each move of that player
         for move_idx in range(len(game_data[player_idx])):
             game_data[player_idx][move_idx].insert(-1, value)
