@@ -1123,6 +1123,51 @@ def test_simple_piece_network_piece_invariance():
     plt.savefig(f"{directory_path}/simple_piece_policy_piece_invariance.png")
     print("Saved figure")
 
+def evaluate_value_metrics(num_games):
+    # Return MSE metrics
+    errors = []
+
+    # Initialize pygame
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption(f'Evaluating MSE')
+
+    c = Config()
+
+    interpreter = get_interpreter(load_best_model(c))
+
+    for _ in range(num_games):
+        game_metrics = {0: [], 1: []}
+
+        game = Game(c.ruleset)
+        game.setup()
+
+        while game.is_terminal == False:
+            value, _ = evaluate(c, game, interpreter)
+            game_metrics[game.turn].append(value)
+
+            # Make move
+            move, _, _ = MCTS(c, game, interpreter)
+            game.make_move(move)
+
+            game.show(screen)
+            pygame.event.get()
+            pygame.display.update()
+        
+        winner = game.winner
+        for player_idx in range(2):
+            if winner == -1: # Draw
+                value = c.value_mid # draw 0 or 0.5
+            elif winner == player_idx:
+                value = c.value_max # win 1 or 1
+            else:
+                value = c.value_min # loss -1 or 0
+
+            for pred in game_metrics[player_idx]:
+                errors.append((pred - value) ** 2)
+    
+    mse = np.mean(errors)
+    print(f"MSE over {num_games} games: {mse}")
+
 if __name__ == "__main__":
     
     c = Config()
@@ -1138,7 +1183,7 @@ if __name__ == "__main__":
     # profile_game()
     # test_reflected_policy()
     # visualize_policy()
-    plot_stats(data_version=2.6, include_rank_data=True)
+    # plot_stats(data_version=2.6, include_rank_data=True)
 
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
 
@@ -1172,6 +1217,8 @@ if __name__ == "__main__":
     # model = instantiate_network(c, show_summary=True, save_network=False)
     # load_data_and_train_model(c, model, last_n_sets=20)
     # model.save(f"{directory_path}/models/debug/test_model.keras")
+
+    evaluate_value_metrics(num_games=5)
 
 # Command for running python files
 # This is for running many tests at the same time
