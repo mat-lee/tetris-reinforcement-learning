@@ -95,20 +95,20 @@ class MoveGenerator:
         """Initialize queues and tracking arrays."""
         self.next_location_queue = deque()
         self.place_location_queue = []
-        
-        # Dimensions: [x, y, rotation, t_spin_state]
-        t_spin_states = 3 if self.piece.type == "T" else 1
-        checked_shape = (self.POLICY_SHAPE[0], self.POLICY_SHAPE[1], 4, t_spin_states)
-        self.checked_list = np.zeros(checked_shape, dtype=int)
+
+        # Dimensions: [x, y, rotation] - spin flags are irrelevant for visitation tracking
+        checked_shape = (self.POLICY_SHAPE[0], self.POLICY_SHAPE[1], 4)
+        self.checked_list = np.zeros(checked_shape, dtype=bool)
     
     def _set_starting_position(self):
         """Set the piece to its starting position."""
         highest_row = self._get_highest_row()
-        starting_row = max(highest_row - len(self.piece_dict[self.piece.type]), 
+        starting_row = max(highest_row - len(self.piece_dict[self.piece.type]),
                           self.ROWS - self.SPAWN_ROW)
         self.piece.location.y = starting_row
-        
-        self._check_add_to_sets(self.piece.type, self.piece.location.copy(), check_placement=True)
+
+        # Add initial state to queue
+        self._add_state_to_queue(self.piece.location.copy())
     
     def _get_highest_row(self):
         """Find the highest occupied row in the grid."""
@@ -119,60 +119,50 @@ class MoveGenerator:
                     return row
         return len(grid)
     
-    def _check_add_to_sets(self, piece_type, piece_location, check_placement=False):
-        """Add a location to be checked if not already processed."""
-        if not self._already_checked(piece_type, piece_location):
-            # Special handling for T-piece rotation states
-            should_skip = False
-            if piece_type == "T" and piece_location.rotation_just_occurred:
-                non_rotated_location = piece_location.copy()
-                non_rotated_location.rotation_just_occurred = False
-                if self._already_checked(piece_type, non_rotated_location):
-                    should_skip = True
-            
-            if not should_skip:
-                self.next_location_queue.append(piece_location)
-                self._mark_checked(piece_type, piece_location)
-            
-            # Check if it can be placed
-            if check_placement:
-                coords = [[col + piece_location.x, row + piece_location.y + 1] 
-                         for col, row in self.mino_coords_dict[self.piece.type][piece_location.rotation]]
-                if self.sim_player.collision(coords):
-                    self.place_location_queue.append(piece_location)
+    def _add_state_to_queue(self, piece_location):
+        """Add a location to the queue."""
+        self.next_location_queue.append(piece_location)
+
+    def _is_placeable(self, piece_location):
+        """Check if piece can be placed (can't move down)."""
+        self.piece.location = piece_location
+        self.piece.coordinates = self.piece.get_self_coords
+        return not self.sim_player.can_move(self.piece, y_offset=1)
     
-    def _already_checked(self, piece_type, piece_location):
+    def _already_checked(self, piece_location):
         """Check if a location has already been processed."""
-        if piece_type == "T":
-            index = 0
-            if piece_location.rotation_just_occurred:
-                index = 1
-            if piece_location.rotation_just_occurred_and_used_last_tspin_kick:
-                index = 2
-            return self.checked_list[piece_location.x + 2][piece_location.y][piece_location.rotation][index] == 1
-        return self.checked_list[piece_location.x + 2][piece_location.y][piece_location.rotation] == 1
-    
-    def _mark_checked(self, piece_type, piece_location):
+        # Spin flags are irrelevant for checking if a state has been visited
+        x, y, r = piece_location.x, piece_location.y, piece_location.rotation
+        return self.checked_list[x + 2, y, r]
+
+    def _mark_checked(self, piece_location):
         """Mark a location as processed."""
-        if piece_type == "T":
-            index = 0
-            if piece_location.rotation_just_occurred:
-                index = 1
-            if piece_location.rotation_just_occurred_and_used_last_tspin_kick:
-                index = 2
-            self.checked_list[piece_location.x + 2][piece_location.y][piece_location.rotation][index] = 1
-        else:
-            self.checked_list[piece_location.x + 2][piece_location.y][piece_location.rotation] = 1
+        # Spin flags are irrelevant for marking a state as visited
+        x, y, r = piece_location.x, piece_location.y, piece_location.rotation
+        self.checked_list[x + 2, y, r] = True
     
     def _brute_force_algorithm(self, check_rotations):
         """Exhaustive search algorithm that finds all possible moves."""
         while len(self.next_location_queue) > 0:
             piece_location = self.next_location_queue.popleft()
-            piece_location_copy = piece_location.copy()
-            
-            self.piece.location = piece_location_copy.copy()
+
+            self.piece.location = piece_location.copy()
             self.piece.coordinates = self.piece.get_self_coords
-            
+
+            # Check if already visited
+            if self._already_checked(piece_location):
+                # Still check if placeable for already-visited positions
+                if not self.sim_player.can_move(self.piece, y_offset=1):
+                    if piece_location not in self.place_location_queue:
+                        self.place_location_queue.append(piece_location.copy())
+                continue
+
+            self._mark_checked(piece_location)
+
+            # Check if this is a placement location (can't move down)
+            if not self.sim_player.can_move(self.piece, y_offset=1):
+                self.place_location_queue.append(piece_location.copy())
+
             # Check left, right, and down moves
             for move in [[1, 0], [-1, 0], [0, 1]]:
                 if self.sim_player.can_move(self.piece, x_offset=move[0], y_offset=move[1]):
@@ -181,367 +171,355 @@ class MoveGenerator:
                     new_location.y += move[1]
                     new_location.rotation_just_occurred = False
                     new_location.rotation_just_occurred_and_used_last_tspin_kick = False
-                    
-                    self._check_add_to_sets(self.piece.type, new_location, check_placement=True)
-            
+                    self._add_state_to_queue(new_location)
+
             # Check rotations
             if check_rotations:
                 for i in range(1, 4):
-                    self.sim_player.try_wallkick(i)
-                    
-                    new_location = self.piece.location.copy()
-                    if new_location.y >= 0:  # Avoid negative indexing
-                        self._check_add_to_sets(self.piece.type, new_location, check_placement=True)
-                    
-                    # Reset piece locations
-                    if i != 3:  # Don't need to reset on last rotation
-                        self.piece.location = piece_location_copy.copy()
+                    self.piece.location = piece_location.copy()  # Reset for each kick attempt
+                    if self.sim_player.try_wallkick(i):
+                        new_location = self.piece.location.copy()
+                        if new_location.y >= 0:  # Avoid negative indexing
+                            self._add_state_to_queue(new_location)
     
     def _optimized_algorithm(self, check_rotations):
-        """Faster algorithm with phase-based approach."""
-        # Phase 1: Get initial rotations
-        phase_2_queue = deque()
-        piece_location = self.next_location_queue.popleft()
-        piece_location_copy = piece_location.copy()
-        
-        self.piece.location = piece_location_copy.copy()
-        self.piece.coordinates = self.piece.get_self_coords
-        phase_2_queue.append(piece_location.copy())
-        
+        """A faster, phased algorithm. Marks air cells as visited to constrain brute-force."""
+        # Phase 1: Get initial rotations from spawn
+        if not self.next_location_queue:
+            return
+
+        initial_rotations_q = deque()
+        spawn_loc = self.next_location_queue.popleft()
+        initial_rotations_q.append(spawn_loc.copy())
+
         if check_rotations:
             for i in range(1, 4):
-                self.sim_player.try_wallkick(i)
-                phase_2_queue.append(self.piece.location.copy())
-                self._mark_checked(self.piece.type, self.piece.location)
-                
-                if i != 3:
-                    self.piece.location = piece_location_copy.copy()
-        
+                self.piece.location = spawn_loc.copy()
+                if self.sim_player.try_wallkick(i):
+                    rotated_pos = self.piece.location.copy()
+                    initial_rotations_q.append(rotated_pos)
+                    self._mark_checked(rotated_pos)
+
         # Phase 2: Horizontal movement for each rotation
-        phase_3_queue = deque()
-        while len(phase_2_queue) > 0:
-            piece_location = phase_2_queue.popleft()
-            phase_3_queue.append(piece_location.copy())
-            
+        horizontal_scan_q = deque()
+        while len(initial_rotations_q) > 0:
+            loc = initial_rotations_q.popleft()
+            horizontal_scan_q.append(loc.copy())
+
             for x_dir in [-1, 1]:
-                self.piece.location = piece_location.copy()
+                self.piece.location = loc.copy()
                 self.piece.coordinates = self.piece.get_self_coords
-                self.piece.location.rotation_just_occurred = False
-                self.piece.location.rotation_just_occurred_and_used_last_tspin_kick = False
-                
                 while self.sim_player.can_move(self.piece, x_offset=x_dir):
                     self.piece.location.x += x_dir
                     self.piece.coordinates = self.piece.get_self_coords
-                    self._mark_checked(self.piece.type, self.piece.location)
-                    phase_3_queue.append(self.piece.location.copy())
-        
-        # Phase 3: Vertical movement (drop to bottom)
-        while len(phase_3_queue) > 0:
-            piece_location = phase_3_queue.popleft()
-            piece_location_copy = piece_location.copy()
-            self.piece.location = piece_location_copy.copy()
+                    self._mark_checked(self.piece.location)
+                    horizontal_scan_q.append(self.piece.location.copy())
+
+        # Phase 3: Vertical movement (soft drop) - mark the path as visited
+        while len(horizontal_scan_q) > 0:
+            loc = horizontal_scan_q.popleft()
+            self.piece.location = loc.copy()
             self.piece.coordinates = self.piece.get_self_coords
-            
+
+            # Soft drop, marking the path
             while self.sim_player.can_move(self.piece, y_offset=1):
+                self._mark_checked(self.piece.location)
                 self.piece.location.y += 1
                 self.piece.coordinates = self.piece.get_self_coords
-                self._mark_checked(self.piece.type, self.piece.location)
-            
-            # Check these using the normal algorithm and add as placement
-            self.next_location_queue.append(self.piece.location.copy())
-            self.place_location_queue.append(self.piece.location.copy())
-        
-        # Phase 4: Use brute force on remaining positions
+
+            # The final landing spot is a starting point for brute-force
+            self._add_state_to_queue(self.piece.location.copy())
+
+        # Phase 4: Use brute force on the collected landing spots
+        # The air above has been marked as visited, constraining the search
         self._brute_force_algorithm(check_rotations)
     
     def _harddrop_algorithm(self, check_rotations):
-        """Simple algorithm that only considers hard drops."""
-        # Phase 1: Get all rotations
-        phase_2_queue = deque()
-        piece_location = self.next_location_queue.popleft()
-        piece_location_copy = piece_location.copy()
-        
-        self.piece.location = piece_location_copy.copy()
-        self.piece.coordinates = self.piece.get_self_coords
-        phase_2_queue.append((self.piece.location.x, self.piece.location.y, self.piece.location.rotation))
-        
-        if check_rotations:
-            for i in range(1, 4):
-                self.sim_player.try_wallkick(i)
-                phase_2_queue.append((self.piece.location.x, self.piece.location.y, self.piece.location.rotation))
-                
-                if i != 3:
-                    self.piece.location = piece_location_copy.copy()
-        
-        # Phase 2: Horizontal movement
-        phase_3_queue = deque()
-        while len(phase_2_queue) > 0:
-            x, y, rotation = phase_2_queue.popleft()
-            phase_3_queue.append((x, y, rotation))
-            
-            for x_dir in [-1, 1]:
-                self.piece.location.x, self.piece.location.y, self.piece.location.rotation = x, y, rotation
+        """Simple algorithm that only considers hard drops from every column/rotation."""
+        rotations_to_check = range(4) if check_rotations else [0]
+        grid_width = len(self.sim_player.board.grid[0])
+
+        for r in rotations_to_check:
+            # Try every column
+            for x in range(-2, grid_width):
+                # Set piece at top
+                spawn_y = self.ROWS - self.SPAWN_ROW
+                self.piece.location = PieceLocation(x, spawn_y, r)
                 self.piece.coordinates = self.piece.get_self_coords
-                
-                while self.sim_player.can_move(self.piece, x_offset=x_dir):
-                    new_x = self.piece.location.x + x_dir
-                    self.piece.location.x = new_x
+
+                # Check if this starting position is valid
+                if self.sim_player.collision(self.piece.coordinates):
+                    continue
+
+                # Simulate hard drop
+                while self.sim_player.can_move(self.piece, y_offset=1):
+                    self.piece.location.y += 1
                     self.piece.coordinates = self.piece.get_self_coords
-                    phase_3_queue.append((new_x, y, rotation))
-        
-        # Phase 3: Hard drop to bottom
-        while len(phase_3_queue) > 0:
-            x, y, rotation = phase_3_queue.popleft()
-            self.piece.location.x, self.piece.location.y, self.piece.location.rotation = x, y, rotation
-            self.piece.coordinates = self.piece.get_self_coords
-            
-            while self.sim_player.can_move(self.piece, y_offset=1):
-                self.piece.location.y += 1
-                self.piece.coordinates = self.piece.get_self_coords
-            
-            # Create location object for placement
-            final_location = self.piece.location.copy()
-            final_location.rotation_just_occurred = False
-            final_location.rotation_just_occurred_and_used_last_tspin_kick = False
-            
-            self.place_location_queue.append(final_location)
+
+                # The final landing spot is a placement
+                final_location = self.piece.location.copy()
+                final_location.rotation_just_occurred = False
+                final_location.rotation_just_occurred_and_used_last_tspin_kick = False
+                self.place_location_queue.append(final_location)
     
     def _convolutional_algorithm(self, check_rotations):
         """
-        Advanced convolutional algorithm that finds all moves including spins.
-        
-        Process:
-        1. Convolve grid with each piece rotation to create movement graphs
-        2. Start BFS traversal from spawn position within each graph
-        3. When hitting graph boundaries, attempt rotations (wallkicks)
-        4. If rotation succeeds, jump to corresponding position in new rotation's graph
-        5. Continue traversal until all reachable positions found
+        Finds all piece placements using pre-computed validity maps.
+
+        Key optimization: Collision checks happen once upfront (building validity maps).
+        Movement within a rotation state is just array lookups.
+        Wallkicks only happen at edges, not at every cell.
         """
-        axes_of_rotation_dict = {
-            "O": 1, "Z": 2, "S": 2, "I": 2,
-            "L": 4, "J": 4, "T": 4,
-        }
-        axes_of_rotation = axes_of_rotation_dict[self.piece.type]
-        
-        def create_piece_mask(piece_type, rotation):
-            """Create a binary mask for the piece at given rotation, preserving original coordinates"""
-            # Use the piece dictionary which already has the proper matrix representation
-            # This preserves the original piece coordinates and matrix structure
-            mask = self.piece_dict[piece_type]
-            
-            # Rotate the mask to match the requested rotation
-            rotated_mask = [row[:] for row in mask]  # Deep copy
-            for _ in range(rotation):
-                rotated_mask = np.rot90(rotated_mask, 3).tolist()  # Rotate 90 degrees clockwise
-                
-            return rotated_mask
-        
-        def convolve_grid_with_piece(grid, piece_mask):
-            """Convolve grid with piece mask to find valid placement positions."""
-            grid_height = len(grid)
-            grid_width = len(grid[0])
-            mask_height = len(piece_mask)
-            mask_width = len(piece_mask[0])
-            
-            # Result includes buffer for negative x positions (-2 to grid_width-1)
-            result = np.zeros((POLICY_SHAPE[1], POLICY_SHAPE[2]), dtype=int)  # +2 buffer for x=-2 to x=grid_width-1
-            
-            # Scan all possible positions
-            for grid_row in range(POLICY_SHAPE[1]):
-                for grid_col in range(-2, -2 + POLICY_SHAPE[2]):  # Allow negative x
-                    
-                    # Check if piece can be placed at this position
-                    can_place = True
-                    for mask_row in range(mask_height):
-                        for mask_col in range(mask_width):
-                            if piece_mask[mask_row][mask_col] != 0:  # If piece occupies this cell
-                                actual_row = grid_row + mask_row
-                                actual_col = grid_col + mask_col
-                                
-                                # Check bounds and collisions
-                                if (actual_col < 0 or actual_col >= grid_width or
-                                    actual_row < 0 or actual_row >= grid_height or
-                                    grid[actual_row][actual_col] != 0):
-                                    can_place = False
-                                    break
-                        if not can_place:
-                            break
-                    
-                    if can_place:
-                        result[grid_row][grid_col + 2] = 1  # +2 buffer offset
-                        
-            return result.tolist()
-        
-        def find_reachable_positions(movement_graph, start_x, start_y, skip_start_placement):
-            """BFS to find all positions reachable via left/right/down movement."""
-            if start_y < 0 or start_y >= len(movement_graph):
-                return list(), list()
-            if start_x + 2 < 0 or start_x + 2 >= len(movement_graph[0]):
-                return list(), list()
-            if movement_graph[start_y][start_x + 2] != 1:
-                return list(), list()
-                
-            boundary_positions = list()
-            placeable_positions = list()
-            queue = deque([(start_x, start_y)])
+        # Step 1: Build validity maps
+        validity_maps, x_off, y_off = self._build_validity_maps()
 
-            # Don't add the start position to the placement queue 
-            # because it removes spin information and its placed in the main algorithm
-            
-            directions = [(0, 1), (1, 0), (-1, 0)]  # down, right, left
+        # Visited tracking per rotation (separate from validity - tracks exploration)
+        visited = np.zeros_like(validity_maps, dtype=bool)
 
-            is_first_iteration = True
-            
-            while queue:
-                x, y = queue.popleft()
-                
-                # Skip if already processed or invalid
-                if (x + 2 < 0 or x + 2 >= len(movement_graph[0]) or 
-                    y < 0 or y >= len(movement_graph) or
-                    movement_graph[y][x + 2] != 1):
-                    continue
-                
-                # Mark as visited in the graph
-                movement_graph[y][x + 2] = 2
-                
-                is_boundary = False
-                is_placeable = False
-                for dx, dy in directions:
-                    new_x, new_y = x + dx, y + dy
-                    
-                    # Check bounds
-                    if (new_y >= len(movement_graph)):
-                        is_placeable = True
-                        is_boundary = True
-                        continue
-
-                    if (new_y < 0 or
-                        new_x + 2 < 0 or new_x + 2 >= len(movement_graph[0])):
-                        is_boundary = True
-                        continue
-                        
-                    # If position is reachable and not visited
-                    if movement_graph[new_y][new_x + 2] == 1:
-                        if (new_x, new_y) not in queue:
-                            queue.append((new_x, new_y))
-                    elif movement_graph[new_y][new_x + 2] == 0:
-                        is_boundary = True
-                    
-                    # Check if it's placeable
-                    if dy == 1 and movement_graph[new_y][new_x + 2] == 0:
-                        is_placeable = True 
-                
-                if is_boundary:
-                    boundary_positions.append((x, y))
-                if is_placeable: # Don't add first iteration to placeable positions
-                    if not (is_first_iteration and skip_start_placement):
-                        placeable_positions.append((x, y))
-                
-                is_first_iteration = False
-                    
-            return boundary_positions, placeable_positions
-
-        # Main algorithm starts here
-        
-        # Step 1: Create convolution graphs for each rotation
-        # Store all 4 rotations even if they look the same (different wallkicks/spins)
-        movement_graphs = {}
-        for rotation in range(4):  # Always store all 4 rotations
-            piece_mask = create_piece_mask(self.piece.type, rotation)
-            movement_graphs[rotation] = convolve_grid_with_piece(
-                self.sim_player.board.grid, piece_mask
-            )
-        
-        # Step 2: Simple position tracking for rotations
-        rotation_queue = deque()
-        
-        # Step 3: Start traversal from spawn position
+        # Step 2: Get spawn position
         spawn_x = self.piece.location.x
         spawn_y = self.piece.location.y
-        spawn_rotation = self.piece.location.rotation
-        
-        # Add spawn position to queue
-        rotation_queue.append((spawn_x, spawn_y, spawn_rotation, False, False))
-        
-        # Perform rotations initially
-        for i in range(1, 4):
-            self.piece.location.x = spawn_x
-            self.piece.location.y = spawn_y
-            self.piece.location.rotation = spawn_rotation
-            self.piece.coordinates = self.piece.get_self_coords
+        spawn_r = self.piece.location.rotation
 
-            if self.sim_player.try_wallkick(i):
-                if self.piece.location.y >= 0:
-                    rotation_queue.append((self.piece.location.x, self.piece.location.y, self.piece.location.rotation, self.piece.location.rotation_just_occurred, 
-                                            self.piece.location.rotation_just_occurred_and_used_last_tspin_kick))
+        # Clear the queue since convolution doesn't use it
+        self.next_location_queue.clear()
 
-        while rotation_queue:
-            current_x, current_y, current_rotation, rotation_occurred, used_last_kick = rotation_queue.popleft()
+        # Check if spawn is valid
+        if not validity_maps[spawn_r, spawn_y + y_off, spawn_x + x_off]:
+            return  # Board is topped out
 
-            position_is_not_valid = (
-                current_y < 0 or current_y >= len(movement_graphs[current_rotation]) or # Out of vertical bounds
-                current_x + 2 < 0 or current_x + 2 >= len(movement_graphs[current_rotation][0]) or # Out of horizontal bounds
-                movement_graphs[current_rotation][current_y][current_x + 2] == 0 # Not valid position (0 = blocked)
-            )
+        # Queue stores (x, y, rotation, rotation_just_occurred, used_last_kick)
+        exploration_queue = deque()
+        exploration_queue.append((spawn_x, spawn_y, spawn_r, False, False))
 
-            # Piece checking order of operations:
-            if position_is_not_valid: # Out of bounds
+        # Get wallkick table for this piece
+        kick_table = i_wallkicks if self.piece.type == "I" else wallkicks
+        rotations_to_try = [1, 2, 3] if check_rotations else []
+
+        while exploration_queue:
+            start_x, start_y, rot, rot_just_occurred, used_last_kick = exploration_queue.popleft()
+
+            # If arrived via a kick and this position is immediately stuck, record the
+            # kick-flagged placement. Do this BEFORE the visited check: the flood-fill
+            # from an earlier rotation state may have already visited this position via
+            # sliding, writing a non-kick placement. We still need the kick version.
+            if rot_just_occurred:
+                map_y_below = start_y + y_off + 1
+                stuck = (map_y_below >= validity_maps.shape[1] or
+                         not validity_maps[rot, map_y_below, start_x + x_off])
+                if stuck:
+                    self.place_location_queue.append(PieceLocation(
+                        start_x, start_y, rot, True, used_last_kick
+                    ))
+
+            # Skip flood-fill if already visited
+            if visited[rot, start_y + y_off, start_x + x_off]:
                 continue
 
-            is_placeable = (
-                current_y + 1 >= len(movement_graphs[current_rotation]) or  # At bottom of grid
-                current_x + 2 < 0 or current_x + 2 >= len(movement_graphs[current_rotation][0]) or  # Out of bounds
-                movement_graphs[current_rotation][current_y + 1][current_x + 2] == 0  # Blocked below
+            # Flood-fill within this rotation state.
+            # All placements found here were reached by sliding (not rotating), so
+            # rotation_just_occurred = False for all of them.
+            edges = self._flood_fill_rotation(
+                validity_maps, visited, rot, start_x, start_y, x_off, y_off
             )
 
-            already_placed = False
+            for edge_x, edge_y, is_placeable in edges:
+                if is_placeable:
+                    self.place_location_queue.append(PieceLocation(
+                        edge_x, edge_y, rot, False, False
+                    ))
 
-            if is_placeable:
-                # Every placeable position is added to the placement queue
-                new_location = PieceLocation(current_x, current_y, current_rotation, rotation_occurred, used_last_kick)
-                self.place_location_queue.append(new_location)
-                already_placed = True
-                
-            position_already_processed = movement_graphs[current_rotation][current_y][current_x + 2] == 2
+                # Try rotations at edges
+                for kick_dir in rotations_to_try:
+                    new_rot = (rot + kick_dir) % 4
+                    kicks_to_try = kick_table[rot].get(new_rot, [])
 
-            if position_already_processed: # Already processed non-placeable position
+                    for kick_idx, (kick_x, kick_y) in enumerate(kicks_to_try):
+                        new_x = edge_x + kick_x
+                        new_y = edge_y - kick_y  # Kick table Y is inverted
+
+                        map_x = new_x + x_off
+                        map_y = new_y + y_off
+
+                        if (0 <= map_x < validity_maps.shape[2] and
+                            0 <= map_y < validity_maps.shape[1] and
+                            validity_maps[new_rot, map_y, map_x]):
+
+                            new_used_last_kick = (
+                                self.piece.type == "T" and
+                                kick_dir != 2 and
+                                kick_idx == len(kicks_to_try) - 1
+                            )
+
+                            # Kicks can push a piece to y<0 when all its minos have
+                            # row offsets >= 1. The policy has no row for y<0, so
+                            # discard — matches brute-force's y>=0 guard on line 182.
+                            if new_y < 0:
+                                break
+
+                            if not visited[new_rot, map_y, map_x]:
+                                # Unvisited: explore it normally via flood-fill
+                                exploration_queue.append((
+                                    new_x, new_y, new_rot, True, new_used_last_kick
+                                ))
+                            else:
+                                # Already visited via a non-kick path: the position is
+                                # also kick-reachable, so add a kick-flagged placement
+                                # if it's immediately stuck (last action = rotation).
+                                map_y_below = map_y + 1
+                                if (map_y_below >= validity_maps.shape[1] or
+                                        not validity_maps[new_rot, map_y_below, map_x]):
+                                    self.place_location_queue.append(PieceLocation(
+                                        new_x, new_y, new_rot, True, new_used_last_kick
+                                    ))
+                            break  # First successful kick wins
+
+    def _build_validity_maps(self):
+        """
+        Pre-compute validity maps for all 4 rotations.
+        validity_map[r][y][x] = True means piece can exist at origin (x, y) with rotation r.
+
+        Grid dimensions: (width + 4) x (height + 4) to handle origins outside board bounds.
+        X offset: +2 (so origin x=-2 maps to index 0)
+        Y offset: +2 (so origin y=-2 maps to index 0)
+        """
+        grid = self.sim_player.board.grid
+        map_width = len(grid[0]) + 4
+        map_height = len(grid) + 4
+        x_offset = 2
+        y_offset = 2
+
+        validity_maps = np.zeros((4, map_height, map_width), dtype=bool)
+        piece_type = self.piece.type
+
+        for r in range(4):
+            mino_offsets = self.mino_coords_dict[piece_type][r]
+
+            for map_y in range(map_height):
+                for map_x in range(map_width):
+                    # Convert map coords to actual piece origin coords
+                    origin_x = map_x - x_offset
+                    origin_y = map_y - y_offset
+
+                    # Compute mino coordinates and check collision
+                    coords = [[origin_x + col, origin_y + row] for col, row in mino_offsets]
+                    validity_maps[r, map_y, map_x] = not self.sim_player.collision(coords)
+
+        return validity_maps, x_offset, y_offset
+
+    def _flood_fill_rotation(self, validity_maps, visited, rot, start_x, start_y, x_off, y_off):
+        """
+        Flood-fill within a single rotation state.
+        Returns list of edge positions: (x, y, is_placeable)
+        """
+        edges = []
+        stack = [(start_x, start_y)]
+
+        while stack:
+            x, y = stack.pop()
+            map_x, map_y = x + x_off, y + y_off
+
+            # Bounds check
+            if not (0 <= map_x < validity_maps.shape[2] and 0 <= map_y < validity_maps.shape[1]):
                 continue
 
-            # Step 4: Find all reachable positions in current rotation's graph
-            boundary, placeable = find_reachable_positions(
-                movement_graphs[current_rotation], current_x, current_y, already_placed
-            )
-            
-            # Add all reachable positions as valid placements (only if boundary below)
-            for x, y in placeable:
-                new_location = PieceLocation(x, y, current_rotation, False, False)
-                self.place_location_queue.append(new_location)
-            
-            # Step 5: Attempt rotations from boundary positions
-            if check_rotations:
-                for boundary_x, boundary_y in boundary:
-                    # Try all 4 rotations from this boundary position (not just axes_of_rotation)
-                    for i in range(1, 4):
-                        # Try all 4 rotations for wallkick purposes
-                        self.piece.location.x = boundary_x
-                        self.piece.location.y = boundary_y
-                        self.piece.location.rotation = current_rotation
-                        self.piece.coordinates = self.piece.get_self_coords
+            # Skip if invalid or already visited
+            if not validity_maps[rot, map_y, map_x] or visited[rot, map_y, map_x]:
+                continue
 
-                        if self.sim_player.try_wallkick(i):
-                            # Avoid negative indexing
-                            if self.piece.location.y >= 0:
-                                rotation_queue.append((self.piece.location.x, self.piece.location.y, self.piece.location.rotation, self.piece.location.rotation_just_occurred, 
-                                                        self.piece.location.rotation_just_occurred_and_used_last_tspin_kick))
+            # Mark visited
+            visited[rot, map_y, map_x] = True
 
-            # Sort the rotation queue to ensure we process lower rotations first DEBUGGING
-            rotation_queue = deque(sorted(rotation_queue, key=lambda x: x[1]))
+            # Check neighbors
+            can_left = (map_x > 0 and validity_maps[rot, map_y, map_x - 1] and
+                       not visited[rot, map_y, map_x - 1])
+            can_right = (map_x < validity_maps.shape[2] - 1 and
+                        validity_maps[rot, map_y, map_x + 1] and
+                        not visited[rot, map_y, map_x + 1])
+            can_down = (map_y < validity_maps.shape[1] - 1 and
+                       validity_maps[rot, map_y + 1, map_x] and
+                       not visited[rot, map_y + 1, map_x])
+
+            # Add unvisited valid neighbors to stack
+            if can_left:
+                stack.append((x - 1, y))
+            if can_right:
+                stack.append((x + 1, y))
+            if can_down:
+                stack.append((x, y + 1))
+
+            # Check if this is an edge (blocked in any direction)
+            blocked_left = map_x == 0 or not validity_maps[rot, map_y, map_x - 1]
+            blocked_right = map_x == validity_maps.shape[2] - 1 or not validity_maps[rot, map_y, map_x + 1]
+            blocked_down = map_y == validity_maps.shape[1] - 1 or not validity_maps[rot, map_y + 1, map_x]
+
+            is_edge = blocked_left or blocked_right or blocked_down
+            is_placeable = blocked_down  # Can't move down = placement spot
+
+            if is_edge:
+                edges.append((x, y, is_placeable))
+
+        return edges
+
+    def _process_kick_placements(self, validity_maps, visited, x_off, y_off, kick_table, rotations_to_try):
+        """
+        For each existing placement, check if it could also be reached via kick.
+        If so, add a T-spin version (with rotation_just_occurred=True).
+        """
+        new_placements = []
+
+        for placement in self.place_location_queue:
+            x, y, rot = placement.x, placement.y, placement.rotation
+
+            # Skip if already has rotation flag
+            if placement.rotation_just_occurred:
+                continue
+
+            # Check if this position could have been reached via kick
+            for kick_dir in rotations_to_try:
+                from_rot = (rot - kick_dir) % 4
+                kicks = kick_table[from_rot].get(rot, [])
+
+                for kick_idx, (kick_x, kick_y) in enumerate(kicks):
+                    from_x = x - kick_x
+                    from_y = y + kick_y  # Invert back
+                    from_map_x = from_x + x_off
+                    from_map_y = from_y + y_off
+
+                    # Check if we visited the source position
+                    if (0 <= from_map_x < validity_maps.shape[2] and
+                        0 <= from_map_y < validity_maps.shape[1] and
+                        visited[from_rot, from_map_y, from_map_x]):
+
+                        # This placement could be reached via kick - add T-spin version
+                        used_last_kick = (
+                            self.piece.type == "T" and
+                            kick_dir != 2 and
+                            kick_idx == len(kicks) - 1
+                        )
+
+                        new_placements.append(PieceLocation(
+                            x, y, rot, True, used_last_kick
+                        ))
+                        break
+                else:
+                    continue
+                break
+
+        self.place_location_queue.extend(new_placements)
     
     def _convert_placements_to_policy(self):
         """Convert the placement queue to policy matrix format."""
         policy_matrix = np.zeros(self.POLICY_SHAPE)
-        
-        for piece_location in self.place_location_queue:
+
+        # Deduplicate by (x, y, rotation), keeping T-spin version if exists
+        unique_placements = {}
+        for location in self.place_location_queue:
+            key = (location.x, location.y, location.rotation)
+            if key not in unique_placements or location.rotation_just_occurred:
+                unique_placements[key] = location
+
+        for piece_location in unique_placements.values():
             x = piece_location.x
             y = piece_location.y
             o = piece_location.rotation
@@ -569,6 +547,15 @@ class MoveGenerator:
                 if o == 3:
                     new_col -= 1
             
+            # Negative row silently wraps in numpy — this should never happen.
+            # (new_col can legitimately be -1 for Z/S/I rotation-3 deduplication,
+            # mapping to policy column 1 after the +2 offset.)
+            if new_row < 0:
+                raise AssertionError(
+                    f"Placement row is negative: row={new_row} "
+                    f"(piece={self.piece.type}, rotation={o}, x={x}, y={y})"
+                )
+
             # Set policy value (account for x-coordinate buffer)
             policy_matrix[policy_index][new_row][new_col + 2] = 1
         

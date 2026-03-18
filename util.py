@@ -7,6 +7,7 @@ from player import Player
 import ast
 from collections import namedtuple
 import imageio.v3 as iio
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import numpy as np
@@ -14,12 +15,25 @@ import pandas as pd
 import pygame
 import time
 
+# Make figures crisp by default
+mpl.rcParams.update({
+    "figure.dpi": 150,      # notebook / on-screen
+    "savefig.dpi": 300,     # file output
+    "lines.linewidth": 0.9, # default thinner lines
+    "axes.linewidth": 0.8,
+    "patch.antialiased": True,
+    "text.antialiased": True,
+})
+
+# ===== TEST BOARDS =====
+
 util_t_spin_board = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'I'], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'I'], [0, 0, 0, 0, 0, 0, 0, 'Z', 0, 'I'], [0, 0, 0, 'Z', 0, 0, 'Z', 'Z', 'S', 'I'], [0, 0, 'Z', 'Z', 0, 0, 'Z', 'T', 'S', 'S'], [0, 0, 'Z', 'L', 0, 0, 0, 'T', 'T', 'S'], ['J', 'L', 'L', 'L', 'S', 'S', 0, 'T', 'O', 'O'], ['J', 'J', 'J', 'S', 'S', 0, 0, 'J', 'O', 'O'], ['I', 'I', 'I', 'I', 0, 0, 0, 'J', 'J', 'J']]
 util_z_spin_board = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'J'], [0, 0, 0, 0, 0, 0, 0, 0, 0, 'J'], ['L', 0, 'T', 0, 0, 0, 0, 0, 'J', 'J'], ['L', 'T', 'T', 0, 0, 0, 0, 0, 0, 'T'], ['L', 'L', 'T', 'O', 'O', 0, 0, 0, 'T', 'T'], ['O', 'O', 'S', 'O', 'O', 0, 0, 0, 'S', 'T'], ['O', 'O', 'S', 'S', 'O', 'O', 0, 0, 'S', 'S'], ['L', 'L', 'I', 'S', 'O', 'O', 'T', 0, 'S', 'S'], [0, 'J', 'I', 'I', 'O', 'O', 0, 0, 'S', 'S'], [0, 'J', 'I', 'I', 'O', 'O', 0, 'S', 'S', 0], ['J', 'J', 'I', 'I', 0, 'I', 'I', 0, 'T', 0], [0, 'S', 'S', 'I', 0, 'I', 'I', 'T', 'T', 0], ['S', 'S', 'Z', 'Z', 0, 'I', 'I', 0, 'T', 0], [0, 'T', 0, 'Z', 'Z', 'I', 'I', 0, 'L', 'L'], ['T', 'T', 0, 0, 'J', 'J', 'J', 0, 0, 'L'], [0, 'T', 0, 0, 0, 0, 'J', 0, 0, 'L'], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 0, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 0, 1, 1, 1, 1]]
 util_move_algo_board = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 'I', 0, 0, 0, 0, 0], [0, 0, 0, 0, 'I', 0, 0, 0, 0, 0], [0, 0, 0, 0, 'I', 0, 0, 0, 0, 0], [0, 0, 0, 0, 'I', 0, 0, 0, 0, 0]]
 util_move_algo_board_2 = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ['Z', 'Z', 0, 0, 0, 0, 0, 0, 0, 0], [0, 'Z', 'Z', 0, 0, 0, 0, 'S', 'S', 0], ['O', 'O', 0, 0, 0, 0, 'S', 'S', 'O', 'O'], ['O', 'O', 'Z', 0, 'I', 'I', 'I', 'I', 'O', 'O'], [0, 'Z', 'Z', 'S', 'S', 0, 'I', 'I', 'I', 'I'], [0, 'Z', 'S', 'S', 'T', 'T', 'T', 0, 0, 0], [0, 0, 0, 0, 0, 'T', 0, 0, 0, 0], [0, 0, 0, 0, 0, 'J', 'J', 'J', 0, 0], [0, 0, 0, 0, 0, 0, 0, 'J', 0, 0], [0, 0, 0, 0, 0, 0, 0, 'L', 'L', 0], [0, 0, 0, 0, 0, 0, 0, 0, 'L', 0], [0, 0, 0, 0, 0, 0, 0, 0, 'L', 0]]
 
-# ------------------------- Internal Functions -------------------------
+# ===== INTERNAL HELPERS =====
+
 def battle_royale(interpreters, configs, names, num_games) -> dict:
     screen = None
     visual = all([config.visual for config in configs])
@@ -113,7 +127,7 @@ def get_attribute_list_from_tree(tree, attr):
 
     return res
 
-# ------------------------- Test Functions -------------------------
+# ===== MCTS ANALYSIS =====
 
 def plot_dirichlet_noise() -> None:
     # Finding different values of dirichlet alpha affect piece decisions
@@ -195,6 +209,8 @@ def view_visit_count_and_policy_with_and_without_dirichlet_noise() -> None:
     axs[2].plot(post_noise_policy)
     plt.savefig(f"{directory_path}/visit_count_vs_policy_vs_policy+noise_{c.ruleset}_{c.model_version}.png")
     print("Saved")
+
+# ===== MOVE GENERATION =====
 
 def time_move_matrix(algo) -> None:
     # Test the game speed
@@ -350,6 +366,48 @@ def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss
     
     print(f"Accuracy: {test_moves / truth_moves * 100}")
 
+def benchmark_move_algorithms(N=5):
+    """Compare all 4 move algorithms on speed and accuracy vs brute-force ground truth."""
+    test_boards = [util_t_spin_board, util_z_spin_board, util_move_algo_board, util_move_algo_board_2]
+    algos = ['brute-force', 'faster-but-loss', 'harddrop', 'convolutional']
+
+    def _make_player(board, piece_type):
+        game = Game(ruleset='s1')
+        game.setup()
+        game.players[game.turn].board.grid = [row[:] for row in board]
+        game.players[game.turn].piece = Piece(type=piece_type)
+        game.players[game.turn].piece.move_to_spawn()
+        return game.players[game.turn]
+
+    # Build a fixed set of players (get_move_matrix uses player.copy() internally so state is safe to reuse)
+    combos = [(b, p) for b in test_boards for p in MINOS]
+    players = [_make_player(board, piece) for board, piece in combos]
+
+    # Brute-force ground truth (compute once on the fixed players)
+    bf_matrices = [get_move_matrix(p, algo='brute-force') for p in players]
+    bf_total = sum(int(np.sum(m)) for m in bf_matrices)
+
+    results = {}
+    for algo in algos:
+        # Time N passes over all fixed players
+        start = time.time()
+        for _ in range(N):
+            for p in players:
+                get_move_matrix(p, algo=algo)
+        elapsed_ms = (time.time() - start) / (N * len(players)) * 1000
+
+        # Accuracy: fraction of brute-force moves the algo also finds (one pass for comparison)
+        algo_matrices = [get_move_matrix(p, algo=algo) for p in players]
+        found = sum(int(np.sum(a & b)) for a, b in zip(algo_matrices, bf_matrices))
+        accuracy = found / bf_total * 100 if bf_total > 0 else 100.0
+
+        results[algo] = (elapsed_ms, accuracy)
+
+    print(f"\n{'Algorithm':<22} {'Time (ms/call)':>14}    {'Accuracy':>8}")
+    print("-" * 50)
+    for algo, (ms, acc) in results.items():
+        print(f"{algo:<22} {ms:>14.1f}    {acc:>7.1f}%")
+
 def visualize_piece_placements(game, moves, sleep_time=0.3):
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption('Tetris')
@@ -439,8 +497,10 @@ def visualize_get_move_matrix(c, board):
 
     visualize_piece_placements(game, moves, sleep_time=1.0)
 
+# ===== HYPERPARAMETER TUNING =====
+
 def test_parameters(
-    var: str, 
+    var: str,
     values: list,
     num_games: int,
     data=None,
@@ -523,6 +583,8 @@ def test_data_parameters(
     
     print(var)
 
+# ===== MODEL TESTING & TRAINING =====
+
 def test_network_versions(ver_1, ver_2):
     # Making sure that the newest iteration of a network is better than earlier versions
     c = Config()
@@ -593,6 +655,8 @@ def visualize_high_depth_replay(network, max_iter):
                     game.restart()
 
         pygame.display.update()
+
+# ===== DATA MIGRATION =====
 
 def convert_data_and_train_4_7_to_4_8():
     config = Config(epochs=2)
@@ -692,6 +756,8 @@ def convert_data_and_train(c, init_data_ver, conversion_function, last_n_sets, e
         
     new_network.save(f"{directory_path}/models/debug/{i}.keras")
 
+# ===== POLICY VISUALIZATION =====
+
 def visualize_policy():
     # Visualize the policy of a network
     c=Config(MAX_ITER=16)
@@ -769,17 +835,8 @@ def test_generate_move_matrix():
     moves = get_move_list(moves, np.ones(shape=POLICY_SHAPE))
     print(moves)
 
-import matplotlib as mpl
 
-# Make figures crisp by default
-mpl.rcParams.update({
-    "figure.dpi": 150,      # notebook / on-screen
-    "savefig.dpi": 300,     # file output
-    "lines.linewidth": 0.9, # default thinner lines
-    "axes.linewidth": 0.8,
-    "patch.antialiased": True,
-    "text.antialiased": True,
-})
+# ===== STATISTICS =====
 
 def plot_stats(model_version=None, data_version=None, average_by_model=False, include_rank_data=True):
     """
@@ -1014,6 +1071,8 @@ def migrate_stats_data():
     print(f"Processed {total_records} new records")
     print(f"Data written to: {output_file}")
 
+# ===== INVARIANCE TESTING =====
+
 def test_policy_piece_invariance(c):
     c.MAX_ITER = 2
     game = Game(c.ruleset)
@@ -1218,7 +1277,9 @@ if __name__ == "__main__":
     # load_data_and_train_model(c, model, last_n_sets=20)
     # model.save(f"{directory_path}/models/debug/test_model.keras")
 
-    evaluate_value_metrics(num_games=5)
+    # evaluate_value_metrics(num_games=5)
+
+    benchmark_move_algorithms()
 
 # Command for running python files
 # This is for running many tests at the same time
