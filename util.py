@@ -406,7 +406,20 @@ def benchmark_move_algorithms(N=5):
     print(f"\n{'Algorithm':<22} {'Time (ms/call)':>14}    {'Accuracy':>8}")
     print("-" * 50)
     for algo, (ms, acc) in results.items():
-        print(f"{algo:<22} {ms:>14.1f}    {acc:>7.1f}%")
+        print(f"{algo:<22} {ms:>14.2f}    {acc:>7.1f}%")
+
+# Algorithm              Time (ms/call)    Accuracy
+# --------------------------------------------------
+# brute-force                       3.7      100.0%
+# faster-but-loss                   1.5       91.9%
+# harddrop                          0.5       73.8%
+# convolutional                     1.7      100.0%
+
+### After bitboard optimization
+
+# convolutional                     0.52      100.0%
+
+# convolutional                     0.23      100.0%
 
 def visualize_piece_placements(game, moves, sleep_time=0.3):
     screen = pygame.display.set_mode((WIDTH, HEIGHT))

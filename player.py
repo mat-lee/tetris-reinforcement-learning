@@ -270,7 +270,7 @@ class Player:
     # AI methods
     def copy(self):
         new_player = Player(self.ruleset)
-        
+
         new_player.board = self.board.copy()
         new_player.queue = self.queue.copy()
         new_player.stats.pieces = self.stats.pieces
@@ -284,6 +284,25 @@ class Player:
         new_player.garbage_to_receive = self.garbage_to_receive[:]
         new_player.color = self.color
         new_player.draw_coords = self.draw_coords
+
+        return new_player
+
+    def copy_no_board(self):
+        """Create a player copy that shares the board reference.
+        Safe only when the caller guarantees the board will not be mutated."""
+        # Use __new__ to bypass Player.__init__ so we never allocate a Board().
+        new_player = object.__new__(Player)
+        new_player.board = self.board  # shared reference — no copy
+        new_player.queue = self.queue.copy()
+        new_player.stats = self.stats.copy()
+        new_player.game_over = self.game_over
+        new_player.garbage_to_receive = self.garbage_to_receive[:]
+        new_player.garbage_to_send = []
+        new_player.color = self.color
+        new_player.piece = self.piece.copy() if self.piece is not None else None
+        new_player.held_piece = self.held_piece
+        new_player.draw_coords = self.draw_coords
+        new_player.ruleset = self.ruleset
 
         return new_player
 
