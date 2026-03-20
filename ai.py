@@ -1013,6 +1013,8 @@ def game_to_X(game):
 
 def reflect_grid(grid):
     # Return a grid flipped horizontally
+    if isinstance(grid, np.ndarray):
+        return np.fliplr(grid).tolist()
     return [row[::-1] for row in grid]
 
 def reflect_pieces(piece_table):
