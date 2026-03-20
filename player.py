@@ -5,6 +5,7 @@ from piece import Piece
 from const import *
 
 import random
+import numpy as np
 
 class Player:
     """Parent class for both human and AI players."""
@@ -214,21 +215,16 @@ class Player:
         if len(cleared_rows) > 0:
             cleared_rows.sort()
 
-        # Move rows down one and make a empty line at the top
-        for cleared_row in cleared_rows:
-            for row in range(cleared_row)[::-1]:
-                for col in range(COLS):
-                    grid[row + 1][col] = grid[row][col]
-
-            self.board.empty_line(0)
+        # Remove cleared rows and prepend empty rows at the top
+        if cleared_rows:
+            self.board.grid = np.vstack([
+                np.zeros((len(cleared_rows), COLS), dtype=object),
+                np.delete(self.board.grid, cleared_rows, axis=0)
+            ])
+            grid = self.board.grid  # update local reference
 
         if rows_cleared > 0:
-            is_all_clear = True
-            for row in range(rows_cleared, ROWS): # rows_cleared num of empty lines at top
-                for col in range(COLS):
-                    if grid[row][col] != 0: # careful with ghost type
-                        is_all_clear = False
-                        break
+            is_all_clear = not np.any(self.board.grid[rows_cleared:] != 0)
 
         attack = stats.get_attack(rows_cleared, is_tspin, is_mini, is_all_clear, piece.type) # also updates stats
         stats.pieces += 1

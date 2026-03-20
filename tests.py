@@ -4,7 +4,7 @@ from util import *
 def _get_move_matrix_for_board(board, piece_type, algo):
     game = Game(ruleset='s1')
     game.setup()
-    game.players[game.turn].board.grid = [row[:] for row in board]
+    game.players[game.turn].board.grid = np.array(board, dtype=object)
     game.players[game.turn].piece = Piece(type=piece_type)
     game.players[game.turn].piece.move_to_spawn()
     return get_move_matrix(game.players[game.turn], algo=algo)
@@ -22,10 +22,9 @@ def test_brute_force_soundness():
 
     # On a fully empty board, O piece should find exactly 9 positions (columns 0-8, single rotation).
     # Set held_piece='O' so the generator deduplicates and only runs for the O piece.
-    empty_board = [[0] * COLS for _ in range(ROWS)]
     game = Game(ruleset='s1')
     game.setup()
-    game.players[game.turn].board.grid = empty_board
+    # board already initializes to np.zeros; no assignment needed
     game.players[game.turn].piece = Piece(type='O')
     game.players[game.turn].piece.move_to_spawn()
     game.players[game.turn].held_piece = 'O'
@@ -37,7 +36,7 @@ def _make_player(board, piece_type):
     """Build a player with the given board and piece. Use the same instance for both algorithm calls."""
     game = Game(ruleset='s1')
     game.setup()
-    game.players[game.turn].board.grid = [row[:] for row in board]
+    game.players[game.turn].board.grid = np.array(board, dtype=object)
     game.players[game.turn].piece = Piece(type=piece_type)
     game.players[game.turn].piece.move_to_spawn()
     return game.players[game.turn]
@@ -64,10 +63,10 @@ def test_reflections():
     c = Config()
     interpreter = get_interpreter(load_best_model(c))
 
-    grid = [x[:] for x in util_t_spin_board] # copy
+    grid = [x[:] for x in util_t_spin_board] # copy as list for assertion use
     game = Game(c.ruleset)
     game.setup()
-    game.players[game.turn].board.grid = grid
+    game.players[game.turn].board.grid = np.array(grid, dtype=object)
     pieces = get_pieces(game)[0]
     # _, policy = evaluate(c, game, interpreter)
     move, tree, save = MCTS(c, game, interpreter)

@@ -278,6 +278,151 @@ def plot_dirichlet_analysis(n_games: int = 10) -> dict:
     print(f"Saved → {out_path}")
     return stats
 
+def _mcts_max_depth(tree) -> int:
+    """BFS from root; returns depth of the deepest node."""
+    from collections import deque
+    q = deque([("root", 0)])
+    max_d = 0
+    while q:
+        nid, d = q.popleft()
+        max_d = max(max_d, d)
+        for cid in tree.get_node(nid).successors():
+            q.append((cid, d + 1))
+    return max_d
+
+
+def plot_mcts_tree_stats(n_games=5):
+    """7-metric MCTS health check for the blog post.
+
+    Per position (one MCTS call per position across n_games full games) computes:
+      1. Effective branching %   — % of legal moves that receive any visits
+      2. Top-1 visit fraction %  — % of budget spent on the single best move
+      3. Policy entropy          — Shannon H of the policy prior (pre-search)
+      4. Visit entropy           — Shannon H of the visit distribution (post-search)
+      5. KL(visits || policy)    — how far search diverged from the policy prior
+      6. Policy-visit Spearman ρ — rank correlation between policy and visits
+      7. Value spread            — std of value_avg across root children
+      + Policy surprise rate printed as a summary scalar
+    """
+    from scipy.stats import spearmanr
+
+    c = Config()
+    model = load_best_model(c)
+    interpreter = get_interpreter(model)
+
+    eff_branch = []
+    top1       = []
+    pol_ent    = []
+    vis_ent    = []
+    kl_divs    = []
+    corrs      = []
+    val_spread = []
+    n_surprise = 0
+    n_total    = 0
+
+    for _ in range(n_games):
+        game = Game(c.ruleset)
+        game.setup()
+
+        while not game.is_terminal and len(game.history.states) < MAX_MOVES:
+            move, tree, _ = MCTS(c, game, interpreter)
+
+            root = tree.get_node("root")
+            child_ids = root.successors(tree.identifier)
+            visits  = np.array([tree.get_node(cid).data.visit_count for cid in child_ids], dtype=float)
+            policies = np.array([tree.get_node(cid).data.policy     for cid in child_ids], dtype=float)
+            values  = np.array([tree.get_node(cid).data.value_avg   for cid in child_ids], dtype=float)
+            total = visits.sum()
+
+            if total > 0 and policies.sum() > 0:
+                # 1. Effective branching
+                eff_branch.append(100.0 * (visits > 0).sum() / len(visits))
+
+                # 2. Top-1 visit fraction
+                top1.append(100.0 * visits.max() / total)
+
+                # 3. Policy entropy
+                p_pol = policies / policies.sum()
+                pol_ent.append(float(-np.sum(p_pol * np.log(p_pol + 1e-12))))
+
+                # 4. Visit entropy
+                p_vis = visits / total
+                vis_ent.append(float(-np.sum(p_vis[p_vis > 0] * np.log(p_vis[p_vis > 0]))))
+
+                # 5. KL(visits || policy)  — how much search diverged from prior
+                kl = np.sum(p_vis[p_vis > 0] * np.log((p_vis[p_vis > 0]) / (p_pol[p_vis > 0] + 1e-12)))
+                kl_divs.append(float(kl))
+
+                # 6. Spearman ρ between policy and visit counts
+                rho, _ = spearmanr(policies, visits)
+                corrs.append(float(rho))
+
+                # 7. Value spread
+                visited_values = values[visits > 0]
+                val_spread.append(float(np.std(visited_values)) if len(visited_values) > 1 else 0.0)
+
+                # Policy surprise: did top-visit differ from top-policy?
+                n_surprise += int(np.argmax(visits) != np.argmax(policies))
+                n_total    += 1
+
+            game.make_move(move)
+
+    n_pos = len(eff_branch)
+    surprise_pct = 100.0 * n_surprise / n_total if n_total > 0 else 0.0
+
+    fig, axs = plt.subplots(2, 4, figsize=(18, 8))
+    fig.suptitle(
+        f'MCTS Tree Statistics  ·  {n_games} games, {n_pos} positions\n'
+        f'model v{c.model_version},  MAX_ITER={c.MAX_ITER}  '
+        f'(policy surprise rate: {surprise_pct:.1f}%)',
+        fontsize=11)
+
+    def _hist(ax, data, xlabel, title, color='steelblue'):
+        ax.hist(data, bins=30, color=color, alpha=0.8, edgecolor='none')
+        ax.axvline(np.mean(data), color='red', linestyle='--', linewidth=1.2,
+                   label=f'mean={np.mean(data):.2f}')
+        ax.legend(fontsize=8)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel('Positions')
+        ax.set_title(title)
+
+    _hist(axs[0, 0], eff_branch, '% of legal moves visited',    'Effective Branching %')
+    _hist(axs[0, 1], top1,       '% playouts on top-1 move',    'Visit Concentration (Top-1)')
+    _hist(axs[0, 2], pol_ent,    'Shannon entropy',              'Policy Entropy (prior)')
+    _hist(axs[0, 3], vis_ent,    'Shannon entropy',              'Visit Entropy (post-search)')
+    _hist(axs[1, 0], kl_divs,    'KL divergence (nats)',         'KL(visits ‖ policy)')
+    _hist(axs[1, 1], corrs,      'Spearman ρ',                   'Policy–Visit Rank Corr')
+    _hist(axs[1, 2], val_spread, 'std of value_avg',             'Value Spread')
+
+    # Leave axs[1,3] as a text summary box
+    summary = (
+        f"n_games:          {n_games}\n"
+        f"n_positions:      {n_pos}\n\n"
+        f"Eff. branching:   {np.mean(eff_branch):.1f}%\n"
+        f"Top-1 conc.:      {np.mean(top1):.1f}%\n"
+        f"Policy entropy:   {np.mean(pol_ent):.2f}\n"
+        f"Visit entropy:    {np.mean(vis_ent):.2f}\n"
+        f"KL divergence:    {np.mean(kl_divs):.3f}\n"
+        f"Spearman ρ:       {np.mean(corrs):.3f}\n"
+        f"Value spread:     {np.mean(val_spread):.3f}\n\n"
+        f"Policy surprise:  {surprise_pct:.1f}%"
+    )
+    axs[1, 3].axis('off')
+    axs[1, 3].text(0.05, 0.95, summary, transform=axs[1, 3].transAxes,
+                   fontsize=9, verticalalignment='top', fontfamily='monospace',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.4))
+    axs[1, 3].set_title('Summary')
+
+    plt.tight_layout()
+    out_path = f"{directory_path}/mcts_tree_stats_{c.model_version}.png"
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+    print(summary)
+    return dict(eff_branch=eff_branch, top1=top1, pol_ent=pol_ent,
+                vis_ent=vis_ent, kl_divs=kl_divs, corrs=corrs, val_spread=val_spread)
+
+
 def view_visit_count_and_policy_with_and_without_dirichlet_noise() -> None:
     # Creates a graph of the policy distribution before and after dirichlet noise is applied
     c = Config(training=True,
@@ -574,7 +719,7 @@ def benchmark_move_algorithms(N=5):
     def _make_player(board, piece_type):
         game = Game(ruleset='s1')
         game.setup()
-        game.players[game.turn].board.grid = [row[:] for row in board]
+        game.players[game.turn].board.grid = np.array(board, dtype=object)
         game.players[game.turn].piece = Piece(type=piece_type)
         game.players[game.turn].piece.move_to_spawn()
         return game.players[game.turn]
@@ -651,7 +796,7 @@ def test_reflected_policy():
     # for i in range(10):
     #     game.place()
 
-    game.players[game.turn].board.grid = util_t_spin_board
+    game.players[game.turn].board.grid = np.array(util_t_spin_board, dtype=object)
     
     game.players[game.turn].held_piece = "T"
 
@@ -663,7 +808,7 @@ def test_reflected_policy():
     # Now, get the reflected moves
     player = game.players[game.turn]
     # Reflect board
-    player.board.grid = reflect_grid(player.board.grid)
+    player.board.grid = np.array(reflect_grid(player.board.grid), dtype=object)
 
     # Reflect pieces
     piece_table = get_pieces(game)[0]
@@ -690,7 +835,7 @@ def visualize_get_move_matrix(c, board):
     game.players[game.turn].piece = Piece(type="T")
     game.players[game.turn].piece.move_to_spawn()
     game.players[game.turn].held_piece = "T"
-    game.players[game.turn].board.grid = board
+    game.players[game.turn].board.grid = np.array(board, dtype=object)
 
     truth_matrix = get_move_matrix(game.players[game.turn], algo="brute-force")
     test_matrix = get_move_matrix(game.players[game.turn], algo="convolutional")
@@ -869,6 +1014,51 @@ def visualize_high_depth_replay(network, max_iter):
 
         pygame.display.update()
 
+# ===== GIF RECORDING =====
+
+def record_game_gif(output_path=None, max_iter=200, fps=8):
+    """Play one AI vs AI game and save every frame as an animated GIF.
+
+    Args:
+        output_path: destination path (default: Storage/game_replay.gif)
+        max_iter:    MCTS iterations per move — lower is faster to generate
+        fps:         GIF playback speed in frames per second
+    """
+    c = Config(MAX_ITER=max_iter)
+
+    if output_path is None:
+        output_path = f"{directory_path}/game_replay.gif"
+
+    model = load_best_model(c)
+    interpreter = get_interpreter(model)
+
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("Recording game GIF…")
+    pygame.event.get()
+
+    game = Game(c.ruleset)
+    game.setup()
+
+    frames = []
+
+    while not game.is_terminal and len(game.history.states) < MAX_MOVES:
+        move, _, _ = MCTS(c, game, interpreter)
+        game.make_move(move)
+
+        game.show(screen)
+        pygame.display.update()
+        pygame.event.get()
+
+        # surfarray gives (W, H, 3); imageio wants (H, W, 3)
+        raw = pygame.surfarray.array3d(screen)
+        frames.append(np.transpose(raw, (1, 0, 2)).astype(np.uint8))
+
+    duration_ms = int(1000 / fps)
+    iio.imwrite(output_path, frames, duration=duration_ms, loop=0)
+    print(f"Saved {len(frames)}-frame GIF → {output_path}")
+    return output_path
+
+
 # ===== DATA MIGRATION =====
 
 def convert_data_and_train_4_7_to_4_8():
@@ -1042,7 +1232,7 @@ def test_generate_move_matrix():
     grid = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ['I', 0, 0, 0, 0, 0, 0, 0, 0, 'Z'], ['I', 0, 0, 0, 0, 0, 0, 0, 'Z', 'Z'], ['I', 0, 0, 0, 0, 0, 0, 0, 'Z', 'J'], ['I', 'T', 0, 'I', 'T', 0, 0, 0, 0, 'J'], ['T', 'T', 0, 'I', 'T', 'T', 'S', 0, 'J', 'J'], ['L', 'T', 'L', 'I', 'T', 0, 'S', 'S', 'S', 0], ['L', 0, 'L', 'I', 'J', 'O', 'O', 'S', 'S', 'S'], [0, 'T', 0, 'O', 'O', 'O', 'O', 0, 'Z', 'Z'], [0, 'T', 'T', 'O', 'O', 0, 'S', 'S', 'S', 'S'], [0, 'T', 'O', 'O', 0, 'S', 'S', 'S', 'S', 0], [0, 0, 'O', 'O', 0, 0, 0, 'Z', 'J', 0], [0, 0, 'I', 0, 0, 0, 'Z', 'Z', 'J', 0], [0, 0, 'I', 0, 0, 0, 'Z', 'J', 'J', 0], [0, 0, 'I', 0, 0, 'T', 0, 'J', 0, 0], [0, 0, 'I', 0, 'L', 'T', 'T', 'J', 0, 0], [0, 0, 'L', 'L', 'L', 'T', 'J', 'J', 0, 0], [0, 0, 0, 0, 'O', 'O', 0, 'Z', 'Z', 0], [0, 0, 0, 0, 'O', 'O', 0, 0, 'Z', 'Z'], [0, 0, 0, 0, 0, 'I', 'I', 'I', 'I', 0], [0, 0, 0, 0, 0, 0, 'S', 'S', 0, 0], [0, 0, 0, 0, 0, 'S', 'S', 0, 0, 0], [0, 0, 0, 0, 0, 0, 'L', 'L', 'L', 0], ['I', 'I', 'I', 'I', 0, 0, 'L', 'J', 'J', 'J']]
     game = Game(c.ruleset)
     game.setup()
-    game.players[0].board.grid = grid
+    game.players[0].board.grid = np.array(grid, dtype=object)
     game.players[0].held_piece = "J"
     moves = get_move_matrix(game.players[0], algo='brute-force')
     moves = get_move_list(moves, np.ones(shape=POLICY_SHAPE))
@@ -1639,62 +1829,58 @@ def evaluate_value_metrics(num_games):
     print(f"MSE over {num_games} games: {mse}")
 
 if __name__ == "__main__":
-    
+
     c = Config()
 
-    # data = load_data(c, last_n_sets=20)
+    # ===== BLOG / ANALYSIS =====
+    # plot_stats(include_rank_data=True)
+    # plot_policy_entropy_over_training()
+    # plot_placement_heatmap()
+    # plot_value_reliability_diagram()
+    # evaluate_value_metrics(num_games=5)
+    # plot_mcts_tree_stats(n_games=5)
 
-    # keras.utils.set_random_seed(937)
-    
-    ##### Setting learning rate DOES NOT WORK
-
+    # ===== DIRICHLET ANALYSIS =====
     # plot_dirichlet_noise()
     # plot_dirichlet_analysis(n_games=10)
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
-    # profile_game()
+
+    # ===== REPLAY / VISUALIZATION =====
+    # record_game_gif(max_iter=800)
     # test_reflected_policy()
     # visualize_policy()
-    # plot_stats(include_rank_data=True)
-    # plot_policy_entropy_over_training()
-
+    # visualize_policy_from_data()
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
-
     # visualize_get_move_matrix(c, util_move_algo_board_2)
 
-    # test_network_versions(132, 122)
-    
-    # data = load_data(c, last_n_sets=20)
-    # c1 = Config(data_version=2.4, default_model=gen_model_aux)
-    # c2 = Config(data_version=2.4, default_model=gen_test1)
-    # test_configs([c1, c2], 200, data=data, load_from_best_model=False)
-
-    # instantiate_network(c, show_summary=True, save_network=False, plot_model=True)
-
-    # test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-conv')
-    # time_move_matrix(algo='faster-conv')
+    # ===== PERFORMANCE / BENCHMARKING =====
+    # profile_game()
     # profile_game(Config(move_algorithm='ultra-conv'))
+    # time_move_matrix(algo='faster-conv')
     # time_move_matrix(algo='faster-but-loss')
-
-    # visualize_policy_from_data()
-    
-    # convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
-
-    # migrate_stats_data()
-
-    # test_policy_piece_invariance(c)
-    # test_simple_piece_network_piece_invariance()
-
-    # c = Config(default_model=gen_test_model, data_version=2.4)
-
-    # model = instantiate_network(c, show_summary=True, save_network=False)
-    # load_data_and_train_model(c, model, last_n_sets=20)
-    # model.save(f"{directory_path}/models/debug/test_model.keras")
-
-    # evaluate_value_metrics(num_games=5)
-
+    # test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-conv')
     # benchmark_move_algorithms()
     # profile_inference()
 
-# Command for running python files
-# This is for running many tests at the same time
+    # ===== NETWORK TESTING =====
+    # test_network_versions(132, 122)
+    # c1 = Config(data_version=2.4, default_model=gen_model_aux)
+    # c2 = Config(data_version=2.4, default_model=gen_test1)
+    # test_configs([c1, c2], 200, data=load_data(c, last_n_sets=20), load_from_best_model=False)
+    # test_policy_piece_invariance(c)
+    # test_simple_piece_network_piece_invariance()
+
+    # ===== NETWORK / DATA SETUP =====
+    # keras.utils.set_random_seed(937)
+    # data = load_data(c, last_n_sets=20)
+    # instantiate_network(c, show_summary=True, save_network=False, plot_model=True)
+    # c = Config(default_model=gen_test_model, data_version=2.4)
+    # model = instantiate_network(c, show_summary=True, save_network=False)
+    # load_data_and_train_model(c, model, last_n_sets=20)
+    # model.save(f"{directory_path}/models/debug/test_model.keras")
+    # convert_data_and_train(c, 2.4, convert_data_2_4_to_2_5, last_n_sets=50, epochs=1)
+
+    # ===== DATA MIGRATION =====
+    # migrate_stats_data()
+
 "/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/util.py"
