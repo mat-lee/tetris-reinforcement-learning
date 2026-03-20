@@ -351,6 +351,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
             Us = []
 
             sqrt_parent = math.sqrt(parent_visits)
+            unvisited_U_scale = config.CPUCT * sqrt_parent / config.DPUCT
             check_forced = (
                 config.use_forced_playouts_and_policy_target_pruning
                 and config.training
@@ -368,7 +369,11 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
                 child_data = tree.get_node(child_id).data
 
                 Q = child_data.value_avg
-                U = config.CPUCT * child_data.policy * sqrt_parent / (config.DPUCT + child_data.visit_count)
+                vc = child_data.visit_count
+                if vc == 0:
+                    U = unvisited_U_scale * child_data.policy
+                else:
+                    U = config.CPUCT * child_data.policy * sqrt_parent / (config.DPUCT + vc)
 
                 child_score = Q + U
 
@@ -376,9 +381,9 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
                 Us.append(U)
 
                 # Check forced playouts
-                if check_forced and child_data.visit_count >= 1:
+                if check_forced and vc >= 1:
                     n_forced = math.sqrt(config.CForcedPlayout * child_data.policy * parent_visits)
-                    if child_data.visit_count < n_forced:
+                    if vc < n_forced:
                         child_score = float('inf')
 
                 if child_score >= max_child_score:
@@ -680,12 +685,10 @@ def pick_random_move_by_policy(tree: MCTSTree) -> tuple:
 def get_move_list(move_matrix, policy_matrix):
     # Returns list of possible moves with their policy
     # Removes buffer
-    mask = np.multiply(move_matrix, policy_matrix)
-
-    move_list = np.argwhere(mask != 0)
+    move_list = np.argwhere(move_matrix)
 
     # Formats moves from (policy index, row, col) to (value, (policy index, col - 2, row))
-    move_list = [(mask[move[0]][move[1]][move[2]], (move[0], move[2] - 2, move[1])) for move in move_list]
+    move_list = [(policy_matrix[pi, ri, ci], (pi, ci - 2, ri)) for pi, ri, ci in move_list]
 
     return move_list
 

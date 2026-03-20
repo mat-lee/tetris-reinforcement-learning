@@ -56,24 +56,17 @@ class Player:
 
     @property
     def ghost_y(self):
-        ghost_y = self.piece.location.y
-        coordinate_list = self.piece.get_mino_coords(self.piece.location.x, 
-                                            ghost_y, 
-                                            self.piece.location.rotation, 
-                                            self.piece.type)
-        
-        collided = False
-        while collided == False:
-            ghost_y += 1
-            coordinate_list = [[col, row + 1] for col, row in coordinate_list]
-
-            for col, row in coordinate_list:
-                if row < 0 or row > ROWS - 1:
-                    collided = True
-                elif self.board.grid[row][col] != 0:
-                    collided = True
-            
-        return ghost_y - 1
+        piece = self.piece
+        base_coords = piece.get_mino_coords(piece.location.x, piece.location.y,
+                                            piece.location.rotation, piece.type)
+        grid = self.board.grid
+        delta = 1
+        while True:
+            for col, row in base_coords:
+                r = row + delta
+                if r > ROWS - 1 or (r >= 0 and grid[r][col] != 0):
+                    return piece.location.y + delta - 1
+            delta += 1
 
     def can_move(self, piece, x_offset=0, y_offset=0):
         grid = self.board.grid
