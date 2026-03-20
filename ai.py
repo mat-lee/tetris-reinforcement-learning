@@ -49,8 +49,6 @@ HIDE_PRINTS = True
 # Where data and models are saved
 directory_path = Path.cwd().parent / "Storage"
 
-total_branch = 0
-number_branch = 0
 
 class Config():
     def __init__(
@@ -291,7 +289,6 @@ class NodeState():
         self.policy = 0
 
 def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
-    global total_branch, number_branch
     # Picks a move for the AI to make 
 
     # Initialize the search tree
@@ -344,12 +341,6 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
             max_child_id = None
             parent_visits = node.data.visit_count
 
-            number_branch += 1 # debug for branching factor
-            
-            # Debuging
-            Qs = []
-            Us = []
-
             sqrt_parent = math.sqrt(parent_visits)
             unvisited_U_scale = config.CPUCT * sqrt_parent / config.DPUCT
             check_forced = (
@@ -361,8 +352,6 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
 
             # Look through each child
             for child_id in child_ids:
-
-                total_branch += 1
 
                 # For each child calculate a score
                 # Polynomial upper confidence trees (PUCT)
@@ -376,9 +365,6 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
                     U = config.CPUCT * child_data.policy * sqrt_parent / (config.DPUCT + vc)
 
                 child_score = Q + U
-
-                Qs.append(Q)
-                Us.append(U)
 
                 # Check forced playouts
                 if check_forced and vc >= 1:
@@ -538,7 +524,6 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
         node_state.value_sum += (pos_value if node_state.game.turn == final_node_turn else neg_value)
         node_state.value_avg = node_state.value_sum / node_state.visit_count
 
-        # print(MAX_DEPTH, total_branch//number_branch)
 
         # After playouts are updated, update Fpu values
 
