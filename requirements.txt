@@ -8,6 +8,5 @@ scikit_optimize==0.10.2
 scipy==1.16.0
 tensorflow==2.16.2
 torch==2.4.0
-treelib==1.7.0
 ujson==5.9.0
 ujson==5.10.0

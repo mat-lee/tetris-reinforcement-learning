@@ -6,6 +6,7 @@ from player import Player
 
 import ast
 from collections import namedtuple
+import io
 import imageio.v3 as iio
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -181,6 +182,102 @@ def plot_dirichlet_noise() -> None:
 
     return percent_dict
 
+def plot_dirichlet_analysis(n_games: int = 10) -> dict:
+    """4-panel Dirichlet alpha analysis for blog post.
+
+    For each alpha value, runs MCTS with and without noise on the same positions
+    and measures:
+      1. % of moves that change vs no-noise baseline
+      2. Mean entropy of the visit-count distribution (search diversity)
+      3. Mean top-1 visit fraction (how concentrated the search is)
+      4. Mean Manhattan distance of the move when it does change
+
+    All alpha values are tested with use_dirichlet_s=False so alpha is literal.
+    A vertical line marks the current production alpha (also without S-scaling).
+    """
+    alpha_values = [0.001, 0.01, 0.03, 0.05, 0.1, 0.3, 1.0]
+
+    c = Config()
+    model = load_best_model(c)
+    interpreter = get_interpreter(model)
+
+    stats = {a: {'n_same': 0, 'n_total': 0,
+                 'entropy_sum': 0.0, 'top1_sum': 0.0} for a in alpha_values}
+
+    for _ in range(n_games):
+        game = Game(c.ruleset)
+        game.setup()
+
+        while not game.is_terminal:
+            default_move, _, _ = MCTS(c, game, interpreter)
+
+            for alpha in alpha_values:
+                cfg = Config(DIRICHLET_ALPHA=alpha, use_dirichlet_s=False,
+                             training=True, use_playout_cap_randomization=False)
+                move, tree, _ = MCTS(cfg, game, interpreter)
+
+                visits = np.array(
+                    get_attribute_list_from_tree(tree, 'visit_count'), dtype=float)
+                total = visits.sum()
+
+                # 1. move change rate
+                stats[alpha]['n_same'] += int(move == default_move)
+                stats[alpha]['n_total'] += 1
+
+                # 2. entropy of visit distribution
+                if total > 0:
+                    p = visits[visits > 0] / total
+                    stats[alpha]['entropy_sum'] += float(-np.sum(p * np.log(p)))
+
+                # 3. top-1 concentration
+                if total > 0:
+                    stats[alpha]['top1_sum'] += float(visits.max() / total)
+
+            game.make_move(default_move)
+
+    n_pos = stats[alpha_values[0]]['n_total']
+    labels = [str(a) for a in alpha_values]
+    x = range(len(alpha_values))
+
+    pct_same  = [100 * stats[a]['n_same']  / stats[a]['n_total'] for a in alpha_values]
+    avg_ent   = [stats[a]['entropy_sum']   / stats[a]['n_total'] for a in alpha_values]
+    avg_top1  = [100 * stats[a]['top1_sum'] / stats[a]['n_total'] for a in alpha_values]
+
+    # current production alpha (without S-scaling for fair comparison)
+    current_alpha = c.DIRICHLET_ALPHA
+    current_x = alpha_values.index(current_alpha) if current_alpha in alpha_values else None
+
+    fig, axs = plt.subplots(1, 3, figsize=(13, 4))
+    fig.suptitle(
+        f'Dirichlet Alpha Analysis  ·  {n_games} games, {n_pos} positions\n'
+        f'(production: α={current_alpha}, S={c.DIRICHLET_S}, '
+        f'effective α≈{current_alpha*c.DIRICHLET_S/35:.3f} at 35 legal moves)',
+        fontsize=10)
+
+    panel_data = [
+        (axs[0], pct_same,  '% moves same as no-noise',    'Move Change Rate'),
+        (axs[1], avg_ent,   'Mean entropy of visit counts', 'Search Diversity (Entropy)'),
+        (axs[2], avg_top1,  '% playouts on top-1 move',     'Visit Concentration (Top-1)'),
+    ]
+
+    for ax, values, ylabel, title in panel_data:
+        ax.bar(x, values, color='steelblue', alpha=0.8)
+        if current_x is not None:
+            ax.axvline(x=current_x, color='red', linestyle='--',
+                       linewidth=1.2, label=f'current α={current_alpha}')
+            ax.legend(fontsize=8)
+        ax.set_xticks(list(x), labels)
+        ax.set_xlabel('Dirichlet Alpha')
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+
+    plt.tight_layout()
+    out_path = f"{directory_path}/dirichlet_analysis_{c.model_version}.png"
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+    return stats
+
 def view_visit_count_and_policy_with_and_without_dirichlet_noise() -> None:
     # Creates a graph of the policy distribution before and after dirichlet noise is applied
     c = Config(training=True,
@@ -307,21 +404,124 @@ def time_architectures(var, values) -> None:
         scores[str(value)] = END - START
     print(scores)
 
-def profile_game(c) -> None:
+def profile_game(c, n=20) -> None:
     game = Game(c.ruleset)
     game.setup()
 
     network = get_interpreter(load_best_model(c))
 
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption(f'Testing algorithm accuracy')
+    screen = None
+    if c.visual:
+        screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption('Testing algorithm accuracy')
 
     # Profile game
     with cProfile.Profile() as pr:
         play_game(c, network, 777, screen=screen)
-    stats = pstats.Stats(pr)
+    buf = io.StringIO()
+    stats = pstats.Stats(pr, stream=buf)
     stats.sort_stats(pstats.SortKey.TIME)
-    stats.print_stats(20)
+    stats.print_stats(n)
+    print(buf.getvalue())
+
+
+def profile_inference(n=1000) -> None:
+    """Headless micro-benchmark that breaks TFLite inference into sub-steps.
+
+    Prints a table showing time spent in each phase per call, then estimates
+    non-inference overhead by timing full MCTS calls and subtracting.
+    """
+    c = Config()
+    interpreter = get_interpreter(load_best_model(c))
+
+    # Build a dummy game to get a real input
+    game = Game(c.ruleset)
+    game.setup()
+
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    output_details_sorted = sorted(output_details, key=lambda x: x['name'])
+
+    # ---- warm-up (10 calls, discarded) ----
+    for _ in range(10):
+        evaluate_from_tflite(game, interpreter)
+
+    # ---- sub-step timing ----
+    t_feature = 0.0
+    t_tensor  = 0.0
+    t_invoke  = 0.0
+    t_output  = 0.0
+
+    for _ in range(n):
+        # 1. Feature extraction
+        t0 = time.perf_counter()
+        data = game_to_X(game)
+        t1 = time.perf_counter()
+
+        # 2. Tensor setup
+        X = []
+        for feature in data:
+            if type(feature) in (float, int):
+                X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
+            else:
+                np_feature = np.expand_dims(np.float32(feature), axis=0)
+                if np_feature.shape == (1, 26, 10):
+                    np_feature = np.expand_dims(np_feature, axis=-1)
+                X.append(np_feature)
+        for i in range(len(X)):
+            split_str = input_details[i]['name'].split(":")[0]
+            if len(split_str) == 12:
+                idx = 0
+            else:
+                idx = int(split_str.split("_")[2])
+            interpreter.set_tensor(i, X[idx])
+        t2 = time.perf_counter()
+
+        # 3. NN forward pass
+        interpreter.invoke()
+        t3 = time.perf_counter()
+
+        # 4. Output fetch
+        value   = interpreter.get_tensor(output_details_sorted[0]['index']).item()
+        policies = interpreter.get_tensor(output_details_sorted[1]['index']).reshape(POLICY_SHAPE)
+        t4 = time.perf_counter()
+
+        t_feature += t1 - t0
+        t_tensor  += t2 - t1
+        t_invoke  += t3 - t2
+        t_output  += t4 - t3
+
+    total = t_feature + t_tensor + t_invoke + t_output
+    rows = [
+        ("game_to_X (feature extract)", t_feature),
+        ("tensor setup + set_tensor",   t_tensor),
+        ("interpreter.invoke()",         t_invoke),
+        ("get_tensor + reshape",         t_output),
+        ("TOTAL inference",              total),
+    ]
+
+    col_w = 32
+    print(f"\n{'Sub-step':<{col_w}}  {'Total ms':>10}  {'µs/call':>9}  {'%':>6}")
+    print("-" * (col_w + 32))
+    for label, secs in rows:
+        pct = secs / total * 100 if total > 0 else 0.0
+        print(f"{label:<{col_w}}  {secs*1000:>10.2f}  {secs/n*1e6:>9.1f}  {pct:>5.1f}%")
+    print(f"  (n={n} calls)\n")
+
+    # ---- MCTS overhead estimate ----
+    n_mcts = 10
+    t_mcts_start = time.perf_counter()
+    for _ in range(n_mcts):
+        MCTS(c, game, interpreter)
+    t_mcts_total = time.perf_counter() - t_mcts_start
+
+    avg_mcts_ms   = t_mcts_total / n_mcts * 1000
+    avg_infer_ms  = total / n * 1000
+    overhead_ms   = avg_mcts_ms - avg_infer_ms * c.MAX_ITER
+    print(f"MCTS avg wall time : {avg_mcts_ms:.1f} ms  ({c.MAX_ITER} iters)")
+    print(f"Inference share    : {avg_infer_ms * c.MAX_ITER:.1f} ms  ({avg_infer_ms:.3f} ms/call)")
+    print(f"Non-inference est. : {overhead_ms:.1f} ms\n")
+
 
 def test_algorithm_accuracy(truth_algo='brute-force', test_algo='faster-but-loss') -> None:
     # Test how accurate an algorithm is
@@ -924,13 +1124,29 @@ def plot_stats(model_version=None, data_version=None, average_by_model=False, in
     stats = ['app', 'dspp']
 
     for i, stat in enumerate(stats):
+        values = df[stat].values
         # Thin line, antialiased, no markers to avoid clutter
         axs[i].plot(
-            df[stat].values,
+            values,
             label=f'{stat}',
             linewidth=0.9,
-            antialiased=True
+            antialiased=True,
+            alpha=0.5,
         )
+        # Smoothed trend line (rolling mean with window = 10% of data, min 5)
+        window = max(5, len(values) // 10)
+        if len(values) >= window:
+            kernel = np.ones(window) / window
+            trend = np.convolve(values, kernel, mode='valid')
+            offset = (len(values) - len(trend)) // 2
+            axs[i].plot(
+                range(offset, offset + len(trend)),
+                trend,
+                linewidth=1.5,
+                color='red',
+                antialiased=True,
+                label='trend',
+            )
         axs[i].set_xlabel("Model number" if average_by_model else "Training step")
         axs[i].set_ylabel(stat)
 
@@ -1195,6 +1411,188 @@ def test_simple_piece_network_piece_invariance():
     plt.savefig(f"{directory_path}/simple_piece_policy_piece_invariance.png")
     print("Saved figure")
 
+def plot_placement_heatmap(last_n_sets: int = 20) -> None:
+    """Placement heatmap from saved self-play game data.
+
+    Sums the MCTS policy targets across all samples and piece types to produce
+    a 2-D heatmap (rows × cols) showing where pieces were most often placed.
+    This reveals whether the agent has converged to a narrow stacking strategy.
+    """
+    c = Config()
+    path = c.data_dir
+
+    filenames = sorted(
+        [f for f in os.listdir(path) if f.split('.')[0].isdigit()],
+        key=lambda f: int(f.split('.')[0]),
+        reverse=True
+    )[:last_n_sets]
+
+    heatmap = np.zeros((POLICY_SHAPE[1], POLICY_SHAPE[2]), dtype=float)
+    n_samples = 0
+
+    for filename in filenames:
+        with open(f"{path}/{filename}", 'r') as f:
+            data = ujson.load(f)
+        for sample in data:
+            policy = np.array(sample[-1], dtype=float)  # (27, 25, 11)
+            heatmap += policy.sum(axis=0)
+            n_samples += 1
+
+    if n_samples == 0:
+        print("No data found.")
+        return
+
+    # Normalise so values show average probability mass per cell
+    heatmap /= n_samples
+
+    # Crop the left-buffer columns: policy stores col+2 offset, real board is COLS wide
+    board_heatmap = heatmap[:, 2: 2 + COLS]  # shape (25, 10)
+
+    fig, ax = plt.subplots(figsize=(5, 8))
+    im = ax.imshow(board_heatmap, cmap='hot', aspect='auto', origin='upper')
+    plt.colorbar(im, ax=ax, label='Mean policy weight')
+    ax.set_title(f'Piece Placement Heatmap\n({n_samples} samples, last {last_n_sets} sets)')
+    ax.set_xlabel('Column')
+    ax.set_ylabel('Row (0 = top)')
+
+    out_path = f"{directory_path}/placement_heatmap_{c.model_version}.png"
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+
+
+def plot_policy_entropy_over_training(last_n_sets: int = 50) -> None:
+    """Policy entropy over training iterations.
+
+    Loads self-play data files in chronological order and computes the mean
+    Shannon entropy of the MCTS policy target per set. A declining entropy
+    curve indicates the agent's search is collapsing onto fewer moves.
+    """
+    c = Config()
+    path = c.data_dir
+
+    filenames = sorted(
+        [f for f in os.listdir(path) if f.split('.')[0].isdigit()],
+        key=lambda f: int(f.split('.')[0])
+    )[-last_n_sets:]
+
+    set_numbers, mean_entropies = [], []
+
+    for filename in filenames:
+        set_num = int(filename.split('.')[0])
+        with open(f"{path}/{filename}", 'r') as f:
+            data = ujson.load(f)
+
+        entropies = []
+        for sample in data:
+            policy = np.array(sample[-1], dtype=float).ravel()
+            total = policy.sum()
+            if total > 0:
+                p = policy[policy > 0] / total
+                entropies.append(float(-np.sum(p * np.log(p))))
+
+        if entropies:
+            set_numbers.append(set_num)
+            mean_entropies.append(float(np.mean(entropies)))
+
+    if not set_numbers:
+        print("No data found.")
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(set_numbers, mean_entropies, linewidth=0.9, alpha=0.6, label='entropy')
+
+    window = max(3, len(mean_entropies) // 8)
+    if len(mean_entropies) >= window:
+        kernel = np.ones(window) / window
+        trend = np.convolve(mean_entropies, kernel, mode='valid')
+        offset = (len(mean_entropies) - len(trend)) // 2
+        ax.plot(set_numbers[offset: offset + len(trend)], trend,
+                linewidth=1.5, color='red', label='trend')
+
+    ax.set_xlabel('Data set number (proxy for training time)')
+    ax.set_ylabel('Mean Shannon entropy of policy target')
+    ax.set_title('Policy Entropy Over Training\n(lower = more collapsed search)')
+    ax.legend(fontsize=8)
+    ax.grid(True, linewidth=0.5, alpha=0.3)
+
+    out_path = f"{directory_path}/policy_entropy_{c.model_version}.png"
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+
+
+def plot_value_reliability_diagram(num_games: int = 20, n_bins: int = 10) -> None:
+    """Value reliability (calibration) diagram.
+
+    Plays num_games self-play games, collects (predicted_value, actual_outcome)
+    pairs at every move, then bins predictions and computes the mean actual
+    outcome per bin. A well-calibrated agent's curve should follow y = x.
+
+    Works with both tanh-range (−1..1) and sigmoid-range (0..1) values.
+    """
+    c = Config()
+    interpreter = get_interpreter(load_best_model(c))
+
+    predictions, outcomes = [], []
+
+    for _ in range(num_games):
+        game = Game(c.ruleset)
+        game.setup()
+        game_preds = {0: [], 1: []}
+
+        while not game.is_terminal:
+            value, _ = evaluate(c, game, interpreter)
+            game_preds[game.turn].append(float(value))
+            move, _, _ = MCTS(c, game, interpreter)
+            game.make_move(move)
+
+        winner = game.winner
+        for player_idx in range(2):
+            if winner == -1:
+                outcome = float(c.value_mid)
+            elif winner == player_idx:
+                outcome = float(c.value_max)
+            else:
+                outcome = float(c.value_min)
+            for pred in game_preds[player_idx]:
+                predictions.append(pred)
+                outcomes.append(outcome)
+
+    predictions = np.array(predictions)
+    outcomes = np.array(outcomes)
+
+    v_min, v_max = predictions.min(), predictions.max()
+    bins = np.linspace(v_min, v_max, n_bins + 1)
+    bin_centers, bin_means, bin_counts = [], [], []
+
+    for b in range(n_bins):
+        mask = (predictions >= bins[b]) & (predictions < bins[b + 1])
+        if mask.sum() > 0:
+            bin_centers.append(float((bins[b] + bins[b + 1]) / 2))
+            bin_means.append(float(outcomes[mask].mean()))
+            bin_counts.append(int(mask.sum()))
+
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.plot([v_min, v_max], [v_min, v_max], 'k--', linewidth=0.8, label='perfect calibration')
+    scatter = ax.scatter(bin_centers, bin_means, c=bin_counts,
+                         cmap='Blues', s=60, zorder=3, label='agent')
+    plt.colorbar(scatter, ax=ax, label='samples in bin')
+    ax.set_xlabel('Predicted value')
+    ax.set_ylabel('Mean actual outcome')
+    ax.set_title(f'Value Reliability Diagram\n({num_games} games, {len(predictions)} predictions)')
+    ax.legend(fontsize=8)
+    ax.grid(True, linewidth=0.5, alpha=0.3)
+
+    out_path = f"{directory_path}/value_reliability_{c.model_version}.png"
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+
+
 def evaluate_value_metrics(num_games):
     # Return MSE metrics
     errors = []
@@ -1251,11 +1649,13 @@ if __name__ == "__main__":
     ##### Setting learning rate DOES NOT WORK
 
     # plot_dirichlet_noise()
+    # plot_dirichlet_analysis(n_games=10)
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
     # profile_game()
     # test_reflected_policy()
     # visualize_policy()
-    # plot_stats(data_version=2.6, include_rank_data=True)
+    # plot_stats(include_rank_data=True)
+    # plot_policy_entropy_over_training()
 
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
 
@@ -1292,7 +1692,8 @@ if __name__ == "__main__":
 
     # evaluate_value_metrics(num_games=5)
 
-    benchmark_move_algorithms()
+    # benchmark_move_algorithms()
+    # profile_inference()
 
 # Command for running python files
 # This is for running many tests at the same time

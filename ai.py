@@ -19,7 +19,6 @@ import random
 from scipy import signal
 import sys
 import time
-import treelib
 import ujson
 
 from tensorflow import keras
@@ -229,6 +228,51 @@ class Config():
     def negate_value(self, value):
         return (-value if self.use_tanh else 1 - value)
 
+class MCTSNode:
+    """Lightweight MCTS tree node. Replaces treelib.Node to avoid UUID overhead."""
+    __slots__ = ('identifier', 'data', '_parent_id', '_children')
+
+    def __init__(self, identifier, data, parent_id=None):
+        self.identifier = identifier
+        self.data = data
+        self._parent_id = parent_id
+        self._children = []
+
+    def is_root(self):
+        return self._parent_id is None
+
+    def is_leaf(self):
+        return len(self._children) == 0
+
+    def successors(self, _tree_id=None):
+        return self._children
+
+    def predecessor(self, _tree_id=None):
+        return self._parent_id
+
+
+class MCTSTree:
+    """Lightweight MCTS tree backed by a plain dict. Replaces treelib.Tree."""
+
+    def __init__(self):
+        self._nodes = {}
+        self._counter = 0
+        self.identifier = 0  # kept for API compatibility (successors/predecessor pass this)
+
+    def create_node(self, identifier=None, data=None, parent=None):
+        if identifier is None:
+            self._counter += 1
+            identifier = self._counter
+        node = MCTSNode(identifier=identifier, data=data, parent_id=parent)
+        self._nodes[identifier] = node
+        if parent is not None:
+            self._nodes[parent]._children.append(identifier)
+        return node
+
+    def get_node(self, identifier):
+        return self._nodes[identifier]
+
+
 class NodeState():
     """Node class for storing the game in the tree.
     
@@ -246,12 +290,12 @@ class NodeState():
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]:
+def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
     global total_branch, number_branch
     # Picks a move for the AI to make 
 
     # Initialize the search tree
-    tree = treelib.Tree()
+    tree = MCTSTree()
     game_copy = game.copy()
 
     # Restrict previews
@@ -616,7 +660,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
 
     return move, tree, save_move
 
-def pick_random_move_by_policy(tree: treelib.Tree) -> tuple:
+def pick_random_move_by_policy(tree: MCTSTree) -> tuple:
     # Sample a random move from the root node of the tree using the policy as probabilities
     moves, policies = [], []
 
@@ -781,43 +825,45 @@ def evaluate(config, game, network):
     
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
+
+    # Build metadata cache once per interpreter instance (never changes after allocation).
+    if not hasattr(interpreter, '_eval_cache'):
+        input_details  = interpreter.get_input_details()
+        output_details = sorted(interpreter.get_output_details(), key=lambda x: x['name'])
+        idx_map = []
+        for det in input_details:
+            split_str = det['name'].split(":")[0]
+            if len(split_str) == 12:   # "serving_default" → first input
+                idx_map.append(0)
+            else:
+                idx_map.append(int(split_str.split("_")[2]))
+        interpreter._eval_cache = {
+            'idx_map': idx_map,
+            'val_idx': output_details[0]['index'],
+            'pol_idx': output_details[1]['index'],
+        }
+    cache = interpreter._eval_cache
+
     data = game_to_X(game)
     X = []
     for feature in data:
         if type(feature) in (float, int):
             X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
         else:
-            np_feature = np.expand_dims(np.float32(feature), axis=0)
+            # np.asarray avoids a copy when feature is already float32 ndarray
+            np_feature = np.expand_dims(np.asarray(feature, dtype=np.float32), axis=0)
             if np_feature.shape == (1, 26, 10): # Expand grids
                 np_feature = np.expand_dims(np_feature, axis=-1)
             X.append(np_feature)
-    
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
 
-    output_details.sort(key=lambda x: x['name'])
-
-    for i in range(len(X)):
-        split_str = input_details[i]['name'].split(":")[0]
-        
-        if len(split_str) == 12: # "serving_default"
-            idx = 0
-        else: 
-            split_str = split_str.split("_")[2]
-            idx = int(split_str)
-        
-        assert input_details[i]["index"] == i
+    for i, idx in enumerate(cache['idx_map']):
         interpreter.set_tensor(i, X[idx])
 
     interpreter.invoke()
 
-    value = interpreter.get_tensor(output_details[0]['index'])
-    policies = interpreter.get_tensor(output_details[1]['index'])
+    value    = interpreter.get_tensor(cache['val_idx']).item()
+    policies = interpreter.get_tensor(cache['pol_idx']).reshape(POLICY_SHAPE)
 
-    # Both value and policies are returned as arrays
-    value = value.item()
-    policies = policies.reshape(POLICY_SHAPE)
-    
     return value, policies
 
 def evaluate_from_keras(game, model):
@@ -907,12 +953,8 @@ def search_statistics(tree):
 
 
 def simplify_grid(grid):
-    # Replaces minos in a grid with 1s.
-    for row in range(len(grid)):
-        for col in range(len(grid[0])):
-            if grid[row][col] != 0:
-                grid[row][col] = 1
-    return grid
+    # Replaces minos in a grid with 1s, returning a float32 numpy array.
+    return np.array([[0.0 if cell == 0 else 1.0 for cell in row] for row in grid], dtype=np.float32)
 
 # Helper function to reverse data if needed
 def reverse_if_needed(data, condition):
@@ -921,13 +963,12 @@ def reverse_if_needed(data, condition):
 # Methods for getting game data
 # All of them orient the info in the perspective of the active player
 def get_grids(game):
-    grids = [[x[:] for x in player.board.grid] for player in game.players]
-    for grid in grids:
-        simplify_grid(grid)
+    # simplify_grid now creates float32 numpy arrays directly; no copy needed.
+    grids = [simplify_grid(player.board.grid) for player in game.players]
     return reverse_if_needed(grids, game.turn == 1)
 
 def get_pieces(game):
-    piece_table = np.zeros((2, 2 + PREVIEWS, len(MINOS)), dtype=int)
+    piece_table = np.zeros((2, 2 + PREVIEWS, len(MINOS)), dtype=np.float32)
     for i, player in enumerate(game.players):
         if player.piece:  # Active piece: 0
             piece_table[i][0][MINOS.index(player.piece.type)] = 1
