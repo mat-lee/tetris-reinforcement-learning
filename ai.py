@@ -134,7 +134,7 @@ class Config():
         playout_cap_mult=5,
 
         use_dirichlet_noise=True,
-        DIRICHLET_ALPHA=0.05,
+        DIRICHLET_ALPHA=0.1,
         DIRICHLET_S=25,
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
@@ -350,9 +350,17 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
             Qs = []
             Us = []
 
+            sqrt_parent = math.sqrt(parent_visits)
+            check_forced = (
+                config.use_forced_playouts_and_policy_target_pruning
+                and config.training
+                and node.is_root()
+                and not (config.use_playout_cap_randomization and fast_iter)
+            )
+
             # Look through each child
             for child_id in child_ids:
-                
+
                 total_branch += 1
 
                 # For each child calculate a score
@@ -360,7 +368,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
                 child_data = tree.get_node(child_id).data
 
                 Q = child_data.value_avg
-                U = config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(config.DPUCT+child_data.visit_count)
+                U = config.CPUCT * child_data.policy * sqrt_parent / (config.DPUCT + child_data.visit_count)
 
                 child_score = Q + U
 
@@ -368,14 +376,10 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
                 Us.append(U)
 
                 # Check forced playouts
-                if config.use_forced_playouts_and_policy_target_pruning and config.training: # Only use during training/when configured
-                    if node.is_root(): # Only use for the root
-                        if not (config.use_playout_cap_randomization == True and fast_iter == True): # Don't use during fast iterations
-                            if child_data.visit_count >= 1:
-                                n_forced = math.sqrt(config.CForcedPlayout * child_data.policy * parent_visits)
-
-                                if child_data.visit_count < n_forced:
-                                    child_score = float('inf')
+                if check_forced and child_data.visit_count >= 1:
+                    n_forced = math.sqrt(config.CForcedPlayout * child_data.policy * parent_visits)
+                    if child_data.visit_count < n_forced:
+                        child_score = float('inf')
 
                 if child_score >= max_child_score:
                     max_child_score = child_score
@@ -425,12 +429,10 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
                 if node.is_root() and config.use_root_softmax:
                     # Formula taken from katago
                     max_policy = max(policies)
+                    log_max = math.log(max_policy)
+                    inv_temp = 1.0 / config.RootSoftmaxTemp
                     for i in range(len(policies)):
-                        # pn.append(policies[i])
-
-                        policies[i] = math.exp((math.log(policies[i]) - math.log(max_policy)) * 1 / config.RootSoftmaxTemp) # ??? katago formula
-                        
-                        # ps.append(policies[i])
+                        policies[i] = math.exp((math.log(policies[i]) - log_max) * inv_temp)
 
                 policy_sum = sum(policies)
 
@@ -508,6 +510,8 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
         # the evaluation is from the perspective of the other player, 
         # thus you have to flip the value
         value = config.negate_value(value)
+        pos_value = value
+        neg_value = config.negate_value(value)
 
         # Go back up the tree and updates nodes
         # Propogate positive values for the player made the move, and negative for the other player
@@ -517,7 +521,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
             node_state = node.data
             node_state.visit_count += 1
             # Revert value if the other player just went
-            node_state.value_sum += (value if node_state.game.turn == final_node_turn else config.negate_value(value))
+            node_state.value_sum += (pos_value if node_state.game.turn == final_node_turn else neg_value)
             node_state.value_avg = node_state.value_sum / node_state.visit_count
 
             upwards_id = node.predecessor(tree.identifier)
@@ -526,7 +530,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
         # Repeat for root node
         node_state = node.data
         node_state.visit_count += 1
-        node_state.value_sum += (value if node_state.game.turn == final_node_turn else config.negate_value(value))
+        node_state.value_sum += (pos_value if node_state.game.turn == final_node_turn else neg_value)
         node_state.value_avg = node_state.value_sum / node_state.visit_count
 
         # print(MAX_DEPTH, total_branch//number_branch)
@@ -547,24 +551,20 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
                 parent_value = parent.data.value_avg
 
                 node_explored_policy = 0
+                unvisited_states = []
 
-                # 1) Find expanded policy for the parent node
+                # Single pass: collect explored policy and unvisited siblings
                 sibling_ids = parent.successors(tree.identifier)
                 for sibling_id in sibling_ids:
                     sibling_data = tree.get_node(sibling_id).data
-
-                    # Check if node has been visited
                     if sibling_data.visit_count > 0:
                         node_explored_policy += sibling_data.policy
+                    else:
+                        unvisited_states.append(sibling_data)
 
-                # 2) Update children nodes
-                for sibling_id in sibling_ids:
-                    sibling_data = tree.get_node(sibling_id).data
-
-                    # Check if node hasn't been visited
-                    if sibling_data.visit_count == 0:
-                        # negate parent value
-                        sibling_data.value_avg = max(config.value_min, config.negate_value(parent_value) - config.FpuValue * math.sqrt(node_explored_policy))
+                fpu = max(config.value_min, config.negate_value(parent_value) - config.FpuValue * math.sqrt(node_explored_policy))
+                for sibling_data in unvisited_states:
+                    sibling_data.value_avg = fpu
 
 
     # ----- Pick a move randomly using temperature BEFORE pruning visit counts -----
@@ -954,7 +954,7 @@ def search_statistics(tree):
 
 def simplify_grid(grid):
     # Replaces minos in a grid with 1s, returning a float32 numpy array.
-    return np.array([[0.0 if cell == 0 else 1.0 for cell in row] for row in grid], dtype=np.float32)
+    return (grid != 0).astype(np.float32)
 
 # Helper function to reverse data if needed
 def reverse_if_needed(data, condition):
