@@ -48,6 +48,8 @@ HIDE_PRINTS = True
 
 # Where data and models are saved
 directory_path = Path.cwd().parent / "Storage"
+logs_path = directory_path / "logs"
+logs_path.mkdir(exist_ok=True)
 
 
 class Config():
@@ -58,7 +60,7 @@ class Config():
 
         # For naming data and models
         model_version=6.0,
-        data_version=2.7,
+        data_version=2.8,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -96,10 +98,10 @@ class Config():
         training_loops=1, # Number of training loops before evaluation
         sets_to_train_with=10, # Number of past sets to train with
         battle_games=200, # Number of evaluation games
-        gating_threshold=0.55, # Minimum winrate to replace the best model
+        gating_threshold=0.52, # Minimum winrate to replace the best model
         gating_threshold_type='moreorequal', # 'moreorequal' or 'more'
 
-        MAX_ITER=160, 
+        MAX_ITER=400, 
         CPUCT=0.75, # CPUCT is the scalar multiple of the policy term in PUCT
         DPUCT=1, # DPUCT is an additive scalar in the denominator of in PUCT
 
@@ -137,7 +139,7 @@ class Config():
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
 
-        use_forced_playouts_and_policy_target_pruning=True,
+        use_forced_playouts_and_policy_target_pruning=False,
         CForcedPlayout=1,
     ):
         self.visual = visual
@@ -726,7 +728,7 @@ def train_network(config, model, set):
     elif config.model == 'pytorch':
         train_network_pytorch(config, model, set)
 
-def train_network_keras(config, model, set):
+def train_network_keras(config, model, set, data_number=None):
     # Keras has 2GB limit (?)
 
     # Fit the model
@@ -749,11 +751,28 @@ def train_network_keras(config, model, set):
     # Adjust learning rate HOW???
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
 
-    history = model.fit(x=features, 
-                        y=[values, policies], 
-                        batch_size=64, 
-                        epochs=config.epochs, 
+    history = model.fit(x=features,
+                        y=[values, policies],
+                        batch_size=64,
+                        epochs=config.epochs,
                         shuffle=config.shuffle)
+
+    # Compute per-head losses manually (model.evaluate returns a single weighted scalar)
+    preds = model.predict(features, verbose=0)
+    value_preds = preds[0].flatten()
+    policy_preds = preds[1]
+    value_loss = float(np.mean((value_preds - values.flatten()) ** 2))
+    policy_loss = float(-np.mean(np.sum(policies * np.log(np.clip(policy_preds, 1e-7, 1.0)), axis=-1)))
+
+    log_entry = {
+        "model_version": config.model_version,
+        "data_number": data_number if data_number is not None else highest_data_number(config),
+        "loss": float(history.history['loss'][-1]),
+        "value_loss": value_loss,
+        "policy_loss": policy_loss,
+    }
+    with open(f"{logs_path}/training_log.jsonl", 'a') as f:
+        f.write(ujson.dumps(log_entry) + '\n')
 
 def train_network_pytorch(config, model, set):
     features = list(map(list, zip(*set)))
@@ -1305,7 +1324,7 @@ def make_training_set(config, interference_network, num_games, save_game=False, 
             "dspp": round(sum([x["dspp"] for x in series_stats]) / len(series_stats), 3)
         }
 
-        with open(f"{directory_path}/data/stats.txt", 'a+') as out_file:
+        with open(f"{logs_path}/stats.txt", 'a+') as out_file:
             out_file.write(f"{averaged_stats}\n")
     
     else:
@@ -1542,6 +1561,18 @@ def self_play_loop(config, skip_first_set=False):
         )
 
         print(f"Challenger {win_loss[0]} - {win_loss[1]} Best")
+
+        gating_entry = {
+            "model_version": config.model_version,
+            "challenger_number": next_ver,
+            "challenger_wins": int(win_loss[0]),
+            "best_wins": int(win_loss[1]),
+            "total_games": config.battle_games,
+            "win_rate": float(win_loss[0]) / config.battle_games,
+            "accepted": bool(win),
+        }
+        with open(f"{logs_path}/gating_log.jsonl", 'a') as f:
+            f.write(ujson.dumps(gating_entry) + '\n')
 
         if win:
             # Challenger network becomes next highest version

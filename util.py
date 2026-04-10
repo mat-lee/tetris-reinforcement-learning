@@ -16,6 +16,9 @@ import pandas as pd
 import pygame
 import time
 
+plots_path = directory_path / "plots"
+plots_path.mkdir(exist_ok=True)
+
 # Make figures crisp by default
 mpl.rcParams.update({
     "figure.dpi": 150,      # notebook / on-screen
@@ -272,7 +275,7 @@ def plot_dirichlet_analysis(n_games: int = 10) -> dict:
         ax.set_title(title)
 
     plt.tight_layout()
-    out_path = f"{directory_path}/dirichlet_analysis_{c.model_version}.png"
+    out_path = f"{plots_path}/dirichlet_analysis_{c.model_version}.png"
     plt.savefig(out_path)
     plt.show()
     print(f"Saved → {out_path}")
@@ -291,55 +294,67 @@ def _mcts_max_depth(tree) -> int:
     return max_d
 
 
-def plot_mcts_tree_stats(n_games=5):
-    """7-metric MCTS health check for the blog post.
+def plot_mcts_tree_stats(n_games=5, max_iter=None):
+    """9-metric MCTS health check for the blog post.
 
-    Per position (one MCTS call per position across n_games full games) computes:
-      1. Effective branching %   — % of legal moves that receive any visits
-      2. Top-1 visit fraction %  — % of budget spent on the single best move
-      3. Policy entropy          — Shannon H of the policy prior (pre-search)
-      4. Visit entropy           — Shannon H of the visit distribution (post-search)
-      5. KL(visits || policy)    — how far search diverged from the policy prior
-      6. Policy-visit Spearman ρ — rank correlation between policy and visits
-      7. Value spread            — std of value_avg across root children
-      + Policy surprise rate printed as a summary scalar
+    Per position computes:
+      1. Effective branching %       — % of legal moves that receive any visits
+      2. Visit Concentration (Top-1) — % of budget on the single best move
+      3. Policy entropy              — Shannon H of the policy prior (pre-search)
+      4. Visit entropy               — Shannon H of the visit distribution (post-search)
+      5. Policy-visit Spearman ρ     — rank correlation on VISITED moves only
+      6. Value spread                — std of value_avg across visited root children
+      7. Root value                  — value_avg at root (game-state confidence)
+      8. Top-1 vs Top-2 value gap    — value difference between best and second-best move
+      9. Policy surprise by phase    — % positions where top-visit ≠ top-policy, per phase
     """
     from scipy.stats import spearmanr
 
-    c = Config()
+    c = Config() if max_iter is None else Config(MAX_ITER=max_iter)
     model = load_best_model(c)
     interpreter = get_interpreter(model)
 
-    eff_branch = []
-    top1       = []
-    pol_ent    = []
-    vis_ent    = []
-    kl_divs    = []
-    corrs      = []
-    val_spread = []
-    n_surprise = 0
-    n_total    = 0
+    eff_branch  = []
+    top1        = []
+    pol_ent     = []
+    vis_ent     = []
+    corrs       = []
+    val_spread  = []
+    root_values = []
+    top2_gaps   = []
+    n_legal_arr = []
+    phases      = []
+
+    # Per-phase surprise tracking
+    surprise     = {'early': [0, 0], 'mid': [0, 0], 'late': [0, 0]}  # [n_surprised, n_total]
 
     for _ in range(n_games):
         game = Game(c.ruleset)
         game.setup()
 
         while not game.is_terminal and len(game.history.states) < MAX_MOVES:
+            move_idx = len(game.history.states)
             move, tree, _ = MCTS(c, game, interpreter)
 
             root = tree.get_node("root")
             child_ids = root.successors(tree.identifier)
-            visits  = np.array([tree.get_node(cid).data.visit_count for cid in child_ids], dtype=float)
-            policies = np.array([tree.get_node(cid).data.policy     for cid in child_ids], dtype=float)
-            values  = np.array([tree.get_node(cid).data.value_avg   for cid in child_ids], dtype=float)
-            total = visits.sum()
+            visits   = np.array([tree.get_node(cid).data.visit_count for cid in child_ids], dtype=float)
+            policies = np.array([tree.get_node(cid).data.policy      for cid in child_ids], dtype=float)
+            values   = np.array([tree.get_node(cid).data.value_avg   for cid in child_ids], dtype=float)
+            total    = visits.sum()
 
             if total > 0 and policies.sum() > 0:
+                n_legal = len(visits)
+                mask    = visits > 0
+
+                phase = 'early' if move_idx < 15 else ('mid' if move_idx < 30 else 'late')
+
                 # 1. Effective branching
-                eff_branch.append(100.0 * (visits > 0).sum() / len(visits))
+                eff_branch.append(100.0 * mask.sum() / n_legal)
 
                 # 2. Top-1 visit fraction
                 top1.append(100.0 * visits.max() / total)
+                n_legal_arr.append(n_legal)
 
                 # 3. Policy entropy
                 p_pol = policies / policies.sum()
@@ -347,80 +362,549 @@ def plot_mcts_tree_stats(n_games=5):
 
                 # 4. Visit entropy
                 p_vis = visits / total
-                vis_ent.append(float(-np.sum(p_vis[p_vis > 0] * np.log(p_vis[p_vis > 0]))))
+                vis_ent.append(float(-np.sum(p_vis[mask] * np.log(p_vis[mask]))))
 
-                # 5. KL(visits || policy)  — how much search diverged from prior
-                kl = np.sum(p_vis[p_vis > 0] * np.log((p_vis[p_vis > 0]) / (p_pol[p_vis > 0] + 1e-12)))
-                kl_divs.append(float(kl))
+                # 5. Spearman ρ on visited moves only
+                if mask.sum() >= 2:
+                    rho, _ = spearmanr(policies[mask], visits[mask])
+                    corrs.append(float(rho))
 
-                # 6. Spearman ρ between policy and visit counts
-                rho, _ = spearmanr(policies, visits)
-                corrs.append(float(rho))
-
-                # 7. Value spread
-                visited_values = values[visits > 0]
+                # 6. Value spread across visited moves
+                visited_values = values[mask]
                 val_spread.append(float(np.std(visited_values)) if len(visited_values) > 1 else 0.0)
 
-                # Policy surprise: did top-visit differ from top-policy?
-                n_surprise += int(np.argmax(visits) != np.argmax(policies))
-                n_total    += 1
+                # 7. Root value (post-search game-state confidence)
+                root_values.append(float(root.data.value_avg))
+
+                # 8. Top-1 vs Top-2 value gap
+                if mask.sum() >= 2:
+                    sorted_by_visits = np.argsort(visits)[::-1]
+                    v1 = values[sorted_by_visits[0]]
+                    v2 = values[sorted_by_visits[1]]
+                    top2_gaps.append(float(abs(v1 - v2)))
+
+                # 9. Policy surprise per phase
+                surprised = int(np.argmax(visits) != np.argmax(policies))
+                surprise[phase][0] += surprised
+                surprise[phase][1] += 1
+
+                phases.append(phase)
 
             game.make_move(move)
 
-    n_pos = len(eff_branch)
-    surprise_pct = 100.0 * n_surprise / n_total if n_total > 0 else 0.0
+    n_pos        = len(eff_branch)
+    uniform_top1 = 100.0 / np.mean(n_legal_arr) if n_legal_arr else 0.0
+    total_surprised = sum(v[0] for v in surprise.values())
+    total_positions = sum(v[1] for v in surprise.values())
+    overall_surprise_pct = 100.0 * total_surprised / total_positions if total_positions > 0 else 0.0
 
-    fig, axs = plt.subplots(2, 4, figsize=(18, 8))
+    fig, axs = plt.subplots(3, 3, figsize=(14, 12))
     fig.suptitle(
         f'MCTS Tree Statistics  ·  {n_games} games, {n_pos} positions\n'
         f'model v{c.model_version},  MAX_ITER={c.MAX_ITER}  '
-        f'(policy surprise rate: {surprise_pct:.1f}%)',
+        f'(ρ on visited moves only)',
         fontsize=11)
 
-    def _hist(ax, data, xlabel, title, color='steelblue'):
-        ax.hist(data, bins=30, color=color, alpha=0.8, edgecolor='none')
+    def _hist(ax, data, xlabel, title, vline=None, vline_label=None):
+        ax.hist(data, bins=30, color='steelblue', alpha=0.8, edgecolor='none')
         ax.axvline(np.mean(data), color='red', linestyle='--', linewidth=1.2,
                    label=f'mean={np.mean(data):.2f}')
+        if vline is not None:
+            ax.axvline(vline, color='green', linestyle=':', linewidth=1.2,
+                       label=vline_label or f'{vline:.2f}')
         ax.legend(fontsize=8)
         ax.set_xlabel(xlabel)
         ax.set_ylabel('Positions')
         ax.set_title(title)
 
-    _hist(axs[0, 0], eff_branch, '% of legal moves visited',    'Effective Branching %')
-    _hist(axs[0, 1], top1,       '% playouts on top-1 move',    'Visit Concentration (Top-1)')
-    _hist(axs[0, 2], pol_ent,    'Shannon entropy',              'Policy Entropy (prior)')
-    _hist(axs[0, 3], vis_ent,    'Shannon entropy',              'Visit Entropy (post-search)')
-    _hist(axs[1, 0], kl_divs,    'KL divergence (nats)',         'KL(visits ‖ policy)')
-    _hist(axs[1, 1], corrs,      'Spearman ρ',                   'Policy–Visit Rank Corr')
-    _hist(axs[1, 2], val_spread, 'std of value_avg',             'Value Spread')
+    _hist(axs[0, 0], eff_branch, '% of legal moves visited', 'Effective Branching %')
+    _hist(axs[0, 1], top1, '% playouts on top-1 move', 'Visit Concentration (Top-1)',
+          vline=uniform_top1, vline_label=f'uniform={uniform_top1:.1f}%')
+    _hist(axs[0, 2], pol_ent,   'Shannon entropy', 'Policy Entropy (prior)')
+    _hist(axs[1, 0], vis_ent,   'Shannon entropy', 'Visit Entropy (post-search)')
+    _hist(axs[1, 1], corrs,     'Spearman ρ',      'Policy–Visit Rank Corr')
+    _hist(axs[1, 2], val_spread,'std of value_avg', 'Value Spread')
+    _hist(axs[2, 0], root_values, 'value_avg at root', 'Root Value (game confidence)',
+          vline=0.0, vline_label='neutral=0')
+    _hist(axs[2, 1], top2_gaps, '|value_avg[1] − value_avg[2]|', 'Top-1 vs Top-2 Value Gap')
 
-    # Leave axs[1,3] as a text summary box
-    summary = (
-        f"n_games:          {n_games}\n"
-        f"n_positions:      {n_pos}\n\n"
-        f"Eff. branching:   {np.mean(eff_branch):.1f}%\n"
-        f"Top-1 conc.:      {np.mean(top1):.1f}%\n"
-        f"Policy entropy:   {np.mean(pol_ent):.2f}\n"
-        f"Visit entropy:    {np.mean(vis_ent):.2f}\n"
-        f"KL divergence:    {np.mean(kl_divs):.3f}\n"
-        f"Spearman ρ:       {np.mean(corrs):.3f}\n"
-        f"Value spread:     {np.mean(val_spread):.3f}\n\n"
-        f"Policy surprise:  {surprise_pct:.1f}%"
-    )
-    axs[1, 3].axis('off')
-    axs[1, 3].text(0.05, 0.95, summary, transform=axs[1, 3].transAxes,
-                   fontsize=9, verticalalignment='top', fontfamily='monospace',
-                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.4))
-    axs[1, 3].set_title('Summary')
+    # Panel 9: policy surprise rate by phase
+    phase_order  = ['early', 'mid', 'late']
+    phase_labels = ['Early\n(0–14)', 'Mid\n(15–29)', 'Late\n(30+)']
+    phase_colors = ['#4C9BE8', '#E8904C', '#4CE87A']
+    surprise_pcts = [
+        100.0 * surprise[p][0] / surprise[p][1] if surprise[p][1] > 0 else 0.0
+        for p in phase_order
+    ]
+    phase_counts = [surprise[p][1] for p in phase_order]
+    bars = axs[2, 2].bar(phase_labels, surprise_pcts, color=phase_colors, alpha=0.85, edgecolor='none')
+    axs[2, 2].axhline(overall_surprise_pct, color='red', linestyle='--', linewidth=1.2,
+                      label=f'overall={overall_surprise_pct:.1f}%')
+    for bar, pct, n in zip(bars, surprise_pcts, phase_counts):
+        axs[2, 2].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
+                       f'{pct:.1f}%\n(n={n})', ha='center', va='bottom', fontsize=8)
+    axs[2, 2].set_ylabel('% positions where top-visit ≠ top-policy')
+    axs[2, 2].set_title('Policy Surprise Rate by Phase')
+    axs[2, 2].legend(fontsize=8)
+    axs[2, 2].set_ylim(0, max(surprise_pcts + [overall_surprise_pct]) * 1.3 + 5)
 
     plt.tight_layout()
-    out_path = f"{directory_path}/mcts_tree_stats_{c.model_version}.png"
+    out_path = f"{plots_path}/mcts_tree_stats_{c.model_version}.png"
     plt.savefig(out_path)
     plt.show()
     print(f"Saved → {out_path}")
-    print(summary)
-    return dict(eff_branch=eff_branch, top1=top1, pol_ent=pol_ent,
-                vis_ent=vis_ent, kl_divs=kl_divs, corrs=corrs, val_spread=val_spread)
+
+    # Console summary
+    summary_lines = [
+        f"\n{'='*52}",
+        f"MCTS Tree Stats  —  model v{c.model_version}  MAX_ITER={c.MAX_ITER}",
+        f"{'='*52}",
+        f"{'Metric':<28} {'Mean':>8}  {'Std':>8}",
+        f"{'-'*52}",
+        f"{'Eff. branching %':<28} {np.mean(eff_branch):>8.1f}  {np.std(eff_branch):>8.1f}",
+        f"{'Top-1 conc. %':<28} {np.mean(top1):>8.1f}  {np.std(top1):>8.1f}  (uniform={uniform_top1:.1f}%)",
+        f"{'Policy entropy':<28} {np.mean(pol_ent):>8.2f}  {np.std(pol_ent):>8.2f}",
+        f"{'Visit entropy':<28} {np.mean(vis_ent):>8.2f}  {np.std(vis_ent):>8.2f}",
+        f"{'Spearman ρ (visited)':<28} {np.mean(corrs):>8.3f}  {np.std(corrs):>8.3f}",
+        f"{'Value spread':<28} {np.mean(val_spread):>8.3f}  {np.std(val_spread):>8.3f}",
+        f"{'Root value':<28} {np.mean(root_values):>8.3f}  {np.std(root_values):>8.3f}",
+        f"{'Top-1/2 value gap':<28} {np.mean(top2_gaps):>8.3f}  {np.std(top2_gaps):>8.3f}",
+        f"{'Policy surprise (overall)':<28} {overall_surprise_pct:>7.1f}%",
+        f"{'-'*52}",
+    ]
+    for p, label in zip(phase_order, ['Early (0–14) ', 'Mid   (15–29)', 'Late  (30+)  ']):
+        if surprise[p][1] > 0:
+            pidx = [i for i, ph in enumerate(phases) if ph == p]
+            summary_lines.append(
+                f"  {label}: n={surprise[p][1]:>3}  "
+                f"surprise={100*surprise[p][0]/surprise[p][1]:.1f}%  "
+                f"top1={np.mean([top1[i] for i in pidx]):.1f}%  "
+                f"val_spread={np.mean([val_spread[i] for i in pidx]):.3f}  "
+                f"root_val={np.mean([root_values[i] for i in pidx]):.3f}"
+            )
+    print('\n'.join(summary_lines))
+
+    return dict(eff_branch=eff_branch, top1=top1, pol_ent=pol_ent, vis_ent=vis_ent,
+                corrs=corrs, val_spread=val_spread, root_values=root_values,
+                top2_gaps=top2_gaps, phases=phases, surprise=surprise)
+
+
+def compare_forced_playout_configs(configs=None, n_games=3):
+    """Compare MCTS search behavior across forced-playout / pruning Config variants.
+
+    Runs every config against the same game positions (baseline config advances the game).
+    Plots 8 metrics as box plots (+ surprise rate as bar chart) for direct comparison.
+    FPU variants are intentionally excluded here — see analyze_fpu() for that analysis.
+
+    Args:
+        configs: list of (label, dict_of_config_overrides) or None for default suite.
+                 Overrides are merged on top of Config() defaults.
+                 Set use_dirichlet_noise=False to isolate non-noise effects.
+        n_games: number of games (baseline = first config in the list)
+
+    Default suite compares:
+        Eval            — training=False (what we've been measuring)
+        Train-Forced    — training=True, forced playouts off (isolates forced playout effect)
+        Train           — training=True, forced playouts on  (actual self-play)
+        Train+CForced=3 — training=True, CForcedPlayout=3   (more aggressive forced visits)
+    """
+    from scipy.stats import spearmanr
+
+    base_c = Config()
+    model  = load_best_model(base_c)
+    interpreter = get_interpreter(model)
+
+    _shared = dict(use_dirichlet_noise=False, use_playout_cap_randomization=False)
+
+    if configs is None:
+        configs = [
+            ('Eval',             {}),
+            ('Train-Forced',     dict(training=True,  use_forced_playouts_and_policy_target_pruning=False, **_shared)),
+            ('Train',            dict(training=True,  **_shared)),
+            ('Train+CForced=3',  dict(training=True,  CForcedPlayout=3, **_shared)),
+        ]
+
+    config_objects = [(label, Config(**{**vars(base_c), **overrides}))
+                      for label, overrides in configs]
+    labels = [label for label, _ in config_objects]
+    n_configs = len(labels)
+
+    _metrics = ['eff_branch', 'top1', 'vis_ent', 'corr', 'val_spread',
+                'root_val', 'top2_gap', 'surprise']
+    data = {label: {m: [] for m in _metrics} for label in labels}
+
+    baseline_cfg = config_objects[0][1]
+
+    for _ in range(n_games):
+        game = Game(baseline_cfg.ruleset)
+        game.setup()
+
+        while not game.is_terminal and len(game.history.states) < MAX_MOVES:
+            baseline_move, _, _ = MCTS(baseline_cfg, game, interpreter)
+
+            for label, c in config_objects:
+                _, tree, _ = MCTS(c, game, interpreter)
+
+                root      = tree.get_node("root")
+                child_ids = root.successors(tree.identifier)
+                visits    = np.array([tree.get_node(cid).data.visit_count for cid in child_ids], dtype=float)
+                policies  = np.array([tree.get_node(cid).data.policy      for cid in child_ids], dtype=float)
+                values    = np.array([tree.get_node(cid).data.value_avg   for cid in child_ids], dtype=float)
+                total     = visits.sum()
+
+                if total > 0 and policies.sum() > 0:
+                    mask = visits > 0
+                    p_vis = visits / total
+
+                    data[label]['eff_branch'].append(100.0 * mask.sum() / len(visits))
+                    data[label]['top1'].append(100.0 * visits.max() / total)
+                    data[label]['vis_ent'].append(float(-np.sum(p_vis[mask] * np.log(p_vis[mask]))))
+
+                    if mask.sum() >= 2:
+                        rho, _ = spearmanr(policies[mask], visits[mask])
+                        data[label]['corr'].append(float(rho))
+
+                        sorted_idx = np.argsort(visits)[::-1]
+                        data[label]['top2_gap'].append(float(abs(values[sorted_idx[0]] - values[sorted_idx[1]])))
+
+                    visited_vals = values[mask]
+                    data[label]['val_spread'].append(float(np.std(visited_vals)) if len(visited_vals) > 1 else 0.0)
+                    data[label]['root_val'].append(float(root.data.value_avg))
+                    data[label]['surprise'].append(int(np.argmax(visits) != np.argmax(policies)))
+
+            game.make_move(baseline_move)
+
+    n_pos = len(data[labels[0]]['top1'])
+    colors = ['#4C9BE8', '#E8904C', '#4CE87A', '#E84C4C', '#9B4CE8'][:n_configs]
+
+    metric_info = [
+        ('eff_branch', 'Effective Branching %',       '% legal moves visited'),
+        ('top1',       'Visit Concentration (Top-1)', '% playouts on top move'),
+        ('vis_ent',    'Visit Entropy',                'Shannon entropy'),
+        ('corr',       'Policy-Visit Rank Corr',       'Spearman ρ (visited)'),
+        ('val_spread', 'Value Spread',                 'std of value_avg'),
+        ('root_val',   'Root Value',                   'value_avg at root'),
+        ('top2_gap',   'Top-1 vs Top-2 Value Gap',    '|v[1] − v[2]|'),
+    ]
+
+    fig, axs = plt.subplots(2, 4, figsize=(18, 9))
+    fig.suptitle(
+        f'MCTS Config Comparison  ·  {n_games} games, {n_pos} positions/config\n'
+        f'model v{base_c.model_version},  MAX_ITER={base_c.MAX_ITER}',
+        fontsize=11)
+
+    bp_props = dict(patch_artist=True, medianprops=dict(color='black', linewidth=1.5),
+                    whiskerprops=dict(linewidth=0.8), capprops=dict(linewidth=0.8),
+                    flierprops=dict(marker='.', markersize=2, alpha=0.4))
+
+    for i, (metric, title, ylabel) in enumerate(metric_info):
+        ax = axs.flatten()[i]
+        plot_data = [data[label][metric] for label in labels]
+        bp = ax.boxplot(plot_data, labels=labels, **bp_props)
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.75)
+        ax.set_title(title, fontsize=9)
+        ax.set_ylabel(ylabel, fontsize=8)
+        ax.tick_params(axis='x', labelsize=7, rotation=15)
+
+    # Panel 8: surprise rate as bar chart
+    ax = axs[1, 3]
+    surprise_pcts = [100.0 * np.mean(data[label]['surprise']) for label in labels]
+    bars = ax.bar(range(n_configs), surprise_pcts, color=colors, alpha=0.8, edgecolor='none')
+    for bar, pct in zip(bars, surprise_pcts):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.3,
+                f'{pct:.1f}%', ha='center', va='bottom', fontsize=8)
+    ax.set_xticks(range(n_configs))
+    ax.set_xticklabels(labels, fontsize=7, rotation=15)
+    ax.set_ylabel('% positions surprised', fontsize=8)
+    ax.set_title('Policy Surprise Rate', fontsize=9)
+    ax.set_ylim(0, max(surprise_pcts) * 1.35 + 2)
+
+    plt.tight_layout()
+    out_path = f"{plots_path}/compare_forced_playout_configs_{base_c.model_version}.png"
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+
+    # Console table
+    col_w = max(len(l) for l in labels) + 2
+    header = f"{'Metric':<22}" + "".join(f"{l:>{col_w}}" for l in labels)
+    print(f"\n{'='*len(header)}\n{header}\n{'-'*len(header)}")
+    for metric, title, _ in metric_info:
+        row = f"{title:<22}"
+        for label in labels:
+            d = data[label][metric]
+            row += f"{np.mean(d):>{col_w}.2f}" if d else f"{'N/A':>{col_w}}"
+        print(row)
+    surp_row = f"{'Policy Surprise %':<22}"
+    for label in labels:
+        surp_row += f"{100*np.mean(data[label]['surprise']):>{col_w}.1f}"
+    print(surp_row)
+    print('='*len(header))
+
+    return data
+
+
+def _tree_depth_stats(tree):
+    """BFS traversal of an MCTS tree to compute depth distribution and depth-2 coverage.
+
+    Returns a dict with:
+        depth_counts    — dict mapping depth -> number of visited nodes (visit_count > 0)
+        max_depth       — deepest node with at least one visit
+        depth2_coverage — (visited grandchildren) / (total grandchildren in tree)
+    """
+    from collections import deque
+
+    depth_counts  = {}
+    total_depth2  = 0
+    visited_depth2 = 0
+    max_depth     = 0
+
+    queue = deque([("root", 0)])
+    while queue:
+        node_id, depth = queue.popleft()
+        node = tree.get_node(node_id)
+        if node is None:
+            continue
+
+        visit_count = getattr(node.data, 'visit_count', 0) if node.data is not None else 0
+
+        if visit_count > 0:
+            depth_counts[depth] = depth_counts.get(depth, 0) + 1
+            max_depth = max(max_depth, depth)
+
+        if depth == 2:
+            total_depth2 += 1
+            if visit_count > 0:
+                visited_depth2 += 1
+
+        # Expand: always traverse depth 0 and 1 (to count all grandchildren);
+        # at depth >= 2 only expand visited nodes (unvisited nodes are never expanded).
+        if visit_count > 0 or depth < 2:
+            for child_id in node.successors(tree.identifier):
+                queue.append((child_id, depth + 1))
+
+    depth2_coverage = visited_depth2 / total_depth2 if total_depth2 > 0 else 0.0
+    return {
+        'depth_counts':    depth_counts,
+        'max_depth':       max_depth,
+        'depth2_coverage': depth2_coverage,
+    }
+
+
+def analyze_fpu(n_games=3):
+    """Show empirically that FPU is functionally inactive at typical search budgets.
+
+    FPU (First Play Urgency) only activates at depth >= 2. This function measures:
+      1. Search depth distribution — if almost all nodes are at depth 1, FPU never fires.
+      2. Depth-2 coverage — fraction of grandchildren with visits > 0.
+      3. Root-level reference metrics (branching %, top-1) — should be identical
+         between FPU variants, confirming FPU has no measurable effect.
+
+    Args:
+        n_games: number of games to run (both configs use the same positions)
+    """
+    from scipy.stats import spearmanr
+
+    base_c = Config()
+    model  = load_best_model(base_c)
+    interpreter = get_interpreter(model)
+
+    _shared = dict(training=True, use_dirichlet_noise=False, use_playout_cap_randomization=False)
+    configs = [
+        ('FPU=default', dict(**_shared)),
+        ('FPU=0',       dict(FpuValue=0.0, **_shared)),
+    ]
+
+    config_objects = [(label, Config(**{**vars(base_c), **overrides}))
+                      for label, overrides in configs]
+    labels = [label for label, _ in config_objects]
+
+    depth_counts_agg = {label: {} for label in labels}   # depth -> list of per-position counts
+    depth2_cov       = {label: [] for label in labels}
+    eff_branch       = {label: [] for label in labels}
+    top1             = {label: [] for label in labels}
+
+    baseline_cfg = config_objects[0][1]
+
+    for _ in range(n_games):
+        game = Game(baseline_cfg.ruleset)
+        game.setup()
+
+        while not game.is_terminal and len(game.history.states) < MAX_MOVES:
+            baseline_move, _, _ = MCTS(baseline_cfg, game, interpreter)
+
+            for label, c in config_objects:
+                _, tree, _ = MCTS(c, game, interpreter)
+
+                # Depth stats
+                stats = _tree_depth_stats(tree)
+                for d, cnt in stats['depth_counts'].items():
+                    depth_counts_agg[label].setdefault(d, []).append(cnt)
+                depth2_cov[label].append(stats['depth2_coverage'])
+
+                # Root-level reference metrics
+                root      = tree.get_node("root")
+                child_ids = root.successors(tree.identifier)
+                visits    = np.array([tree.get_node(cid).data.visit_count for cid in child_ids], dtype=float)
+                policies  = np.array([tree.get_node(cid).data.policy      for cid in child_ids], dtype=float)
+                total     = visits.sum()
+
+                if total > 0 and policies.sum() > 0:
+                    mask = visits > 0
+                    eff_branch[label].append(100.0 * mask.sum() / len(visits))
+                    top1[label].append(100.0 * visits.max() / total)
+
+            game.make_move(baseline_move)
+
+    n_pos  = len(depth2_cov[labels[0]])
+    colors = ['#4C9BE8', '#E84C4C']
+
+    bp_props = dict(patch_artist=True, medianprops=dict(color='black', linewidth=1.5),
+                    whiskerprops=dict(linewidth=0.8), capprops=dict(linewidth=0.8),
+                    flierprops=dict(marker='.', markersize=2, alpha=0.4))
+
+    fig, axs = plt.subplots(2, 2, figsize=(12, 9))
+    fig.suptitle(
+        f'FPU Analysis  ·  {n_games} games, {n_pos} positions/config\n'
+        f'model v{base_c.model_version},  MAX_ITER={base_c.MAX_ITER}  '
+        f'(FPU default = {base_c.FpuValue})',
+        fontsize=11)
+
+    # Panel 1: Depth distribution — grouped bar chart
+    ax = axs[0, 0]
+    all_depths = sorted(set(d for label in labels for d in depth_counts_agg[label]))
+    x     = np.arange(len(all_depths))
+    width = 0.35
+    for i, (label, color) in enumerate(zip(labels, colors)):
+        means = [np.mean(depth_counts_agg[label].get(d, [0])) for d in all_depths]
+        ax.bar(x + (i - 0.5) * width, means, width, label=label,
+               color=color, alpha=0.8, edgecolor='none')
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'Depth {d}' for d in all_depths], fontsize=8)
+    ax.set_title('Search Depth Distribution\n(mean visited nodes per position)', fontsize=9)
+    ax.set_ylabel('Mean node count', fontsize=8)
+    ax.legend(fontsize=8)
+
+    # Panel 2: Depth-2 coverage — box plot
+    ax = axs[0, 1]
+    bp = ax.boxplot([100.0 * np.array(depth2_cov[l]) for l in labels],
+                    labels=labels, **bp_props)
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+    ax.set_title('Depth-2 Coverage\n(% grandchildren with visits > 0)', fontsize=9)
+    ax.set_ylabel('%', fontsize=8)
+    ax.tick_params(axis='x', labelsize=8)
+
+    # Panel 3: Effective Branching % (root-level reference)
+    ax = axs[1, 0]
+    bp = ax.boxplot([eff_branch[l] for l in labels], labels=labels, **bp_props)
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+    ax.set_title('Effective Branching %\n(root-level reference)', fontsize=9)
+    ax.set_ylabel('% legal moves visited', fontsize=8)
+    ax.tick_params(axis='x', labelsize=8)
+
+    # Panel 4: Top-1 concentration (root-level reference)
+    ax = axs[1, 1]
+    bp = ax.boxplot([top1[l] for l in labels], labels=labels, **bp_props)
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+    ax.set_title('Visit Concentration (Top-1)\n(root-level reference)', fontsize=9)
+    ax.set_ylabel('% playouts on top move', fontsize=8)
+    ax.tick_params(axis='x', labelsize=8)
+
+    plt.tight_layout()
+    out_path = f"{plots_path}/analyze_fpu_{base_c.model_version}.png"
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+
+    # Console summary
+    print(f"\nFPU Analysis Summary  ({n_pos} positions/config)")
+    print('=' * 50)
+    for label in labels:
+        print(f"\n{label}:")
+        for d in all_depths:
+            mean_cnt = np.mean(depth_counts_agg[label].get(d, [0]))
+            print(f"  Depth {d} mean nodes visited: {mean_cnt:.1f}")
+        print(f"  Depth-2 coverage:            {100*np.mean(depth2_cov[label]):.1f}%")
+        print(f"  Effective branching:         {np.mean(eff_branch[label]):.1f}%")
+        print(f"  Top-1 concentration:         {np.mean(top1[label]):.1f}%")
+    print('=' * 50)
+
+    return {
+        'depth_counts_agg': depth_counts_agg,
+        'depth2_coverage':  depth2_cov,
+        'eff_branch':       eff_branch,
+        'top1':             top1,
+    }
+
+
+def plot_policy_visit_scatter(n_games=3):
+    """Scatter plot of policy probability vs visit fraction for every root child.
+
+    One dot per (position × legal move). If MCTS is just following the policy,
+    dots form a tight line through the origin. Outliers above the line are moves
+    that search promoted; outliers below are moves search demoted.
+    Color-coded by game phase (early / mid / late).
+    """
+    c = Config()
+    model = load_best_model(c)
+    interpreter = get_interpreter(model)
+
+    pol_vals  = {'early': [], 'mid': [], 'late': []}
+    vis_vals  = {'early': [], 'mid': [], 'late': []}
+    phase_colors = {'early': '#4C9BE8', 'mid': '#E8904C', 'late': '#4CE87A'}
+
+    for _ in range(n_games):
+        game = Game(c.ruleset)
+        game.setup()
+
+        while not game.is_terminal and len(game.history.states) < MAX_MOVES:
+            move_idx = len(game.history.states)
+            move, tree, _ = MCTS(c, game, interpreter)
+
+            root = tree.get_node("root")
+            child_ids = root.successors(tree.identifier)
+            visits   = np.array([tree.get_node(cid).data.visit_count for cid in child_ids], dtype=float)
+            policies = np.array([tree.get_node(cid).data.policy      for cid in child_ids], dtype=float)
+            total = visits.sum()
+
+            if total > 0 and policies.sum() > 0:
+                phase = 'early' if move_idx < 15 else ('mid' if move_idx < 30 else 'late')
+                p_pol = policies / policies.sum()
+                p_vis = visits / total
+                pol_vals[phase].extend(p_pol.tolist())
+                vis_vals[phase].extend(p_vis.tolist())
+
+            game.make_move(move)
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    for phase, color in phase_colors.items():
+        px = pol_vals[phase]
+        py = vis_vals[phase]
+        if px:
+            ax.scatter(px, py, s=3, alpha=0.25, color=color, label=phase, rasterized=True)
+
+    # Identity line: visit = policy (search = greedy policy)
+    lim = ax.get_xlim()[1]
+    ax.plot([0, lim], [0, lim], 'k--', linewidth=0.8, label='visit = policy')
+    ax.set_xlabel('Policy probability')
+    ax.set_ylabel('Visit fraction')
+    ax.set_title(
+        f'Policy vs Visit Fraction  ·  {n_games} games\n'
+        f'model v{c.model_version}, MAX_ITER={c.MAX_ITER}')
+    ax.legend(markerscale=4, fontsize=9)
+    plt.tight_layout()
+    out_path = f"{plots_path}/policy_visit_scatter_{c.model_version}.png"
+    plt.savefig(out_path, dpi=200)
+    plt.show()
+    print(f"Saved → {out_path}")
 
 
 def view_visit_count_and_policy_with_and_without_dirichlet_noise() -> None:
@@ -449,7 +933,7 @@ def view_visit_count_and_policy_with_and_without_dirichlet_noise() -> None:
     axs[0].plot(root_child_n)
     axs[1].plot(pre_noise_policy)
     axs[2].plot(post_noise_policy)
-    plt.savefig(f"{directory_path}/visit_count_vs_policy_vs_policy+noise_{c.ruleset}_{c.model_version}.png")
+    plt.savefig(f"{plots_path}/visit_count_vs_policy_vs_policy+noise_{c.ruleset}_{c.model_version}.png")
     print("Saved")
 
 # ===== MOVE GENERATION =====
@@ -1186,7 +1670,7 @@ def visualize_policy():
 
     value, policy = evaluate(c, game, network)
 
-    pygame.image.save(screen, f"{directory_path}/policy_visualization_screen.png")
+    pygame.image.save(screen, f"{plots_path}/policy_visualization_screen.png")
 
     fig, axs = plt.subplots(1, POLICY_SHAPE[0], figsize=(40, 3))
     fig.suptitle('Policy visualization', y=0.98)
@@ -1197,7 +1681,7 @@ def visualize_policy():
         else:
             axs[i].set_title(f"{policy_index_to_piece[i][0]} rotation {policy_index_to_piece[i][1]} {policy_index_to_piece[i][2]}")
 
-    plt.savefig(f"{directory_path}/policy_visualization_{c.model_version}.png")
+    plt.savefig(f"{plots_path}/policy_visualization_{c.model_version}.png")
     print("saved")
 
 def visualize_policy_from_data():
@@ -1246,7 +1730,7 @@ def plot_stats(model_version=None, data_version=None, average_by_model=False, in
     Plot app and dspp statistics from a single stats file for specific versions.
     """
     data = {}
-    stats_path = f"{directory_path}/data/stats.txt"
+    stats_path = f"{logs_path}/stats.txt"
 
     with open(stats_path, 'r') as f:
         lines = f.readlines()
@@ -1403,7 +1887,7 @@ def plot_stats(model_version=None, data_version=None, average_by_model=False, in
             wrap=True
         )
 
-    png_path = f"{directory_path}/self_play_data_statistics_test.png"
+    png_path = f"{plots_path}/self_play_data_statistics_test.png"
     plt.savefig(png_path, bbox_inches='tight', facecolor='white')
     print(f"Saved {png_path}")
 
@@ -1425,7 +1909,7 @@ def migrate_stats_data():
     print(f"Processing data versions: {data_versions}")
     
     # Prepare output file - check if it exists to determine if we should append
-    output_file = f"{directory_path}/data/stats.txt"
+    output_file = f"{logs_path}/stats.txt"
     
     file_mode = 'a' if os.path.exists(output_file) else 'w'
     if file_mode == 'a':
@@ -1539,7 +2023,7 @@ def test_policy_piece_invariance(c):
             axs[i, j].imshow(policies[i][j], cmap='viridis')
 
     plt.tight_layout()
-    plt.savefig(f"{directory_path}/policy_piece_invariance_{c.model_version}.png")
+    plt.savefig(f"{plots_path}/policy_piece_invariance_{c.model_version}.png")
     print("Saved figure and printed cosine similarities")
 
 def test_simple_piece_network_piece_invariance():
@@ -1598,7 +2082,7 @@ def test_simple_piece_network_piece_invariance():
             axs[i, j].imshow(policies[i][j], cmap='viridis')
     
     plt.tight_layout()
-    plt.savefig(f"{directory_path}/simple_piece_policy_piece_invariance.png")
+    plt.savefig(f"{plots_path}/simple_piece_policy_piece_invariance.png")
     print("Saved figure")
 
 def plot_placement_heatmap(last_n_sets: int = 20) -> None:
@@ -1645,7 +2129,7 @@ def plot_placement_heatmap(last_n_sets: int = 20) -> None:
     ax.set_xlabel('Column')
     ax.set_ylabel('Row (0 = top)')
 
-    out_path = f"{directory_path}/placement_heatmap_{c.model_version}.png"
+    out_path = f"{plots_path}/placement_heatmap_{c.model_version}.png"
     plt.tight_layout()
     plt.savefig(out_path)
     plt.show()
@@ -1707,7 +2191,7 @@ def plot_policy_entropy_over_training(last_n_sets: int = 50) -> None:
     ax.legend(fontsize=8)
     ax.grid(True, linewidth=0.5, alpha=0.3)
 
-    out_path = f"{directory_path}/policy_entropy_{c.model_version}.png"
+    out_path = f"{plots_path}/policy_entropy_{c.model_version}.png"
     plt.tight_layout()
     plt.savefig(out_path)
     plt.show()
@@ -1776,7 +2260,127 @@ def plot_value_reliability_diagram(num_games: int = 20, n_bins: int = 10) -> Non
     ax.legend(fontsize=8)
     ax.grid(True, linewidth=0.5, alpha=0.3)
 
-    out_path = f"{directory_path}/value_reliability_{c.model_version}.png"
+    out_path = f"{plots_path}/value_reliability_{c.model_version}.png"
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+
+
+def plot_value_loss_over_training(n=10) -> None:
+    """Retroactively evaluate the current model on each recent training set.
+
+    Panel 1 — Value MSE per set (proxy for how well value head fits).
+    Panel 2 — Policy cross-entropy per set (for comparison).
+
+    Both panels share the x-axis = data set number (chronological order).
+    """
+    c = Config(shuffle=False, sets_to_train_with=n)
+    model = load_best_model(c)
+
+    # Get filenames in chronological order
+    filenames = get_data_filenames(c)
+    filenames.sort(key=lambda f: int(f.split('.')[0]))
+
+    set_numbers, value_mses, policy_ces = [], [], []
+    eps = 1e-7
+
+    for filename in filenames:
+        set_number = int(filename.split('.')[0])
+        game_set = ujson.load(open(f"{c.data_dir}/{filename}", 'r'))
+
+        # Same feature extraction as train_network_keras
+        features = list(map(list, zip(*game_set)))
+        for i in range(len(features)):
+            features[i] = np.array(features[i])
+        policies = np.array(features.pop()).reshape((-1, POLICY_SIZE))
+        values = np.array(features.pop())
+
+        preds = model.predict(features, verbose=0)
+        value_preds = preds[0].flatten()
+        policy_preds = preds[1]
+
+        mse = float(np.mean((value_preds - values) ** 2))
+        ce = float(-np.mean(np.sum(policies * np.log(np.clip(policy_preds, eps, 1.0)), axis=-1)))
+
+        set_numbers.append(set_number)
+        value_mses.append(mse)
+        policy_ces.append(ce)
+        print(f"Set {set_number}: value MSE={mse:.4f}, policy CE={ce:.4f}")
+
+    window = 5
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
+
+    ax1.plot(set_numbers, value_mses, color='tomato', alpha=0.4, marker='o', markersize=3)
+    if len(value_mses) >= window:
+        smooth = np.convolve(value_mses, np.ones(window) / window, mode='valid')
+        ax1.plot(set_numbers[window - 1:], smooth, color='darkred', linewidth=1.5, label=f'{window}-set avg')
+        ax1.legend(fontsize=8)
+    ax1.set_ylabel('Value MSE')
+    ax1.set_title('Value MSE over Training Sets')
+    ax1.grid(True, linewidth=0.5, alpha=0.3)
+
+    ax2.plot(set_numbers, policy_ces, color='steelblue', alpha=0.4, marker='o', markersize=3)
+    if len(policy_ces) >= window:
+        smooth = np.convolve(policy_ces, np.ones(window) / window, mode='valid')
+        ax2.plot(set_numbers[window - 1:], smooth, color='darkblue', linewidth=1.5, label=f'{window}-set avg')
+        ax2.legend(fontsize=8)
+    ax2.set_xlabel('Data set number')
+    ax2.set_ylabel('Policy cross-entropy')
+    ax2.set_title('Policy Cross-Entropy over Training Sets')
+    ax2.grid(True, linewidth=0.5, alpha=0.3)
+
+    out_path = f"{plots_path}/value_loss_over_training_{c.model_version}.png"
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+
+
+def plot_training_loss_curves() -> None:
+    """Plot actual training loss recorded during self-play training runs.
+
+    Reads Storage/training_log.jsonl — each line is one training call with
+    {model_version, data_number, loss, value_loss, policy_loss}.
+    Plots value and policy loss over data set number (chronological).
+    """
+    c = Config()
+    log_path = logs_path / "training_log.jsonl"
+    entries = [ujson.loads(line) for line in open(log_path)]
+
+    data_numbers = [e["data_number"] for e in entries]
+    value_losses = [e.get("value_loss") for e in entries]
+    policy_losses = [e.get("policy_loss") for e in entries]
+    total_losses = [e.get("loss") for e in entries]
+
+    window = 5
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
+
+    if any(v is not None for v in value_losses):
+        ax1.plot(data_numbers, value_losses, color='tomato', alpha=0.4, marker='o', markersize=3)
+        if len(value_losses) >= window:
+            smooth = np.convolve(value_losses, np.ones(window) / window, mode='valid')
+            ax1.plot(data_numbers[window - 1:], smooth, color='darkred', linewidth=1.5, label=f'{window}-set avg')
+            ax1.legend(fontsize=8)
+        ax1.set_title('Value MSE (actual training, post-fit eval)')
+    else:
+        ax1.plot(data_numbers, total_losses, color='tomato', alpha=0.4, marker='o', markersize=3)
+        ax1.set_title('Total Loss (value head not separately logged)')
+    ax1.set_ylabel('Loss')
+    ax1.grid(True, linewidth=0.5, alpha=0.3)
+
+    if any(p is not None for p in policy_losses):
+        ax2.plot(data_numbers, policy_losses, color='steelblue', alpha=0.4, marker='o', markersize=3)
+        if len(policy_losses) >= window:
+            smooth = np.convolve(policy_losses, np.ones(window) / window, mode='valid')
+            ax2.plot(data_numbers[window - 1:], smooth, color='darkblue', linewidth=1.5, label=f'{window}-set avg')
+            ax2.legend(fontsize=8)
+        ax2.set_title('Policy Cross-Entropy (actual training, post-fit eval)')
+        ax2.set_ylabel('Loss')
+    ax2.set_xlabel('Data set number')
+    ax2.grid(True, linewidth=0.5, alpha=0.3)
+
+    out_path = f"{plots_path}/training_loss_curves_{c.model_version}.png"
     plt.tight_layout()
     plt.savefig(out_path)
     plt.show()
@@ -1828,6 +2432,177 @@ def evaluate_value_metrics(num_games):
     mse = np.mean(errors)
     print(f"MSE over {num_games} games: {mse}")
 
+def populate_training_log() -> None:
+    """Train the current best model on each historical set in chronological order
+    to populate training_log.jsonl. Does NOT save the model — for analysis only."""
+    c = Config(shuffle=False, sets_to_train_with=50)
+    model = load_best_model(c)
+
+    filenames = get_data_filenames(c)
+    filenames.sort(key=lambda f: int(f.split('.')[0]))
+
+    for filename in filenames:
+        set_number = int(filename.split('.')[0])
+        game_set = ujson.load(open(f"{c.data_dir}/{filename}", 'r'))
+        print(f"Training on set {set_number} ({len(game_set)} samples)...")
+        train_network_keras(c, model, game_set, data_number=set_number)
+
+
+def plot_mcts_iter_scaling(iter_values=None, n_games=5) -> None:
+    """Scaling curve: entropy collapse, value spread, policy surprise vs MAX_ITER."""
+    if iter_values is None:
+        iter_values = [80, 160, 240, 400, 600, 800, 1200, 1600]
+
+    results = []
+    for max_iter in iter_values:
+        c = Config(MAX_ITER=max_iter)  # training=False by default
+        model = load_best_model(c)
+        interpreter = get_interpreter(model)
+        prior_ents, visit_ents, val_spreads, surprises = [], [], [], []
+        for _ in range(n_games):
+            game = Game(c.ruleset)
+            game.setup()
+            while not game.is_terminal and len(game.history.states) < MAX_MOVES:
+                move, tree, _ = MCTS(c, game, interpreter)
+                root = tree.get_node("root")
+                child_ids = root.successors(tree.identifier)
+                visits   = np.array([tree.get_node(cid).data.visit_count for cid in child_ids], dtype=float)
+                policies = np.array([tree.get_node(cid).data.policy      for cid in child_ids], dtype=float)
+                values   = np.array([tree.get_node(cid).data.value_avg   for cid in child_ids], dtype=float)
+                total = visits.sum()
+                if total > 0 and policies.sum() > 0:
+                    mask = visits > 0
+                    p_pol = policies / policies.sum()
+                    prior_ents.append(float(-np.sum(p_pol * np.log(p_pol + 1e-12))))
+                    p_vis = visits / total
+                    visit_ents.append(float(-np.sum(p_vis[mask] * np.log(p_vis[mask]))))
+                    val_spreads.append(float(np.std(values[mask])) if mask.sum() > 1 else 0.0)
+                    surprises.append(int(np.argmax(visits) != np.argmax(policies)))
+                game.make_move(move)
+        entry = {
+            "max_iter": max_iter,
+            "prior_entropy": float(np.mean(prior_ents)),
+            "visit_entropy": float(np.mean(visit_ents)),
+            "entropy_collapse": float(np.mean(prior_ents) - np.mean(visit_ents)),
+            "value_spread": float(np.mean(val_spreads)),
+            "policy_surprise": float(np.mean(surprises) * 100),
+        }
+        results.append(entry)
+        print(f"max_iter={max_iter}: collapse={entry['entropy_collapse']:.3f}, surprise={entry['policy_surprise']:.1f}%")
+
+    iters    = [e["max_iter"]          for e in results]
+    prior_e  = [e["prior_entropy"]     for e in results]
+    visit_e  = [e["visit_entropy"]     for e in results]
+    collapse = [e["entropy_collapse"]  for e in results]
+    spreads  = [e["value_spread"]      for e in results]
+    surp     = [e["policy_surprise"]   for e in results]
+
+    # --- print table ---
+    col_w = [10, 15, 15, 18, 14, 17]
+    header = ["MAX_ITER", "prior_entropy", "visit_entropy", "entropy_collapse", "value_spread", "surprise_%"]
+    sep = "  ".join("-" * w for w in col_w)
+    fmt_h = "  ".join(f"{h:<{w}}" for h, w in zip(header, col_w))
+    print(fmt_h)
+    print(sep)
+    for e in results:
+        row = [str(e["max_iter"]),
+               f"{e['prior_entropy']:.4f}",
+               f"{e['visit_entropy']:.4f}",
+               f"{e['entropy_collapse']:.4f}",
+               f"{e['value_spread']:.4f}",
+               f"{e['policy_surprise']:.1f}"]
+        print("  ".join(f"{v:<{w}}" for v, w in zip(row, col_w)))
+    print()
+
+    def _annotate_extremes(ax, xs, ys, fmt="{:.3f}", color="black"):
+        """Label the minimum and maximum y values."""
+        for xi, yi, label in [(xs[0], ys[0], "min" if ys[0] < ys[-1] else "max"),
+                               (xs[-1], ys[-1], "max" if ys[-1] > ys[0] else "min")]:
+            ax.annotate(fmt.format(yi),
+                        xy=(xi, yi), xytext=(0, 7), textcoords='offset points',
+                        ha='center', fontsize=7, color=color)
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+
+    ax = axes[0, 0]
+    ax.plot(iters, prior_e, 'o--', color='gray',      linewidth=0.9, label='prior entropy')
+    ax.plot(iters, visit_e, 'o-',  color='steelblue', linewidth=1.2, label='visit entropy')
+    ax.set_title('Prior vs Visit Entropy')
+    ax.set_ylabel('Shannon entropy')
+    _annotate_extremes(ax, iters, visit_e, color='steelblue')
+
+    axes[0, 1].plot(iters, collapse, 'o-', color='darkblue', linewidth=1.2)
+    axes[0, 1].axhline(0, linestyle='--', color='gray', linewidth=0.7, alpha=0.6)
+    axes[0, 1].set_title('Entropy Collapse (prior − visit)')
+    axes[0, 1].set_ylabel('bits')
+    _annotate_extremes(axes[0, 1], iters, collapse, color='darkblue')
+
+    axes[1, 0].plot(iters, spreads, 'o-', color='tomato', linewidth=1.2)
+    axes[1, 0].set_title('Value Spread')
+    axes[1, 0].set_ylabel('std of value_avg')
+    _annotate_extremes(axes[1, 0], iters, spreads, color='tomato')
+
+    axes[1, 1].plot(iters, surp, 'o-', color='darkorange', linewidth=1.2)
+    axes[1, 1].set_title('Policy Surprise Rate')
+    axes[1, 1].set_ylabel('% positions (top-visit ≠ top-policy)')
+    _annotate_extremes(axes[1, 1], iters, surp, fmt="{:.1f}%", color='darkorange')
+
+    for ax in axes.flat:
+        ax.set_xscale('log')
+        ax.set_xlabel('MAX_ITER')
+        ax.axvline(160, linestyle=':', color='red',   alpha=0.7, linewidth=1.0, label='current (160)')
+        ax.axvline(400, linestyle=':', color='green', alpha=0.7, linewidth=1.0, label='target (400)')
+        ax.grid(True, linewidth=0.5, alpha=0.3)
+        ax.legend(fontsize=7.5)
+
+    c = Config()
+    out_path = f"{plots_path}/mcts_iter_scaling_{c.model_version}.png"
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+
+
+def plot_gating_outcomes() -> None:
+    """Plot gating battle win rates and rolling acceptance rate from Storage/logs/gating_log.jsonl."""
+    c = Config()
+    log_path = logs_path / "gating_log.jsonl"
+    entries = [ujson.loads(line) for line in open(log_path)]
+
+    versions  = [e["challenger_number"] for e in entries]
+    win_rates = [e["win_rate"]          for e in entries]
+    accepted  = [e["accepted"]          for e in entries]
+
+    threshold = c.gating_threshold
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
+
+    colors = ['green' if a else 'red' for a in accepted]
+    ax1.plot(versions, win_rates, color='gray', linewidth=0.7, alpha=0.5)
+    ax1.scatter(versions, win_rates, c=colors, s=20, zorder=3)
+    ax1.axhline(threshold, linestyle='--', color='black', linewidth=0.8, label=f'threshold ({threshold})')
+    ax1.axhline(0.5, linestyle=':', color='gray', linewidth=0.6)
+    ax1.set_ylabel('Win rate')
+    ax1.set_title('Gating Battle Win Rate (green=accepted, red=rejected)')
+    ax1.legend(fontsize=8)
+    ax1.grid(True, linewidth=0.5, alpha=0.3)
+
+    window = 10
+    if len(accepted) >= window:
+        rolling_accept = np.convolve([int(a) for a in accepted], np.ones(window) / window, mode='valid')
+        ax2.plot(versions[window - 1:], rolling_accept, color='steelblue', linewidth=1.2)
+    ax2.set_ylabel(f'{window}-battle acceptance rate')
+    ax2.set_xlabel('Challenger model number')
+    ax2.set_title('Rolling Acceptance Rate')
+    ax2.grid(True, linewidth=0.5, alpha=0.3)
+
+    out_path = f"{plots_path}/gating_outcomes_{c.model_version}.png"
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.show()
+    print(f"Saved → {out_path}")
+
+
 if __name__ == "__main__":
 
     c = Config()
@@ -1839,6 +2614,15 @@ if __name__ == "__main__":
     # plot_value_reliability_diagram()
     # evaluate_value_metrics(num_games=5)
     # plot_mcts_tree_stats(n_games=5)
+    # plot_mcts_tree_stats(n_games=5, max_iter=800)
+    # plot_policy_visit_scatter(n_games=5)
+    # compare_forced_playout_configs(n_games=5)
+    # analyze_fpu(n_games=5)
+    # plot_value_loss_over_training(n=50)
+    plot_mcts_iter_scaling(n_games=10)
+    # plot_gating_outcomes()
+    # populate_training_log()
+    # plot_training_loss_curves()
 
     # ===== DIRICHLET ANALYSIS =====
     # plot_dirichlet_noise()
