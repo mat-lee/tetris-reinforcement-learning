@@ -5,6 +5,7 @@ from piece import Piece
 from const import *
 
 import random
+import numpy as np
 
 class Player:
     """Parent class for both human and AI players."""
@@ -55,24 +56,17 @@ class Player:
 
     @property
     def ghost_y(self):
-        ghost_y = self.piece.location.y
-        coordinate_list = self.piece.get_mino_coords(self.piece.location.x, 
-                                            ghost_y, 
-                                            self.piece.location.rotation, 
-                                            self.piece.type)
-        
-        collided = False
-        while collided == False:
-            ghost_y += 1
-            coordinate_list = [[col, row + 1] for col, row in coordinate_list]
-
-            for col, row in coordinate_list:
-                if row < 0 or row > ROWS - 1:
-                    collided = True
-                elif self.board.grid[row][col] != 0:
-                    collided = True
-            
-        return ghost_y - 1
+        piece = self.piece
+        base_coords = piece.get_mino_coords(piece.location.x, piece.location.y,
+                                            piece.location.rotation, piece.type)
+        grid = self.board.grid
+        delta = 1
+        while True:
+            for col, row in base_coords:
+                r = row + delta
+                if r > ROWS - 1 or (r >= 0 and grid[r][col] != 0):
+                    return piece.location.y + delta - 1
+            delta += 1
 
     def can_move(self, piece, x_offset=0, y_offset=0):
         grid = self.board.grid
@@ -214,21 +208,16 @@ class Player:
         if len(cleared_rows) > 0:
             cleared_rows.sort()
 
-        # Move rows down one and make a empty line at the top
-        for cleared_row in cleared_rows:
-            for row in range(cleared_row)[::-1]:
-                for col in range(COLS):
-                    grid[row + 1][col] = grid[row][col]
-
-            self.board.empty_line(0)
+        # Remove cleared rows and prepend empty rows at the top
+        if cleared_rows:
+            self.board.grid = np.vstack([
+                np.zeros((len(cleared_rows), COLS), dtype=object),
+                np.delete(self.board.grid, cleared_rows, axis=0)
+            ])
+            grid = self.board.grid  # update local reference
 
         if rows_cleared > 0:
-            is_all_clear = True
-            for row in range(rows_cleared, ROWS): # rows_cleared num of empty lines at top
-                for col in range(COLS):
-                    if grid[row][col] != 0: # careful with ghost type
-                        is_all_clear = False
-                        break
+            is_all_clear = not np.any(self.board.grid[rows_cleared:] != 0)
 
         attack = stats.get_attack(rows_cleared, is_tspin, is_mini, is_all_clear, piece.type) # also updates stats
         stats.pieces += 1
@@ -270,7 +259,7 @@ class Player:
     # AI methods
     def copy(self):
         new_player = Player(self.ruleset)
-        
+
         new_player.board = self.board.copy()
         new_player.queue = self.queue.copy()
         new_player.stats.pieces = self.stats.pieces
@@ -284,6 +273,25 @@ class Player:
         new_player.garbage_to_receive = self.garbage_to_receive[:]
         new_player.color = self.color
         new_player.draw_coords = self.draw_coords
+
+        return new_player
+
+    def copy_no_board(self):
+        """Create a player copy that shares the board reference.
+        Safe only when the caller guarantees the board will not be mutated."""
+        # Use __new__ to bypass Player.__init__ so we never allocate a Board().
+        new_player = object.__new__(Player)
+        new_player.board = self.board  # shared reference — no copy
+        new_player.queue = self.queue.copy()
+        new_player.stats = self.stats.copy()
+        new_player.game_over = self.game_over
+        new_player.garbage_to_receive = self.garbage_to_receive[:]
+        new_player.garbage_to_send = []
+        new_player.color = self.color
+        new_player.piece = self.piece.copy() if self.piece is not None else None
+        new_player.held_piece = self.held_piece
+        new_player.draw_coords = self.draw_coords
+        new_player.ruleset = self.ruleset
 
         return new_player
 

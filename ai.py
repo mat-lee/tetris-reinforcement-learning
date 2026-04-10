@@ -19,7 +19,6 @@ import random
 from scipy import signal
 import sys
 import time
-import treelib
 import ujson
 
 from tensorflow import keras
@@ -49,9 +48,9 @@ HIDE_PRINTS = True
 
 # Where data and models are saved
 directory_path = Path.cwd().parent / "Storage"
+logs_path = directory_path / "logs"
+logs_path.mkdir(exist_ok=True)
 
-total_branch = 0
-number_branch = 0
 
 class Config():
     def __init__(
@@ -61,7 +60,7 @@ class Config():
 
         # For naming data and models
         model_version=6.0,
-        data_version=2.7,
+        data_version=2.8,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -99,10 +98,10 @@ class Config():
         training_loops=1, # Number of training loops before evaluation
         sets_to_train_with=10, # Number of past sets to train with
         battle_games=200, # Number of evaluation games
-        gating_threshold=0.55, # Minimum winrate to replace the best model
+        gating_threshold=0.52, # Minimum winrate to replace the best model
         gating_threshold_type='moreorequal', # 'moreorequal' or 'more'
 
-        MAX_ITER=160, 
+        MAX_ITER=400, 
         CPUCT=0.75, # CPUCT is the scalar multiple of the policy term in PUCT
         DPUCT=1, # DPUCT is an additive scalar in the denominator of in PUCT
 
@@ -135,12 +134,12 @@ class Config():
         playout_cap_mult=5,
 
         use_dirichlet_noise=True,
-        DIRICHLET_ALPHA=0.05,
+        DIRICHLET_ALPHA=0.1,
         DIRICHLET_S=25,
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
 
-        use_forced_playouts_and_policy_target_pruning=True,
+        use_forced_playouts_and_policy_target_pruning=False,
         CForcedPlayout=1,
     ):
         self.visual = visual
@@ -229,6 +228,51 @@ class Config():
     def negate_value(self, value):
         return (-value if self.use_tanh else 1 - value)
 
+class MCTSNode:
+    """Lightweight MCTS tree node. Replaces treelib.Node to avoid UUID overhead."""
+    __slots__ = ('identifier', 'data', '_parent_id', '_children')
+
+    def __init__(self, identifier, data, parent_id=None):
+        self.identifier = identifier
+        self.data = data
+        self._parent_id = parent_id
+        self._children = []
+
+    def is_root(self):
+        return self._parent_id is None
+
+    def is_leaf(self):
+        return len(self._children) == 0
+
+    def successors(self, _tree_id=None):
+        return self._children
+
+    def predecessor(self, _tree_id=None):
+        return self._parent_id
+
+
+class MCTSTree:
+    """Lightweight MCTS tree backed by a plain dict. Replaces treelib.Tree."""
+
+    def __init__(self):
+        self._nodes = {}
+        self._counter = 0
+        self.identifier = 0  # kept for API compatibility (successors/predecessor pass this)
+
+    def create_node(self, identifier=None, data=None, parent=None):
+        if identifier is None:
+            self._counter += 1
+            identifier = self._counter
+        node = MCTSNode(identifier=identifier, data=data, parent_id=parent)
+        self._nodes[identifier] = node
+        if parent is not None:
+            self._nodes[parent]._children.append(identifier)
+        return node
+
+    def get_node(self, identifier):
+        return self._nodes[identifier]
+
+
 class NodeState():
     """Node class for storing the game in the tree.
     
@@ -246,12 +290,11 @@ class NodeState():
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]:
-    global total_branch, number_branch
+def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
     # Picks a move for the AI to make 
 
     # Initialize the search tree
-    tree = treelib.Tree()
+    tree = MCTSTree()
     game_copy = game.copy()
 
     # Restrict previews
@@ -300,38 +343,36 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             max_child_id = None
             parent_visits = node.data.visit_count
 
-            number_branch += 1 # debug for branching factor
-            
-            # Debuging
-            Qs = []
-            Us = []
+            sqrt_parent = math.sqrt(parent_visits)
+            unvisited_U_scale = config.CPUCT * sqrt_parent / config.DPUCT
+            check_forced = (
+                config.use_forced_playouts_and_policy_target_pruning
+                and config.training
+                and node.is_root()
+                and not (config.use_playout_cap_randomization and fast_iter)
+            )
 
             # Look through each child
             for child_id in child_ids:
-                
-                total_branch += 1
 
                 # For each child calculate a score
                 # Polynomial upper confidence trees (PUCT)
                 child_data = tree.get_node(child_id).data
 
                 Q = child_data.value_avg
-                U = config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(config.DPUCT+child_data.visit_count)
+                vc = child_data.visit_count
+                if vc == 0:
+                    U = unvisited_U_scale * child_data.policy
+                else:
+                    U = config.CPUCT * child_data.policy * sqrt_parent / (config.DPUCT + vc)
 
                 child_score = Q + U
 
-                Qs.append(Q)
-                Us.append(U)
-
                 # Check forced playouts
-                if config.use_forced_playouts_and_policy_target_pruning and config.training: # Only use during training/when configured
-                    if node.is_root(): # Only use for the root
-                        if not (config.use_playout_cap_randomization == True and fast_iter == True): # Don't use during fast iterations
-                            if child_data.visit_count >= 1:
-                                n_forced = math.sqrt(config.CForcedPlayout * child_data.policy * parent_visits)
-
-                                if child_data.visit_count < n_forced:
-                                    child_score = float('inf')
+                if check_forced and vc >= 1:
+                    n_forced = math.sqrt(config.CForcedPlayout * child_data.policy * parent_visits)
+                    if vc < n_forced:
+                        child_score = float('inf')
 
                 if child_score >= max_child_score:
                     max_child_score = child_score
@@ -381,12 +422,10 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                 if node.is_root() and config.use_root_softmax:
                     # Formula taken from katago
                     max_policy = max(policies)
+                    log_max = math.log(max_policy)
+                    inv_temp = 1.0 / config.RootSoftmaxTemp
                     for i in range(len(policies)):
-                        # pn.append(policies[i])
-
-                        policies[i] = math.exp((math.log(policies[i]) - math.log(max_policy)) * 1 / config.RootSoftmaxTemp) # ??? katago formula
-                        
-                        # ps.append(policies[i])
+                        policies[i] = math.exp((math.log(policies[i]) - log_max) * inv_temp)
 
                 policy_sum = sum(policies)
 
@@ -464,6 +503,8 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         # the evaluation is from the perspective of the other player, 
         # thus you have to flip the value
         value = config.negate_value(value)
+        pos_value = value
+        neg_value = config.negate_value(value)
 
         # Go back up the tree and updates nodes
         # Propogate positive values for the player made the move, and negative for the other player
@@ -473,7 +514,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             node_state = node.data
             node_state.visit_count += 1
             # Revert value if the other player just went
-            node_state.value_sum += (value if node_state.game.turn == final_node_turn else config.negate_value(value))
+            node_state.value_sum += (pos_value if node_state.game.turn == final_node_turn else neg_value)
             node_state.value_avg = node_state.value_sum / node_state.visit_count
 
             upwards_id = node.predecessor(tree.identifier)
@@ -482,10 +523,9 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         # Repeat for root node
         node_state = node.data
         node_state.visit_count += 1
-        node_state.value_sum += (value if node_state.game.turn == final_node_turn else config.negate_value(value))
+        node_state.value_sum += (pos_value if node_state.game.turn == final_node_turn else neg_value)
         node_state.value_avg = node_state.value_sum / node_state.visit_count
 
-        # print(MAX_DEPTH, total_branch//number_branch)
 
         # After playouts are updated, update Fpu values
 
@@ -503,24 +543,20 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                 parent_value = parent.data.value_avg
 
                 node_explored_policy = 0
+                unvisited_states = []
 
-                # 1) Find expanded policy for the parent node
+                # Single pass: collect explored policy and unvisited siblings
                 sibling_ids = parent.successors(tree.identifier)
                 for sibling_id in sibling_ids:
                     sibling_data = tree.get_node(sibling_id).data
-
-                    # Check if node has been visited
                     if sibling_data.visit_count > 0:
                         node_explored_policy += sibling_data.policy
+                    else:
+                        unvisited_states.append(sibling_data)
 
-                # 2) Update children nodes
-                for sibling_id in sibling_ids:
-                    sibling_data = tree.get_node(sibling_id).data
-
-                    # Check if node hasn't been visited
-                    if sibling_data.visit_count == 0:
-                        # negate parent value
-                        sibling_data.value_avg = max(config.value_min, config.negate_value(parent_value) - config.FpuValue * math.sqrt(node_explored_policy))
+                fpu = max(config.value_min, config.negate_value(parent_value) - config.FpuValue * math.sqrt(node_explored_policy))
+                for sibling_data in unvisited_states:
+                    sibling_data.value_avg = fpu
 
 
     # ----- Pick a move randomly using temperature BEFORE pruning visit counts -----
@@ -616,7 +652,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
 
     return move, tree, save_move
 
-def pick_random_move_by_policy(tree: treelib.Tree) -> tuple:
+def pick_random_move_by_policy(tree: MCTSTree) -> tuple:
     # Sample a random move from the root node of the tree using the policy as probabilities
     moves, policies = [], []
 
@@ -636,12 +672,10 @@ def pick_random_move_by_policy(tree: treelib.Tree) -> tuple:
 def get_move_list(move_matrix, policy_matrix):
     # Returns list of possible moves with their policy
     # Removes buffer
-    mask = np.multiply(move_matrix, policy_matrix)
-
-    move_list = np.argwhere(mask != 0)
+    move_list = np.argwhere(move_matrix)
 
     # Formats moves from (policy index, row, col) to (value, (policy index, col - 2, row))
-    move_list = [(mask[move[0]][move[1]][move[2]], (move[0], move[2] - 2, move[1])) for move in move_list]
+    move_list = [(policy_matrix[pi, ri, ci], (pi, ci - 2, ri)) for pi, ri, ci in move_list]
 
     return move_list
 
@@ -694,7 +728,7 @@ def train_network(config, model, set):
     elif config.model == 'pytorch':
         train_network_pytorch(config, model, set)
 
-def train_network_keras(config, model, set):
+def train_network_keras(config, model, set, data_number=None):
     # Keras has 2GB limit (?)
 
     # Fit the model
@@ -717,11 +751,28 @@ def train_network_keras(config, model, set):
     # Adjust learning rate HOW???
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
 
-    history = model.fit(x=features, 
-                        y=[values, policies], 
-                        batch_size=64, 
-                        epochs=config.epochs, 
+    history = model.fit(x=features,
+                        y=[values, policies],
+                        batch_size=64,
+                        epochs=config.epochs,
                         shuffle=config.shuffle)
+
+    # Compute per-head losses manually (model.evaluate returns a single weighted scalar)
+    preds = model.predict(features, verbose=0)
+    value_preds = preds[0].flatten()
+    policy_preds = preds[1]
+    value_loss = float(np.mean((value_preds - values.flatten()) ** 2))
+    policy_loss = float(-np.mean(np.sum(policies * np.log(np.clip(policy_preds, 1e-7, 1.0)), axis=-1)))
+
+    log_entry = {
+        "model_version": config.model_version,
+        "data_number": data_number if data_number is not None else highest_data_number(config),
+        "loss": float(history.history['loss'][-1]),
+        "value_loss": value_loss,
+        "policy_loss": policy_loss,
+    }
+    with open(f"{logs_path}/training_log.jsonl", 'a') as f:
+        f.write(ujson.dumps(log_entry) + '\n')
 
 def train_network_pytorch(config, model, set):
     features = list(map(list, zip(*set)))
@@ -781,43 +832,45 @@ def evaluate(config, game, network):
     
 def evaluate_from_tflite(game, interpreter):
     # Use a neural network to return value and policy.
+
+    # Build metadata cache once per interpreter instance (never changes after allocation).
+    if not hasattr(interpreter, '_eval_cache'):
+        input_details  = interpreter.get_input_details()
+        output_details = sorted(interpreter.get_output_details(), key=lambda x: x['name'])
+        idx_map = []
+        for det in input_details:
+            split_str = det['name'].split(":")[0]
+            if len(split_str) == 12:   # "serving_default" → first input
+                idx_map.append(0)
+            else:
+                idx_map.append(int(split_str.split("_")[2]))
+        interpreter._eval_cache = {
+            'idx_map': idx_map,
+            'val_idx': output_details[0]['index'],
+            'pol_idx': output_details[1]['index'],
+        }
+    cache = interpreter._eval_cache
+
     data = game_to_X(game)
     X = []
     for feature in data:
         if type(feature) in (float, int):
             X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
         else:
-            np_feature = np.expand_dims(np.float32(feature), axis=0)
+            # np.asarray avoids a copy when feature is already float32 ndarray
+            np_feature = np.expand_dims(np.asarray(feature, dtype=np.float32), axis=0)
             if np_feature.shape == (1, 26, 10): # Expand grids
                 np_feature = np.expand_dims(np_feature, axis=-1)
             X.append(np_feature)
-    
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
 
-    output_details.sort(key=lambda x: x['name'])
-
-    for i in range(len(X)):
-        split_str = input_details[i]['name'].split(":")[0]
-        
-        if len(split_str) == 12: # "serving_default"
-            idx = 0
-        else: 
-            split_str = split_str.split("_")[2]
-            idx = int(split_str)
-        
-        assert input_details[i]["index"] == i
+    for i, idx in enumerate(cache['idx_map']):
         interpreter.set_tensor(i, X[idx])
 
     interpreter.invoke()
 
-    value = interpreter.get_tensor(output_details[0]['index'])
-    policies = interpreter.get_tensor(output_details[1]['index'])
+    value    = interpreter.get_tensor(cache['val_idx']).item()
+    policies = interpreter.get_tensor(cache['pol_idx']).reshape(POLICY_SHAPE)
 
-    # Both value and policies are returned as arrays
-    value = value.item()
-    policies = policies.reshape(POLICY_SHAPE)
-    
     return value, policies
 
 def evaluate_from_keras(game, model):
@@ -907,12 +960,8 @@ def search_statistics(tree):
 
 
 def simplify_grid(grid):
-    # Replaces minos in a grid with 1s.
-    for row in range(len(grid)):
-        for col in range(len(grid[0])):
-            if grid[row][col] != 0:
-                grid[row][col] = 1
-    return grid
+    # Replaces minos in a grid with 1s, returning a float32 numpy array.
+    return (grid != 0).astype(np.float32)
 
 # Helper function to reverse data if needed
 def reverse_if_needed(data, condition):
@@ -921,13 +970,12 @@ def reverse_if_needed(data, condition):
 # Methods for getting game data
 # All of them orient the info in the perspective of the active player
 def get_grids(game):
-    grids = [[x[:] for x in player.board.grid] for player in game.players]
-    for grid in grids:
-        simplify_grid(grid)
+    # simplify_grid now creates float32 numpy arrays directly; no copy needed.
+    grids = [simplify_grid(player.board.grid) for player in game.players]
     return reverse_if_needed(grids, game.turn == 1)
 
 def get_pieces(game):
-    piece_table = np.zeros((2, 2 + PREVIEWS, len(MINOS)), dtype=int)
+    piece_table = np.zeros((2, 2 + PREVIEWS, len(MINOS)), dtype=np.float32)
     for i, player in enumerate(game.players):
         if player.piece:  # Active piece: 0
             piece_table[i][0][MINOS.index(player.piece.type)] = 1
@@ -972,6 +1020,8 @@ def game_to_X(game):
 
 def reflect_grid(grid):
     # Return a grid flipped horizontally
+    if isinstance(grid, np.ndarray):
+        return np.fliplr(grid).tolist()
     return [row[::-1] for row in grid]
 
 def reflect_pieces(piece_table):
@@ -1274,7 +1324,7 @@ def make_training_set(config, interference_network, num_games, save_game=False, 
             "dspp": round(sum([x["dspp"] for x in series_stats]) / len(series_stats), 3)
         }
 
-        with open(f"{directory_path}/data/stats.txt", 'a+') as out_file:
+        with open(f"{logs_path}/stats.txt", 'a+') as out_file:
             out_file.write(f"{averaged_stats}\n")
     
     else:
@@ -1511,6 +1561,18 @@ def self_play_loop(config, skip_first_set=False):
         )
 
         print(f"Challenger {win_loss[0]} - {win_loss[1]} Best")
+
+        gating_entry = {
+            "model_version": config.model_version,
+            "challenger_number": next_ver,
+            "challenger_wins": int(win_loss[0]),
+            "best_wins": int(win_loss[1]),
+            "total_games": config.battle_games,
+            "win_rate": float(win_loss[0]) / config.battle_games,
+            "accepted": bool(win),
+        }
+        with open(f"{logs_path}/gating_log.jsonl", 'a') as f:
+            f.write(ujson.dumps(gating_entry) + '\n')
 
         if win:
             # Challenger network becomes next highest version
