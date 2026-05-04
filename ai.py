@@ -35,7 +35,12 @@ tf.get_logger().setLevel('ERROR')
 
 from torch.utils.data import DataLoader
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+if torch.backends.mps.is_available():
+    device = 'mps'
+elif torch.cuda.is_available():
+    device = 'cuda'
+else:
+    device = 'cpu'
 
 # Not sure where I'm importing pygame from but sure
 pygame.init()
@@ -68,27 +73,10 @@ class Config():
         use_tflite=True, # If true uses tflite, otherwise uses keras directly. Only for keras models
                          # If uses tflite, then interference and training are separate classes
                          # Otherwise, interference and training are the same class
-        default_model=gen_alphasame_nn,
         move_algorithm='convolutional', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
-        # Architecture Parameters
-        #   Fishlike model
-        l1_neurons=256, 
-        l2_neurons=32,
-
-        #   Alphalike model
-        blocks=10,
-        pooling_blocks=2,
-        filters=16, 
-        cpool=4,
-
-        #   Only use one of dropout or l2_reg
-        dropout=0.25,
-        l2_reg=3e-5,
-
-        kernels=1,
-        o_side_neurons=16,
-        value_head_neurons=16,
+        # Architecture Parameters — pass an AlphaSameConfig to override defaults
+        model_config=None,
 
         use_tanh=False, # If false means using sigmoid; affects data saving and model activation
         # Makes evaluation range from -1 to 1, while sigmoid ranges from 0 to 1
@@ -115,9 +103,8 @@ class Config():
 
         # Training Parameters
         training=False, # Set to true to use a variety of features
-        learning_rate=0.001, 
-        loss_weights=[1, 1], 
-        epochs=1, 
+        learning_rate=0.001,
+        epochs=1,
         batch_size=64,
 
         data_loading_style='merge', # 'merge' combines sets for training, 'distinct' trains across sets first
@@ -148,19 +135,8 @@ class Config():
         self.ruleset = ruleset
         self.model = model
         self.use_tflite = use_tflite
-        self.default_model = default_model
         self.move_algorithm = move_algorithm
-        self.l1_neurons = l1_neurons
-        self.l2_neurons = l2_neurons
-        self.blocks = blocks
-        self.pooling_blocks = pooling_blocks
-        self.filters = filters
-        self.cpool = cpool
-        self.dropout = dropout
-        self.l2_reg = l2_reg
-        self.kernels = kernels
-        self.o_side_neurons = o_side_neurons
-        self.value_head_neurons = value_head_neurons
+        self.model_config = model_config if model_config is not None else AlphaSameConfig()
         self.use_tanh = use_tanh
         self.training_games = training_games
         self.training_loops = training_loops
@@ -178,7 +154,6 @@ class Config():
         self.temperature = temperature
         self.training = training
         self.learning_rate = learning_rate
-        self.loss_weights = loss_weights
         self.epochs = epochs
         self.batch_size = batch_size
         self.data_loading_style = data_loading_style
@@ -205,7 +180,8 @@ class Config():
 
     @property
     def model_dir(self):
-        # Returns the path to the model file
+        if self.model == 'pytorch':
+            return f"{directory_path}/pytorch_models/{self.ruleset}.{self.model_version}"
         return f"{directory_path}/models/{self.ruleset}.{self.model_version}"
     
     @property
@@ -693,7 +669,10 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
     # Concatenate active player's kernels/features with opponent's dense layer and non-player specific features
     # Apply value head and policy head 
 
-    model = config.default_model(config)
+    if config.model == 'keras':
+        model = gen_alphasame_nn(config.model_config, config.use_tanh)
+    elif config.model == 'pytorch':
+        model = AlphaSame(config.model_config, config.use_tanh)
 
     if config.model == 'keras':
         if plot_model == True:
@@ -701,9 +680,9 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
 
         # Loss is the sum of MSE of values and Cross entropy of policies
         model.compile(optimizer=keras.optimizers.Adam(
-            learning_rate=config.learning_rate), 
-            loss=["mean_squared_error", "categorical_crossentropy"], 
-            loss_weights=config.loss_weights
+            learning_rate=config.learning_rate),
+            loss=["mean_squared_error", "categorical_crossentropy"],
+            loss_weights=[1, 1]
             )
 
         if show_summary: model.summary()
@@ -774,51 +753,65 @@ def train_network_keras(config, model, set, data_number=None):
     with open(f"{logs_path}/training_log.jsonl", 'a') as f:
         f.write(ujson.dumps(log_entry) + '\n')
 
-def train_network_pytorch(config, model, set):
+def train_network_pytorch(config, model, set, data_number=None):
     features = list(map(list, zip(*set)))
 
     for i in range(len(features)):
         features[i] = torch.tensor(features[i])
 
         if features[i].dim() == 3 and features[i].shape[1] == 26 and features[i].shape[2] == 10:
-            # Add channel for grids
-            features[i] = features[i].unsqueeze(dim=1)
-            # Convert to float
-            features[i] = features[i].type(torch.float)
-        
+            features[i] = features[i].unsqueeze(dim=1).type(torch.float)
+
     dataset = torch.utils.data.TensorDataset(*features)
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=config.shuffle)
 
-    loss_fn_1 = nn.MSELoss()
-    loss_fn_2 = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
+    loss_fn_value = nn.MSELoss()
+    loss_fn_policy = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
-    for data_point in dataloader:
-        for feat in data_point:
-            feat = feat.to(device)
+    total_loss = value_loss_sum = policy_loss_sum = 0.0
+    batches = 0
 
-        y_policy = data_point.pop()
-        y_value = data_point.pop().type(torch.float)
+    for _ in range(config.epochs):
+        for data_point in dataloader:
+            data_point = [feat.to(device) for feat in data_point]
 
-        # Compute prediction error
-        pred_value, pred_policy = model(*data_point)
+            y_policy = data_point.pop()
+            y_value = data_point.pop().type(torch.float)
 
-        # Reshape policy and value
-        pred_value = torch.reshape(pred_value, (-1,))
-        pred_policy = torch.reshape(pred_policy, (-1, *POLICY_SHAPE))
+            pred_value, pred_policy = model(*data_point)
 
-        loss_1 = loss_fn_1(pred_value, y_value)
-        loss_2 = loss_fn_2(pred_policy, y_policy)
+            pred_value = pred_value.reshape(-1)
+            pred_policy = torch.reshape(pred_policy, (-1, *POLICY_SHAPE))
 
-        loss = loss_1 + loss_2
+            loss_1 = loss_fn_value(pred_value, y_value)
+            loss_2 = loss_fn_policy(pred_policy, y_policy)
+            loss = loss_1 + loss_2
 
-        # Backpropagation
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
 
-    loss = loss.item()
-    print(f"loss: {loss:>7f}")
+            value_loss_sum += loss_1.item()
+            policy_loss_sum += loss_2.item()
+            total_loss += loss.item()
+            batches += 1
+
+    avg_loss = total_loss / max(batches, 1)
+    avg_value_loss = value_loss_sum / max(batches, 1)
+    avg_policy_loss = policy_loss_sum / max(batches, 1)
+
+    print(f"loss: {avg_loss:>7f}  value: {avg_value_loss:>7f}  policy: {avg_policy_loss:>7f}")
+
+    log_entry = {
+        "model_version": config.model_version,
+        "data_number": data_number if data_number is not None else highest_data_number(config),
+        "loss": avg_loss,
+        "value_loss": avg_value_loss,
+        "policy_loss": avg_policy_loss,
+    }
+    with open(f"{logs_path}/training_log.jsonl", 'a') as f:
+        f.write(ujson.dumps(log_entry) + '\n')
 
 def evaluate(config, game, network):
     if config.model == 'keras':
@@ -914,7 +907,7 @@ def evaluate_pytorch(game, model):
         
         value, policies = model.forward(*X)
 
-    return value.item(), policies.numpy().reshape(POLICY_SHAPE)
+    return value.item(), policies.cpu().numpy().reshape(POLICY_SHAPE)
 
 def random_evaluate():
     # For testing how fast the MCTS is
@@ -1581,7 +1574,7 @@ def self_play_loop(config, skip_first_set=False):
             if config.model == 'keras':
                 challenger_train_network.save(f"{directory_path}/models/{config.ruleset}.{config.model_version}/{next_ver}.keras")
             if config.model == 'pytorch':
-                torch.save(challenger_train_network.state_dict(), f"{directory_path}/pytorch_models/{config.ruleset}.{config.model_version}/{next_ver}")
+                torch.save(challenger_train_network.state_dict(), f"{config.model_dir}/{next_ver}")
 
             # The new network becomes the network to beat
             best_interference_network = challenger_interference_network
@@ -1630,8 +1623,8 @@ def load_model(config, model_number):
     elif config.model == 'pytorch':
         path = f"{config.model_dir}/{model_number}"
 
-        model = config.default_model(config)
-        model.load_state_dict(torch.load(path))
+        model = AlphaSame(config.model_config, config.use_tanh)
+        model.load_state_dict(torch.load(path, weights_only=True))
         model.to(device)
         model.eval()
 
@@ -1735,7 +1728,6 @@ def highest_data_number(config):
 def blockPrint():
     if HIDE_PRINTS:
         sys.stdout = open(os.devnull, 'w')
-        sys.stderr = open(os.devnull, 'w')
 
 # Restore
 def enablePrint():
