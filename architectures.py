@@ -105,10 +105,7 @@ class AlphaSame(nn.Module):
             + 1                             # color (who has first move)
         )
 
-        self.policy_head = nn.Sequential(
-            nn.Linear(head_inputs, POLICY_SIZE),
-            nn.Sigmoid(),
-        )
+        self.policy_head = nn.Linear(head_inputs, POLICY_SIZE)
 
         self.value_head = nn.Sequential(
             nn.Linear(head_inputs, model_config.value_head_neurons),

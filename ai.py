@@ -769,6 +769,7 @@ def train_network_pytorch(config, model, set, data_number=None):
     loss_fn_policy = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
+    model.train()
     total_loss = value_loss_sum = policy_loss_sum = 0.0
     batches = 0
 
@@ -776,13 +777,13 @@ def train_network_pytorch(config, model, set, data_number=None):
         for data_point in dataloader:
             data_point = [feat.to(device) for feat in data_point]
 
-            y_policy = data_point.pop()
+            y_policy = data_point.pop().reshape(-1, POLICY_SIZE)
             y_value = data_point.pop().type(torch.float)
 
             pred_value, pred_policy = model(*data_point)
 
             pred_value = pred_value.reshape(-1)
-            pred_policy = torch.reshape(pred_policy, (-1, *POLICY_SHAPE))
+            pred_policy = pred_policy.reshape(-1, POLICY_SIZE)
 
             loss_1 = loss_fn_value(pred_value, y_value)
             loss_2 = loss_fn_policy(pred_policy, y_policy)
@@ -796,6 +797,8 @@ def train_network_pytorch(config, model, set, data_number=None):
             policy_loss_sum += loss_2.item()
             total_loss += loss.item()
             batches += 1
+
+    model.eval()
 
     avg_loss = total_loss / max(batches, 1)
     avg_value_loss = value_loss_sum / max(batches, 1)
@@ -907,6 +910,7 @@ def evaluate_pytorch(game, model):
         
         value, policies = model.forward(*X)
 
+    policies = torch.softmax(policies.reshape(-1), dim=0)
     return value.item(), policies.cpu().numpy().reshape(POLICY_SHAPE)
 
 def random_evaluate():
