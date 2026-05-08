@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import directory_path, MCTS, load_best_model, get_interpreter, Config
+from ai import directory_path, MCTS, load_best_model, get_interpreter, Config, evaluate
 from const import *
 from game import Game
 from mover import Mover
@@ -35,6 +35,9 @@ class Main:
         mover = self.mover
 
         game.setup()
+
+        game.evaluator = lambda g: evaluate(DefaultConfig, g, interpreter)[0]
+        game.players[0].show_value_estimate = True
 
         while True:
             game.show(screen)
@@ -89,7 +92,13 @@ class Main:
                                 game.players[0].garbage_to_receive.append(random.randint(0, 9))
                                 game.players[1].garbage_to_receive.append(random.randint(0, 9))
                             elif event.key == k_switch:
-                                game.players[0].board, game.players[1].board = game.players[1].board, game.players[0].board
+                                p0, p1 = game.players[0], game.players[1]
+                                p0.board,              p1.board              = p1.board,              p0.board
+                                p0.queue,              p1.queue              = p1.queue,              p0.queue
+                                p0.piece,              p1.piece              = p1.piece,              p0.piece
+                                p0.held_piece,         p1.held_piece         = p1.held_piece,         p0.held_piece
+                                p0.garbage_to_receive, p1.garbage_to_receive = p1.garbage_to_receive, p0.garbage_to_receive
+                                p0.garbage_to_send,    p1.garbage_to_send    = p1.garbage_to_send,    p0.garbage_to_send
                             elif event.key == k_print_board:
                                 print(game.players[game.turn].board.grid)
 

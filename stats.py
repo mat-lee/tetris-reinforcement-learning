@@ -10,6 +10,7 @@ class Stats:
         self.combo = 0
         self.lines_sent = 0
         self.attack_text = ''
+        self.value_estimate = None
 
         self.ruleset = ruleset
 
@@ -22,7 +23,8 @@ class Stats:
         new_stats.combo = self.combo
         new_stats.lines_sent = self.lines_sent
         new_stats.attack_text = self.attack_text
-        
+        new_stats.value_estimate = self.value_estimate
+
         return new_stats
 
     def update_b2b_level(self):

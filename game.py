@@ -16,6 +16,8 @@ class Game:
 
         self.history = History()
 
+        self.evaluator = None
+
     # Game methods
     def setup(self):
         self.add_bag_to_all()
@@ -79,6 +81,11 @@ class Game:
                 self.add_history()
 
             self.turn = 1 - self.turn # 1 to 0
+
+            if self.evaluator and not self.is_terminal:
+                if self.players[self.turn].show_value_estimate:
+                    value = self.evaluator(self)
+                    self.players[self.turn].stats.value_estimate = float(value)
 
     def make_move(self, move, add_bag=True, add_history=True):
         self.move_piece(move)

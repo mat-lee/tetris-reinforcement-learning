@@ -113,6 +113,7 @@ class Config():
         shuffle=True,
         use_experimental_features=False, # Before setting to true, check if it's in use
         save_all=False,
+        loss_weights=[1, 1],
 
         use_random_starting_moves=False, # If true, pick the first few moves randomly with respect to policy weights
 
@@ -162,6 +163,7 @@ class Config():
         self.shuffle = shuffle
         self.use_experimental_features = use_experimental_features
         self.save_all = save_all
+        self.loss_weights = loss_weights
         self.use_random_starting_moves = use_random_starting_moves
         self.use_playout_cap_randomization = use_playout_cap_randomization
         self.playout_cap_chance = playout_cap_chance
@@ -682,7 +684,7 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
         model.compile(optimizer=keras.optimizers.Adam(
             learning_rate=config.learning_rate),
             loss=["mean_squared_error", "categorical_crossentropy"],
-            loss_weights=[1, 1]
+            loss_weights=config.loss_weights
             )
 
         if show_summary: model.summary()

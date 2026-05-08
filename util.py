@@ -1725,7 +1725,7 @@ def test_generate_move_matrix():
 
 # ===== STATISTICS =====
 
-def plot_stats(model_version=None, data_version=None, average_by_model=False, include_rank_data=True):
+def plot_stats(model_version=None, data_version=None, average_by_model=False, include_rank_data=True, show_trend=False):
     """
     Plot app and dspp statistics from a single stats file for specific versions.
     """
@@ -1733,35 +1733,26 @@ def plot_stats(model_version=None, data_version=None, average_by_model=False, in
     stats_path = f"{logs_path}/stats.txt"
 
     with open(stats_path, 'r') as f:
-        lines = f.readlines()
-        for line in lines:
-            line = line.strip("\n")
+        for line in f:
+            line = line.strip()
             if not line:
                 continue
             try:
                 dicts = ast.literal_eval(line)
-
-                # Filter by versions
                 if model_version is not None:
                     if isinstance(model_version, list):
                         if dicts['model_version'] not in model_version:
                             continue
-                    else:
-                        if dicts['model_version'] != model_version:
-                            continue
-
+                    elif dicts['model_version'] != model_version:
+                        continue
                 if data_version is not None:
                     if isinstance(data_version, list):
                         if dicts['data_version'] not in data_version:
                             continue
-                    else:
-                        if dicts['data_version'] != data_version:
-                            continue
-
-                # Collect
+                    elif dicts['data_version'] != data_version:
+                        continue
                 for stat in dicts:
                     data.setdefault(stat, []).append(dicts[stat])
-
             except Exception:
                 continue
 
@@ -1774,121 +1765,73 @@ def plot_stats(model_version=None, data_version=None, average_by_model=False, in
         df = df.groupby(['model_number', 'model_version'])[['app', 'dspp']].mean().reset_index()
 
     rank_data = {
-        "D": {"app": 0.154, "dspp": 0.034, "color": "#8f7591"},
-        "C": {"app": 0.235, "dspp": 0.058, "color": "#733d8e"},
-        "B": {"app": 0.290, "dspp": 0.081, "color": "#4f64c9"},
-        "A": {"app": 0.360, "dspp": 0.105, "color": "#47ac52"},
-        "S": {"app": 0.467, "dspp": 0.133, "color": "#e1a71c"},
+        "D":  {"app": 0.154, "dspp": 0.034, "color": "#8f7591"},
+        "C":  {"app": 0.235, "dspp": 0.058, "color": "#733d8e"},
+        "B":  {"app": 0.290, "dspp": 0.081, "color": "#4f64c9"},
+        "A":  {"app": 0.360, "dspp": 0.105, "color": "#47ac52"},
+        "S":  {"app": 0.467, "dspp": 0.133, "color": "#e1a71c"},
         "SS": {"app": 0.586, "dspp": 0.154, "color": "#db8a1e"},
-        "U": {"app": 0.673, "dspp": 0.169, "color": "#ff3913"},
+        "U":  {"app": 0.673, "dspp": 0.169, "color": "#ff3913"},
     }
 
     change_data = {
-        (5.9, 2.4): "Kicktable was corrected from SRS-X to SRS+ and all-spins were fixed for the AI",
-        (5.9, 2.6): "Changed temperature from 0.0 -> 0.1, CForcedPlayout 2 -> 1, DIRICHLET_ALPHA 0.02 -> 0.05, SETS_TO_TRAIN_WITH 10 -> 5"
+        (5.9, 2.4): "Kicktable corrected SRS-X→SRS+; all-spins fixed",
+        (5.9, 2.6): "Temp 0.0→0.1, ForcedPlayouts 2→1, α 0.02→0.05, sets 10→5",
+        (6.0, 2.8): "α 0.05→0.1, forced playouts off, max_iter 160→400",
     }
 
-    # Slightly wider figure; constrained_layout to avoid overlap and preserve sharpness
-    fig, axs = plt.subplots(2, figsize=(7.5, 6.8 + 1.2 * 2), constrained_layout=True)
-    fig.suptitle('Selfplay Data Statistics')
+    fig, axs = plt.subplots(2, 1, figsize=(10, 6), tight_layout=True)
+    fig.suptitle('Self-Play Data Statistics')
 
-    all_handles, all_labels = [], []
-    rank_added = False
-    change_added = False
-    stats = ['app', 'dspp']
-
-    for i, stat in enumerate(stats):
+    for i, stat in enumerate(['app', 'dspp']):
+        ax = axs[i]
         values = df[stat].values
-        # Thin line, antialiased, no markers to avoid clutter
-        axs[i].plot(
-            values,
-            label=f'{stat}',
-            linewidth=0.9,
-            antialiased=True,
-            alpha=0.5,
-        )
-        # Smoothed trend line (rolling mean with window = 10% of data, min 5)
-        window = max(5, len(values) // 10)
-        if len(values) >= window:
-            kernel = np.ones(window) / window
-            trend = np.convolve(values, kernel, mode='valid')
-            offset = (len(values) - len(trend)) // 2
-            axs[i].plot(
-                range(offset, offset + len(trend)),
-                trend,
-                linewidth=1.5,
-                color='red',
-                antialiased=True,
-                label='trend',
-            )
-        axs[i].set_xlabel("Model number" if average_by_model else "Training step")
-        axs[i].set_ylabel(stat)
+        n = len(values)
 
-        # subtle grid to help see small changes
-        axs[i].grid(True, linewidth=0.5, alpha=0.3)
+        ax.plot(values, color='tab:gray', linewidth=0.8, alpha=0.6, label=stat)
 
-        # Move plot a touch right (kept from your original intent)
-        box = axs[i].get_position()
-        axs[i].set_position([box.x0, box.y0, box.width * 0.985, box.height])
+        # Smoothed trend
+        if show_trend:
+            window = max(7, n // 8)
+            if n >= window:
+                kernel = np.exp(-0.5 * ((np.arange(window) - window / 2) / (window / 4)) ** 2)
+                kernel /= kernel.sum()
+                trend = np.convolve(values, kernel, mode='valid')
+                offset = (n - len(trend)) // 2
+                ax.plot(range(offset, offset + len(trend)), trend, linewidth=1.5, label='trend')
 
+        ax.set_ylabel(stat)
+        ax.set_xlabel("Model number" if average_by_model else "Training step")
+        ax.legend(loc='upper left', fontsize=8)
+
+        # Rank reference lines
         if include_rank_data and stat in rank_data["D"]:
+            y_min, y_max = values.min(), values.max() * 1.08
+            prev_y = -np.inf
+            min_gap = (y_max - y_min) * 0.06
             for rank, rinfo in rank_data.items():
-                if stat in rinfo:
-                    rank_line = axs[i].axhline(
-                        y=rinfo[stat],
-                        color=rinfo["color"],
-                        alpha=0.5,
-                        linestyle='-',
-                        linewidth=0.6,  # thinner ref lines
-                        zorder=0
-                    )
-                    if not rank_added:
-                        all_handles.append(rank_line)
-                        all_labels.append(f'Rank {rank}')
-            rank_added = True
+                y_val = rinfo.get(stat)
+                if y_val is None or y_val < y_min or y_val > y_max:
+                    continue
+                ax.axhline(y=y_val, color=rinfo['color'], linestyle='--', linewidth=0.8, alpha=0.5)
+                if y_val - prev_y >= min_gap:
+                    ax.text(1.002, y_val, rank, transform=ax.get_yaxis_transform(),
+                            fontsize=7, color=rinfo['color'], va='center')
+                    prev_y = y_val
 
-        # Change indicators (thin dashed)
-        for (mv, dv), change in change_data.items():
-            matching = df[(df.get('model_version') == mv) & (df.get('data_version') == dv)] if {'model_version','data_version'}.issubset(df.columns) else pd.DataFrame()
-            if not matching.empty:
-                x_pos = (matching.index[0] if not average_by_model else matching['model_number'].iloc[0])
-                change_line = axs[i].axvline(
-                    x=x_pos,
-                    color='red',
-                    linestyle='--',
-                    alpha=0.5,
-                    linewidth=0.6
-                )
-                if not change_added:
-                    all_handles.append(change_line)
-                    all_labels.append('Change')
-                    change_added = True
-
-    if all_handles:
-        fig.legend(
-            all_handles,
-            all_labels,
-            loc='upper right',
-            bbox_to_anchor=(0.98, 0.98),
-            fontsize=9,
-            frameon=True,
-            fancybox=True,
-            shadow=True
-        )
-
-    if change_data:
-        change_text = "Changes:\n" + "\n".join([f"• Model {mv}, Data {dv}: {desc}" for (mv, dv), desc in change_data.items()])
-        fig.text(
-            0.02, 0.01, change_text,
-            fontsize=7,
-            va='bottom',
-            ha='left',
-            bbox=dict(boxstyle='round,pad=0.6', facecolor='lightblue', alpha=0.8, edgecolor='blue'),
-            wrap=True
-        )
+        # Change markers
+        if {'model_version', 'data_version'}.issubset(df.columns):
+            for (mv, dv), _ in change_data.items():
+                matching = df[(df['model_version'] == mv) & (df['data_version'] == dv)]
+                if not matching.empty:
+                    x_pos = matching.index[0] if not average_by_model else matching['model_number'].iloc[0]
+                    ax.axvline(x=x_pos, color='gray', linestyle=':', linewidth=1.0, alpha=0.7)
+                    if i == 0:
+                        ax.text(x_pos + n * 0.005, 1.01, f"v{dv}",
+                                transform=ax.get_xaxis_transform(), fontsize=8, color='gray', va='bottom')
 
     png_path = f"{plots_path}/self_play_data_statistics_test.png"
-    plt.savefig(png_path, bbox_inches='tight', facecolor='white')
+    plt.savefig(png_path, bbox_inches='tight')
     print(f"Saved {png_path}")
 
     return fig, axs
@@ -2564,41 +2507,62 @@ def plot_mcts_iter_scaling(iter_values=None, n_games=5) -> None:
 
 
 def plot_gating_outcomes() -> None:
-    """Plot gating battle win rates and rolling acceptance rate from Storage/logs/gating_log.jsonl."""
+    """Plot gating battle win rates and attempts-per-challenger from Storage/logs/gating_log.jsonl."""
+    from collections import defaultdict
     c = Config()
     log_path = logs_path / "gating_log.jsonl"
     entries = [ujson.loads(line) for line in open(log_path)]
 
-    versions  = [e["challenger_number"] for e in entries]
-    win_rates = [e["win_rate"]          for e in entries]
-    accepted  = [e["accepted"]          for e in entries]
-
+    win_rates = [e["win_rate"] for e in entries]
+    accepted  = [e["accepted"] for e in entries]
     threshold = c.gating_threshold
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
+    # Group attempts by challenger number (preserving order of first appearance)
+    groups = defaultdict(list)
+    for e in entries:
+        groups[e["challenger_number"]].append(e)
+    challenger_nums = sorted(groups.keys())
+    attempts_per  = [len(groups[n]) for n in challenger_nums]
+    ever_accepted = [any(e["accepted"] for e in groups[n]) for n in challenger_nums]
 
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), tight_layout=True)
+
+    # --- Top: win rate per attempt (sequential index) ---
+    n = len(entries)
     colors = ['green' if a else 'red' for a in accepted]
-    ax1.plot(versions, win_rates, color='gray', linewidth=0.7, alpha=0.5)
-    ax1.scatter(versions, win_rates, c=colors, s=20, zorder=3)
+    ax1.plot(range(n), win_rates, color='gray', linewidth=0.7, alpha=0.5)
+    ax1.scatter(range(n), win_rates, c=colors, s=18, zorder=3)
     ax1.axhline(threshold, linestyle='--', color='black', linewidth=0.8, label=f'threshold ({threshold})')
     ax1.axhline(0.5, linestyle=':', color='gray', linewidth=0.6)
     ax1.set_ylabel('Win rate')
-    ax1.set_title('Gating Battle Win Rate (green=accepted, red=rejected)')
+    ax1.set_title('Gating attempts (green=accepted, red=rejected)')
     ax1.legend(fontsize=8)
     ax1.grid(True, linewidth=0.5, alpha=0.3)
 
-    window = 10
-    if len(accepted) >= window:
-        rolling_accept = np.convolve([int(a) for a in accepted], np.ones(window) / window, mode='valid')
-        ax2.plot(versions[window - 1:], rolling_accept, color='steelblue', linewidth=1.2)
-    ax2.set_ylabel(f'{window}-battle acceptance rate')
-    ax2.set_xlabel('Challenger model number')
-    ax2.set_title('Rolling Acceptance Rate')
-    ax2.grid(True, linewidth=0.5, alpha=0.3)
+    # Shade alternating challenger groups and label them
+    idx = 0
+    for j, num in enumerate(challenger_nums):
+        count = attempts_per[j]
+        if j % 2 == 0:
+            ax1.axvspan(idx - 0.5, idx + count - 0.5, color='gray', alpha=0.06)
+        mid = idx + count / 2 - 0.5
+        ax1.text(mid, ax1.get_ylim()[1] if ax1.get_ylim()[1] > 0 else threshold + 0.05,
+                 str(num), ha='center', va='bottom', fontsize=7, color='#555555')
+        idx += count
+
+    # --- Bottom: attempts per challenger ---
+    bar_colors = ['green' if ok else 'tomato' for ok in ever_accepted]
+    ax2.bar(range(len(challenger_nums)), attempts_per, color=bar_colors, width=0.6, alpha=0.8)
+    ax2.axhline(1, linestyle=':', color='gray', linewidth=0.8)
+    ax2.set_xticks(range(len(challenger_nums)))
+    ax2.set_xticklabels(challenger_nums, fontsize=8)
+    ax2.set_ylabel('Attempts')
+    ax2.set_xlabel('Challenger number')
+    ax2.set_title('Attempts per challenger (green=accepted, red=still failing)')
+    ax2.grid(True, axis='y', linewidth=0.5, alpha=0.3)
 
     out_path = f"{plots_path}/gating_outcomes_{c.model_version}.png"
-    plt.tight_layout()
-    plt.savefig(out_path)
+    plt.savefig(out_path, bbox_inches='tight')
     plt.show()
     print(f"Saved → {out_path}")
 
@@ -2608,7 +2572,7 @@ if __name__ == "__main__":
     c = Config()
 
     # ===== BLOG / ANALYSIS =====
-    # plot_stats(include_rank_data=True)
+    # plot_stats(include_rank_data=True) 
     # plot_policy_entropy_over_training()
     # plot_placement_heatmap()
     # plot_value_reliability_diagram()
@@ -2619,8 +2583,8 @@ if __name__ == "__main__":
     # compare_forced_playout_configs(n_games=5)
     # analyze_fpu(n_games=5)
     # plot_value_loss_over_training(n=50)
-    plot_mcts_iter_scaling(n_games=10)
-    # plot_gating_outcomes()
+    # plot_mcts_iter_scaling(n_games=10)
+    plot_gating_outcomes()
     # populate_training_log()
     # plot_training_loss_curves()
 

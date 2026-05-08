@@ -25,6 +25,8 @@ class Player:
 
         self.draw_coords = None
 
+        self.show_value_estimate = False
+
         self.ruleset = ruleset # Specifies tetr.io s1 or s2 spins
 
     # Game methods    
@@ -408,8 +410,15 @@ class Player:
                     text = self.stats.attack_text
             elif stat['text'] == 'pieces_stat': 
                 text = str(self.stats.pieces)
-            elif stat['text'] == 'attack_stat': 
+            elif stat['text'] == 'attack_stat':
                 text = str(self.stats.lines_sent)
+            elif stat['text'] == 'EVAL':
+                text = 'EVAL' if self.show_value_estimate else None
+            elif stat['text'] == 'value_stat':
+                if self.show_value_estimate and self.stats.value_estimate is not None:
+                    text = f'{self.stats.value_estimate:.2f}'
+                else:
+                    text = None
 
             if stat['text'] == 'LOSES' and self.game_over == False:
                 text = None
