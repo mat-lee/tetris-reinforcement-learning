@@ -7,6 +7,7 @@ from move_generation import get_move_matrix
 
 import copy
 from collections import deque
+from datetime import datetime
 import gc
 #import json
 import logging
@@ -205,6 +206,25 @@ class Config():
     
     def negate_value(self, value):
         return (-value if self.use_tanh else 1 - value)
+
+
+def config_to_dict(config):
+    d = {k: v for k, v in vars(config).items() if k != 'model_config'}
+    d['model_config'] = vars(config.model_config)
+    return d
+
+def append_version_record(config, model_number):
+    path = Path(config.model_dir) / "versions.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "model_number": model_number,
+        "backend": config.model,
+        "config": config_to_dict(config),
+    }
+    with open(path, 'a') as f:
+        f.write(ujson.dumps(entry) + '\n')
+
 
 class MCTSNode:
     """Lightweight MCTS tree node. Replaces treelib.Node to avoid UUID overhead."""
@@ -693,6 +713,7 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
             path = config.model_dir
             os.makedirs(path, exist_ok=True)
             model.save(f"{path}/0.keras")
+            append_version_record(config, 0)
 
         return model
     elif config.model == 'pytorch':
@@ -701,7 +722,8 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
         if save_network:
             path = config.model_dir
             os.makedirs(path, exist_ok=True)
-            torch.save(model.state_dict(), f"{path}/0")
+            torch.save(model.state_dict(), f"{path}/0.pt")
+            append_version_record(config, 0)
 
 def train_network(config, model, set):
     if config.model == 'keras':
@@ -1323,8 +1345,8 @@ def make_training_set(config, interference_network, num_games, save_game=False, 
             "dspp": round(sum([x["dspp"] for x in series_stats]) / len(series_stats), 3)
         }
 
-        with open(f"{logs_path}/stats.txt", 'a+') as out_file:
-            out_file.write(f"{averaged_stats}\n")
+        with open(f"{logs_path}/stats.jsonl", 'a') as out_file:
+            out_file.write(ujson.dumps(averaged_stats) + '\n')
     
     else:
         return series_data
@@ -1424,8 +1446,7 @@ def get_data_filenames(config) -> list:
                 filenames.append(filename)
 
                 sets += 1
-        except:
-            # ds_store file
+        except (ValueError, IndexError):
             continue
     
     # print(sets)
@@ -1578,9 +1599,10 @@ def self_play_loop(config, skip_first_set=False):
             print(f"Challenger version {next_ver} won and is now the best network")
 
             if config.model == 'keras':
-                challenger_train_network.save(f"{directory_path}/models/{config.ruleset}.{config.model_version}/{next_ver}.keras")
+                challenger_train_network.save(f"{config.model_dir}/{next_ver}.keras")
             if config.model == 'pytorch':
-                torch.save(challenger_train_network.state_dict(), f"{config.model_dir}/{next_ver}")
+                torch.save(challenger_train_network.state_dict(), f"{config.model_dir}/{next_ver}.pt")
+            append_version_record(config, next_ver)
 
             # The new network becomes the network to beat
             best_interference_network = challenger_interference_network
@@ -1627,7 +1649,10 @@ def load_model(config, model_number):
 
         model = keras.models.load_model(path)
     elif config.model == 'pytorch':
-        path = f"{config.model_dir}/{model_number}"
+        path = f"{config.model_dir}/{model_number}.pt"
+        if not os.path.exists(path):
+            # Legacy checkpoints saved without an extension
+            path = f"{config.model_dir}/{model_number}"
 
         model = AlphaSame(config.model_config, config.use_tanh)
         model.load_state_dict(torch.load(path, weights_only=True))
@@ -1694,7 +1719,7 @@ def highest_model_number(config):
                 model_number = int(filename.split('.')[0])
                 if model_number > max:
                     max = model_number
-            except:
+            except ValueError:
                 continue
 
     elif config.model == 'pytorch':
@@ -1703,9 +1728,13 @@ def highest_model_number(config):
         os.makedirs(path, exist_ok=True)
 
         for filename in os.listdir(path):
-            model_number = int(filename)
-            if model_number > max:
-                max = model_number
+            stem = filename[:-3] if filename.endswith('.pt') else filename
+            try:
+                model_number = int(stem)
+                if model_number > max:
+                    max = model_number
+            except ValueError:
+                continue
 
     return max
 
@@ -1718,13 +1747,12 @@ def highest_data_number(config):
 
     for filename in os.listdir(path):
         try:
-            if filename.split('.')[0].isdigit() == False:
+            if not filename.split('.')[0].isdigit():
                 continue
-
             data_number = int(filename.split('.')[0])
             if data_number > max:
                 max = data_number
-        except:
+        except (ValueError, IndexError):
             continue
 
     return max

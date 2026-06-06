@@ -1730,31 +1730,37 @@ def plot_stats(model_version=None, data_version=None, average_by_model=False, in
     Plot app and dspp statistics from a single stats file for specific versions.
     """
     data = {}
-    stats_path = f"{logs_path}/stats.txt"
+    sources = [
+        (f"{logs_path}/stats.jsonl", ujson.loads),
+        (f"{logs_path}/stats.txt", ast.literal_eval),
+    ]
 
-    with open(stats_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                dicts = ast.literal_eval(line)
-                if model_version is not None:
-                    if isinstance(model_version, list):
-                        if dicts['model_version'] not in model_version:
+    for stats_path, parse in sources:
+        if not os.path.exists(stats_path):
+            continue
+        with open(stats_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    dicts = parse(line)
+                    if model_version is not None:
+                        if isinstance(model_version, list):
+                            if dicts['model_version'] not in model_version:
+                                continue
+                        elif dicts['model_version'] != model_version:
                             continue
-                    elif dicts['model_version'] != model_version:
-                        continue
-                if data_version is not None:
-                    if isinstance(data_version, list):
-                        if dicts['data_version'] not in data_version:
+                    if data_version is not None:
+                        if isinstance(data_version, list):
+                            if dicts['data_version'] not in data_version:
+                                continue
+                        elif dicts['data_version'] != data_version:
                             continue
-                    elif dicts['data_version'] != data_version:
-                        continue
-                for stat in dicts:
-                    data.setdefault(stat, []).append(dicts[stat])
-            except Exception:
-                continue
+                    for stat in dicts:
+                        data.setdefault(stat, []).append(dicts[stat])
+                except Exception:
+                    continue
 
     df = pd.DataFrame(data)
     if df.empty or 'app' not in df.columns or 'dspp' not in df.columns:
