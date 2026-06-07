@@ -65,8 +65,8 @@ class Config():
         visual=True, # Whether to display the training
 
         # For naming data and models
-        model_version=6.0,
-        data_version=2.8,
+        model_version=7.0,
+        data_version=2.9,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -783,7 +783,7 @@ def train_network_pytorch(config, model, set, data_number=None):
     for i in range(len(features)):
         features[i] = torch.tensor(features[i])
 
-        if features[i].dim() == 3 and features[i].shape[1] == 26 and features[i].shape[2] == 10:
+        if features[i].dim() == 3 and features[i].shape[1] == ROWS and features[i].shape[2] == COLS:
             features[i] = features[i].unsqueeze(dim=1).type(torch.float)
 
     dataset = torch.utils.data.TensorDataset(*features)
@@ -879,7 +879,7 @@ def evaluate_from_tflite(game, interpreter):
         else:
             # np.asarray avoids a copy when feature is already float32 ndarray
             np_feature = np.expand_dims(np.asarray(feature, dtype=np.float32), axis=0)
-            if np_feature.shape == (1, 26, 10): # Expand grids
+            if np_feature.shape == (1, ROWS, COLS): # Expand grids
                 np_feature = np.expand_dims(np_feature, axis=-1)
             X.append(np_feature)
 
@@ -902,7 +902,7 @@ def evaluate_from_keras(game, model):
             X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
         else:
             np_feature = np.expand_dims(np.float32(feature), axis=0)
-            if np_feature.shape == (1, 26, 10): # Expand grids
+            if np_feature.shape == (1, ROWS, COLS): # Expand grids
                 np_feature = np.expand_dims(np_feature, axis=-1)
             X.append(np_feature)
         

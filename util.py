@@ -1923,6 +1923,66 @@ def migrate_stats_data():
     print(f"Processed {total_records} new records")
     print(f"Data written to: {output_file}")
 
+def migrate_data_board_height(src_data_version, dst_data_version, src_rows=26, ruleset='s2'):
+    """
+    Pad every board and policy in src_data_version up from src_rows to the
+    current ROWS, writing to dst_data_version. Generic across src_rows.
+
+    Sample layout (from game_to_X + play_game in ai.py): indices 0 and 5 are
+    boards shaped (src_rows, COLS); index 12 is the policy shaped
+    (POLICY_SHAPE[0], src_rows - 1, POLICY_SHAPE[2]); everything else passes
+    through. Empty rows are prepended at the top, assuming both boards and the
+    policy row axis are oriented top-down. If a spot-check shows the policy
+    landed on the wrong axis end, flip the policy padding (last two lines of
+    this function).
+
+    Streams one file at a time. Idempotent: skips files already present in dst.
+    """
+    src_dir = f"{directory_path}/data/{ruleset}.{src_data_version}"
+    dst_dir = f"{directory_path}/data/{ruleset}.{dst_data_version}"
+    os.makedirs(dst_dir, exist_ok=True)
+
+    pad_top = ROWS - src_rows
+    if pad_top < 0:
+        raise ValueError(f"ROWS ({ROWS}) must be >= src_rows ({src_rows})")
+    if pad_top == 0:
+        print(f"Nothing to do: ROWS == src_rows == {ROWS}")
+        return
+
+    filenames = sorted(f for f in os.listdir(src_dir) if f.endswith('.txt'))
+    print(f"Migrating {len(filenames)} files: rows {src_rows} -> {ROWS}")
+
+    for fname in filenames:
+        src_path = f"{src_dir}/{fname}"
+        dst_path = f"{dst_dir}/{fname}"
+        if os.path.exists(dst_path):
+            print(f"  skip {fname} (exists)")
+            continue
+
+        samples = ujson.load(open(src_path, 'r'))
+        for sample in samples:
+            for board_idx in (0, 5):
+                board = np.asarray(sample[board_idx])
+                assert board.shape == (src_rows, COLS), f"board shape {board.shape} != ({src_rows}, {COLS})"
+                padded = np.zeros((ROWS, COLS), dtype=board.dtype)
+                padded[pad_top:, :] = board
+                sample[board_idx] = padded.tolist()
+
+            policy = np.asarray(sample[12])
+            assert policy.shape == (POLICY_SHAPE[0], src_rows - 1, POLICY_SHAPE[2]), \
+                f"policy shape {policy.shape} != ({POLICY_SHAPE[0]}, {src_rows - 1}, {POLICY_SHAPE[2]})"
+            padded_policy = np.zeros(POLICY_SHAPE, dtype=policy.dtype)
+            padded_policy[:, pad_top:, :] = policy
+            sample[12] = padded_policy.tolist()
+
+        ujson.dump(samples, open(dst_path, 'w'))
+        src_mb = os.path.getsize(src_path) / 1e6
+        dst_mb = os.path.getsize(dst_path) / 1e6
+        print(f"  {fname}: {len(samples)} samples, {src_mb:.1f} MB -> {dst_mb:.1f} MB")
+
+    print(f"Done. Output: {dst_dir}")
+
+
 # ===== INVARIANCE TESTING =====
 
 def test_policy_piece_invariance(c):

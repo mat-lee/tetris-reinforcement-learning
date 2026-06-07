@@ -2,10 +2,9 @@ import pygame
 from numpy import prod
 
 # Board Dimensions:
-ROWS = 26
+# TETR.IO standard: 10 wide, 40 tall (20 visible + 20 hidden buffer/vanish zone).
+ROWS = 40
 SPAWN_ROW = 23
-GRID_ROWS = 20
-
 GRID_ROWS = 20
 COLS = 10
 
