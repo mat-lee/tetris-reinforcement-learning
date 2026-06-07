@@ -37,7 +37,7 @@ class Main:
         game.setup()
 
         game.evaluator = lambda g: evaluate(DefaultConfig, g, interpreter)[0]
-        game.players[0].show_value_estimate = True
+        game.renderers[0].show_value_estimate = True
 
         while True:
             game.show(screen)

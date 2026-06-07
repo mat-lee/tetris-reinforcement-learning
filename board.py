@@ -20,6 +20,15 @@ class Board():
             self.grid[ROWS - garbage_lines + i, :] = 1
             self.grid[ROWS - garbage_lines + i, garbage_col] = 0
 
+    def is_valid_position(self, coords):
+        """Return True if all (col, row) coords are in-bounds and unoccupied."""
+        for col, row in coords:
+            if row < 0 or row > ROWS - 1 or col < 0 or col > COLS - 1:
+                return False
+            if self.grid[row][col] != 0:
+                return False
+        return True
+
     def copy(self):
         new = Board.__new__(Board)
         new.grid = self.grid.copy()

@@ -2697,4 +2697,6 @@ if __name__ == "__main__":
     # ===== DATA MIGRATION =====
     # migrate_stats_data()
 
+    instantiate_network(c, show_summary=True)
+
 "/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/util.py"

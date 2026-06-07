@@ -1,6 +1,7 @@
 from const import *
 from history import History
 from player import Human, AI
+from player_renderer import PlayerRenderer
 
 class Game:
     """Contains all players and communicates with them."""
@@ -17,6 +18,11 @@ class Game:
         self.history = History()
 
         self.evaluator = None
+
+        self.renderers = [
+            PlayerRenderer(self.human_player, (0, 0)),
+            PlayerRenderer(self.ai_player, (WIDTH / 2, 0)),
+        ]
 
     # Game methods
     def setup(self):
@@ -83,7 +89,7 @@ class Game:
             self.turn = 1 - self.turn # 1 to 0
 
             if self.evaluator and not self.is_terminal:
-                if self.players[self.turn].show_value_estimate:
+                if self.renderers[self.turn].show_value_estimate:
                     value = self.evaluator(self)
                     self.players[self.turn].stats.value_estimate = float(value)
 
@@ -227,9 +233,6 @@ class Game:
 
     # Show methods
     def show(self, surface):
-        self.show_bg(surface)
-        for player in self.players:
-            player.show(surface)
-
-    def show_bg(self, surface):
         surface.fill((0, 0, 0))
+        for renderer in self.renderers:
+            renderer.show(surface)
