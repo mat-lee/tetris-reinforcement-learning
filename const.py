@@ -38,7 +38,7 @@ SDF = 1/10
 PREVIEWS = 5
 
 # Screen Dimensions:
-MINO_SIZE = 30
+MINO_SIZE = 20
 
 N_BUFFER = 0
 S_BUFFER = 0

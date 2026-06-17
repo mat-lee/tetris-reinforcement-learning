@@ -16,7 +16,9 @@ from ai import *
 show_training = True
 skip_first_set = False # If you want to jump straight to model training/evaluation
 
-DefaultConfig = Config(visual=show_training)
+DefaultConfig = Config(
+    visual=show_training,
+)
 
 # Create a network if none exist already
 if highest_model_number(DefaultConfig) == -1:

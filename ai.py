@@ -5,6 +5,7 @@ from game import Game
 from piece_location import PieceLocation
 from move_generation import get_move_matrix
 
+import asyncio
 import copy
 from collections import deque
 from datetime import datetime
@@ -74,10 +75,13 @@ class Config():
         use_tflite=True, # If true uses tflite, otherwise uses keras directly. Only for keras models
                          # If uses tflite, then interference and training are separate classes
                          # Otherwise, interference and training are the same class
+        tflite_num_threads=2, # CPU threads for the tflite interpreter. Default 2 keeps the
+                              # laptop responsive; raise to use more cores during long batch jobs.
+        batched_inference=False, # Pytorch only. If True, self-play and battle run all games
+                                # concurrently and coalesce NN calls into one batched forward.
+                                # If False, falls back to the original serial loop (one game at a time, BS=1).
+        model_config=AuxBaseResNetConfig(), # Architecture Parameters
         move_algorithm='convolutional', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
-
-        # Architecture Parameters — pass an AlphaSameConfig to override defaults
-        model_config=None,
 
         use_tanh=False, # If false means using sigmoid; affects data saving and model activation
         # Makes evaluation range from -1 to 1, while sigmoid ranges from 0 to 1
@@ -105,6 +109,7 @@ class Config():
         # Training Parameters
         training=False, # Set to true to use a variety of features
         learning_rate=0.001,
+        weight_decay=0.0,
         epochs=1,
         batch_size=64,
 
@@ -137,8 +142,10 @@ class Config():
         self.ruleset = ruleset
         self.model = model
         self.use_tflite = use_tflite
+        self.tflite_num_threads = tflite_num_threads
+        self.batched_inference = batched_inference
+        self.model_config = model_config
         self.move_algorithm = move_algorithm
-        self.model_config = model_config if model_config is not None else AlphaSameConfig()
         self.use_tanh = use_tanh
         self.training_games = training_games
         self.training_loops = training_loops
@@ -156,6 +163,7 @@ class Config():
         self.temperature = temperature
         self.training = training
         self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
         self.epochs = epochs
         self.batch_size = batch_size
         self.data_loading_style = data_loading_style
@@ -650,6 +658,344 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
 
     return move, tree, save_move
 
+
+# ============================================================================
+# Async batched MCTS (PyTorch only).
+# Cross-game leaf parallelization: N concurrent games coalesce their NN
+# evaluations into one model.forward(batch=K). Each tree is still pure
+# sequential PUCT — search quality is identical to the sync MCTS above.
+# If you change MCTS(), mirror the change in amcts() below.
+# ============================================================================
+
+class BatchedEvaluator:
+    """Coalesces concurrent aevaluate() calls into one model.forward(batch=K)."""
+    def __init__(self, model, config, max_batch=128, timeout_ms=2):
+        self.model = model
+        self.config = config
+        self.max_batch = max_batch
+        self.timeout_s = timeout_ms / 1000
+        self._queue = None  # created in start() to bind to running loop
+        self._task = None
+        self._stop = False
+
+    async def start(self):
+        self._queue = asyncio.Queue()
+        self._stop = False
+        self._task = asyncio.create_task(self._worker())
+
+    async def stop(self):
+        self._stop = True
+        if self._task is not None:
+            await self._task
+            self._task = None
+
+    async def submit(self, x_features):
+        """x_features: list of per-sample tensors (no batch dim), matching
+        the 11 outputs of game_to_X. Returns (value: float, policy: np.ndarray)."""
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        await self._queue.put((x_features, fut))
+        return await fut
+
+    async def _worker(self):
+        while True:
+            try:
+                first = await asyncio.wait_for(self._queue.get(), timeout=0.05)
+            except asyncio.TimeoutError:
+                if self._stop and self._queue.empty():
+                    return
+                continue
+
+            batch = [first]
+            # Opportunistic drain — small timeout so undersized batches still go.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self.timeout_s
+            while len(batch) < self.max_batch:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                try:
+                    batch.append(await asyncio.wait_for(self._queue.get(), timeout=remaining))
+                except asyncio.TimeoutError:
+                    break
+
+            self._dispatch(batch)
+
+    def _dispatch(self, batch):
+        n_features = len(batch[0][0])
+        # Stack each feature across the batch dim
+        xs = []
+        for i in range(n_features):
+            stacked = torch.stack([b[0][i] for b in batch], dim=0).to(device)
+            xs.append(stacked)
+
+        with torch.no_grad():
+            out = self.model.forward(*xs)
+        values_t, policies_t = out[0], out[1]
+
+        # Softmax per-sample, matching evaluate_pytorch
+        policies_flat = torch.softmax(policies_t.reshape(len(batch), -1), dim=1)
+        values_np = values_t.detach().cpu().numpy().reshape(-1)
+        policies_np = policies_flat.detach().cpu().numpy().reshape(len(batch), *POLICY_SHAPE)
+
+        for i, (_, fut) in enumerate(batch):
+            fut.set_result((float(values_np[i]), policies_np[i]))
+
+
+def _build_features_for_batcher(game):
+    """Build the per-sample feature list (no batch dim) for BatchedEvaluator.submit.
+    Mirrors evaluate_pytorch's per-sample tensor construction minus the unsqueeze(0)."""
+    data = game_to_X(game)
+    X = []
+    for feature in data:
+        tensor = torch.tensor(feature)
+        if tensor.size() == (ROWS, COLS):
+            tensor = tensor.unsqueeze(dim=0)  # add channel dim → (1, ROWS, COLS)
+            tensor = tensor.type(torch.float)
+        X.append(tensor)
+    return X
+
+
+async def aevaluate(config, game, evaluator: BatchedEvaluator):
+    """Async drop-in for evaluate(): submits features to the batcher and awaits result."""
+    x = _build_features_for_batcher(game)
+    value, policy = await evaluator.submit(x)
+    return value, policy
+
+
+async def amcts(config, game, evaluator: BatchedEvaluator) -> tuple[tuple, MCTSTree, bool]:
+    """Async mirror of MCTS(). Identical PUCT logic; only evaluate() is awaited."""
+    tree = MCTSTree()
+    game_copy = game.copy()
+
+    for player in game_copy.players:
+        while len(player.queue.pieces) > PREVIEWS:
+            player.queue.pieces.pop(-1)
+
+    initial_state = NodeState(game=game_copy, move=None)
+    tree.create_node(identifier="root", data=initial_state)
+
+    MAX_DEPTH = 0
+    iter = 0
+
+    max_iterations = None
+    fast_iter = False
+
+    if config.training and config.use_playout_cap_randomization:
+        if random.random() < config.playout_cap_chance:
+            max_iterations = math.ceil(config.playout_cap_mult * (config.MAX_ITER / (config.playout_cap_chance * (config.playout_cap_mult - 1) + 1)))
+        else:
+            max_iterations = math.floor(config.MAX_ITER / (config.playout_cap_chance * (config.playout_cap_mult - 1) + 1))
+            fast_iter = True
+    else:
+        max_iterations = config.MAX_ITER
+
+    while iter < max_iterations:
+        iter += 1
+        node = tree.get_node("root")
+        node_state = node.data
+        DEPTH = 0
+
+        while not node.is_leaf():
+            child_ids = node.successors(tree.identifier)
+            max_child_score = -1
+            max_child_id = None
+            parent_visits = node.data.visit_count
+
+            sqrt_parent = math.sqrt(parent_visits)
+            unvisited_U_scale = config.CPUCT * sqrt_parent / config.DPUCT
+            check_forced = (
+                config.use_forced_playouts_and_policy_target_pruning
+                and config.training
+                and node.is_root()
+                and not (config.use_playout_cap_randomization and fast_iter)
+            )
+
+            for child_id in child_ids:
+                child_data = tree.get_node(child_id).data
+                Q = child_data.value_avg
+                vc = child_data.visit_count
+                if vc == 0:
+                    U = unvisited_U_scale * child_data.policy
+                else:
+                    U = config.CPUCT * child_data.policy * sqrt_parent / (config.DPUCT + vc)
+                child_score = Q + U
+
+                if check_forced and vc >= 1:
+                    n_forced = math.sqrt(config.CForcedPlayout * child_data.policy * parent_visits)
+                    if vc < n_forced:
+                        child_score = float('inf')
+
+                if child_score >= max_child_score:
+                    max_child_score = child_score
+                    max_child_id = child_id
+
+            node = tree.get_node(max_child_id)
+            node_state = node.data
+            DEPTH += 1
+            if DEPTH > MAX_DEPTH:
+                MAX_DEPTH = DEPTH
+
+        playout_node_id = node.identifier
+
+        if not node.is_root():
+            prior_node = tree.get_node(node.predecessor(tree.identifier))
+            game_copy = prior_node.data.game.copy()
+            node_state.game = game_copy
+            node_state.game.make_move(node_state.move, add_bag=False, add_history=False)
+
+        if node_state.game.is_terminal == False:
+            value, policy = await aevaluate(config, node_state.game, evaluator)
+            policy[policy <= 0] = 1e-25
+
+            if node_state.game.no_move == False:
+                move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn], algo=config.move_algorithm)
+                move_list = get_move_list(move_matrix, policy)
+                assert len(move_list) > 0
+
+                policies, moves = map(list, zip(*move_list))
+
+                if node.is_root() and config.use_root_softmax:
+                    max_policy = max(policies)
+                    log_max = math.log(max_policy)
+                    inv_temp = 1.0 / config.RootSoftmaxTemp
+                    for i in range(len(policies)):
+                        policies[i] = math.exp((math.log(policies[i]) - log_max) * inv_temp)
+
+                policy_sum = sum(policies)
+
+                for policy_p, move in zip(policies, moves):
+                    new_state = NodeState(game=None, move=move)
+                    new_state.policy = policy_p / policy_sum
+                    assert new_state.policy > 0
+
+                    if config.FpuStrategy == 'absolute':
+                        new_state.value_avg = max(config.value_min, config.FpuValue)
+                    elif config.FpuStrategy == 'reduction':
+                        parent_value = config.negate_value(value)
+                        new_state.value_avg = max(config.value_min, parent_value)
+
+                    tree.create_node(data=new_state, parent=node.identifier)
+        else:
+            winner = node_state.game.winner
+            if winner == node_state.game.turn:
+                value = config.value_max
+            elif winner == 1 - node_state.game.turn:
+                value = config.value_min
+            else:
+                value = config.value_mid
+
+        if (config.training and not fast_iter and config.use_dirichlet_noise and node.is_root()):
+            child_ids = node.successors(tree.identifier)
+            number_of_children = len(child_ids)
+            d_alpha = config.DIRICHLET_ALPHA
+            if config.use_dirichlet_s:
+                d_alpha *= config.DIRICHLET_S / number_of_children
+
+            noise_distribution = np.random.gamma(d_alpha, 1, number_of_children)
+
+            for child_id, noise in zip(child_ids, noise_distribution):
+                child_data = tree.get_node(child_id).data
+                child_data.policy = child_data.policy * (1 - config.DIRICHLET_EXPLORATION) + noise * config.DIRICHLET_EXPLORATION
+
+        value = config.negate_value(value)
+        pos_value = value
+        neg_value = config.negate_value(value)
+
+        final_node_turn = node_state.game.turn
+
+        while not node.is_root():
+            node_state = node.data
+            node_state.visit_count += 1
+            node_state.value_sum += (pos_value if node_state.game.turn == final_node_turn else neg_value)
+            node_state.value_avg = node_state.value_sum / node_state.visit_count
+            upwards_id = node.predecessor(tree.identifier)
+            node = tree.get_node(upwards_id)
+
+        node_state = node.data
+        node_state.visit_count += 1
+        node_state.value_sum += (pos_value if node_state.game.turn == final_node_turn else neg_value)
+        node_state.value_avg = node_state.value_sum / node_state.visit_count
+
+        node = tree.get_node(playout_node_id)
+
+        if not node.is_root() and config.FpuStrategy == 'reduction':
+            parent_id = node.predecessor(tree.identifier)
+            parent = tree.get_node(parent_id)
+
+            if not parent.is_root():
+                parent_value = parent.data.value_avg
+                node_explored_policy = 0
+                unvisited_states = []
+                sibling_ids = parent.successors(tree.identifier)
+                for sibling_id in sibling_ids:
+                    sibling_data = tree.get_node(sibling_id).data
+                    if sibling_data.visit_count > 0:
+                        node_explored_policy += sibling_data.policy
+                    else:
+                        unvisited_states.append(sibling_data)
+
+                fpu = max(config.value_min, config.negate_value(parent_value) - config.FpuValue * math.sqrt(node_explored_policy))
+                for sibling_data in unvisited_states:
+                    sibling_data.value_avg = fpu
+
+    # Move selection (identical to MCTS)
+    root = tree.get_node("root")
+    root_children_id = root.successors(tree.identifier)
+    max_n = 0
+    max_id = None
+    root_child_n_list = []
+    root_child_id_list = []
+
+    for root_child_id in root_children_id:
+        root_child = tree.get_node(root_child_id)
+        root_child_n = root_child.data.visit_count
+        root_child_n_list.append(root_child_n)
+        root_child_id_list.append(root_child_id)
+        if root_child_n >= max_n:
+            max_n = root_child_n
+            max_id = root_child.identifier
+
+    def select_action_with_temperature(visit_counts, temperature):
+        if temperature == 0:
+            return np.argmax(visit_counts)
+        probs = visit_counts ** (1 / temperature)
+        probs = probs / np.sum(probs)
+        return random.choices(range(len(probs)), weights=probs, k=1)[0]
+
+    temp = config.temperature if config.training else 0
+    selected_idx = select_action_with_temperature(np.array(root_child_n_list), temp)
+    selected_id = root_child_id_list[selected_idx]
+    move = tree.get_node(selected_id).data.move
+
+    post_prune_n_list = None
+    if config.use_forced_playouts_and_policy_target_pruning and config.training and not fast_iter:
+        post_prune_n_list = []
+        most_playouts_child = tree.get_node(max_id)
+        most_playouts_CPUCT = most_playouts_child.data.value_avg + config.CPUCT * most_playouts_child.data.policy * math.sqrt(root.data.visit_count) / (config.DPUCT + most_playouts_child.data.visit_count)
+
+        for root_child_id in root_children_id:
+            if root_child_id != max_id:
+                root_child = tree.get_node(root_child_id)
+                if root_child.data.visit_count > 0:
+                    root_child_n_forced = math.sqrt(config.CForcedPlayout * root_child.data.policy * root.data.visit_count)
+                    count = 0
+                    while True:
+                        if root_child.data.visit_count == 1:
+                            root_child.data.visit_count = 0
+                            break
+                        root_child_CPUCT_minus = root_child.data.value_avg + config.CPUCT * root_child.data.policy * math.sqrt(root.data.visit_count) / (config.DPUCT + root.data.visit_count)
+                        if count < root_child_n_forced and root_child_CPUCT_minus < most_playouts_CPUCT:
+                            count += 1
+                            root_child.data.visit_count -= 1
+                        else:
+                            break
+            post_prune_n_list.append(tree.get_node(root_child_id).data.visit_count)
+
+    save_move = not fast_iter
+    return move, tree, save_move
+
+
 def pick_random_move_by_policy(tree: MCTSTree) -> tuple:
     # Sample a random move from the root node of the tree using the policy as probabilities
     moves, policies = [], []
@@ -692,9 +1038,20 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
     # Apply value head and policy head 
 
     if config.model == 'keras':
-        model = gen_alphasame_nn(config.model_config, config.use_tanh)
+        if isinstance(config.model_config, AuxBaseResNetConfig):
+            model = gen_auxbaseresnet_keras(config.model_config, config.use_tanh)
+        elif isinstance(config.model_config, BaseResNetConfig):
+            model = gen_baseresnet_keras(config.model_config, config.use_tanh)
+        else:
+            model = gen_alphasame_nn(config.model_config, config.use_tanh)
     elif config.model == 'pytorch':
-        model = AlphaSame(config.model_config, config.use_tanh)
+        if isinstance(config.model_config, AuxBaseResNetConfig):
+            model = AuxBaseResNet(config.model_config, config.use_tanh)
+        elif isinstance(config.model_config, BaseResNetConfig):
+            model = BaseResNet(config.model_config, config.use_tanh)
+        else:
+            model = AlphaSame(config.model_config, config.use_tanh)
+        model.to(device)
 
     if config.model == 'keras':
         if plot_model == True:
@@ -724,6 +1081,8 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
             os.makedirs(path, exist_ok=True)
             torch.save(model.state_dict(), f"{path}/0.pt")
             append_version_record(config, 0)
+
+        return model
 
 def train_network(config, model, set):
     if config.model == 'keras':
@@ -791,10 +1150,14 @@ def train_network_pytorch(config, model, set, data_number=None):
 
     loss_fn_value = nn.MSELoss()
     loss_fn_policy = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    loss_fn_aux = nn.MSELoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+
+    has_aux = isinstance(config.model_config, AuxBaseResNetConfig)
+    aux_weight = config.model_config.aux_weight if has_aux else 0.0
 
     model.train()
-    total_loss = value_loss_sum = policy_loss_sum = 0.0
+    total_loss = value_loss_sum = policy_loss_sum = aux_loss_sum = 0.0
     batches = 0
 
     for _ in range(config.epochs):
@@ -804,7 +1167,11 @@ def train_network_pytorch(config, model, set, data_number=None):
             y_policy = data_point.pop().reshape(-1, POLICY_SIZE)
             y_value = data_point.pop().type(torch.float)
 
-            pred_value, pred_policy = model(*data_point)
+            if has_aux:
+                y_aux = compute_aux_targets(data_point[0])
+                pred_value, pred_policy, pred_aux = model(*data_point)
+            else:
+                pred_value, pred_policy = model(*data_point)
 
             pred_value = pred_value.reshape(-1)
             pred_policy = pred_policy.reshape(-1, POLICY_SIZE)
@@ -812,6 +1179,11 @@ def train_network_pytorch(config, model, set, data_number=None):
             loss_1 = loss_fn_value(pred_value, y_value)
             loss_2 = loss_fn_policy(pred_policy, y_policy)
             loss = loss_1 + loss_2
+
+            if has_aux:
+                loss_3 = loss_fn_aux(pred_aux, y_aux)
+                loss = loss + aux_weight * loss_3
+                aux_loss_sum += loss_3.item()
 
             loss.backward()
             optimizer.step()
@@ -827,8 +1199,12 @@ def train_network_pytorch(config, model, set, data_number=None):
     avg_loss = total_loss / max(batches, 1)
     avg_value_loss = value_loss_sum / max(batches, 1)
     avg_policy_loss = policy_loss_sum / max(batches, 1)
+    avg_aux_loss = aux_loss_sum / max(batches, 1)
 
-    print(f"loss: {avg_loss:>7f}  value: {avg_value_loss:>7f}  policy: {avg_policy_loss:>7f}")
+    if has_aux:
+        print(f"loss: {avg_loss:>7f}  value: {avg_value_loss:>7f}  policy: {avg_policy_loss:>7f}  aux: {avg_aux_loss:>7f}")
+    else:
+        print(f"loss: {avg_loss:>7f}  value: {avg_value_loss:>7f}  policy: {avg_policy_loss:>7f}")
 
     log_entry = {
         "model_version": config.model_version,
@@ -836,7 +1212,10 @@ def train_network_pytorch(config, model, set, data_number=None):
         "loss": avg_loss,
         "value_loss": avg_value_loss,
         "policy_loss": avg_policy_loss,
+        "backend": "pytorch",
     }
+    if has_aux:
+        log_entry["aux_loss"] = avg_aux_loss
     with open(f"{logs_path}/training_log.jsonl", 'a') as f:
         f.write(ujson.dumps(log_entry) + '\n')
 
@@ -906,8 +1285,9 @@ def evaluate_from_keras(game, model):
                 np_feature = np.expand_dims(np_feature, axis=-1)
             X.append(np_feature)
         
-    value, policies = model.predict_on_batch(X)
-    # Both value and policies are returned as arrays
+    out = model.predict_on_batch(X)
+    # AuxBaseResNet (3 outputs) returns [value, policy, aux]; ignore aux at inference.
+    value, policies = out[0], out[1]
     value = value.item()
     policies = policies.reshape(POLICY_SHAPE)
 
@@ -925,14 +1305,15 @@ def evaluate_pytorch(game, model):
                 # Add channel for grids
                 tensor = tensor.unsqueeze(dim=0)
                 tensor = tensor.type(torch.float)
-            
+
             # Add one dim
             tensor = tensor.unsqueeze(dim=0)
 
             tensor = tensor.to(device)
             X.append(tensor)
-        
-        value, policies = model.forward(*X)
+
+        out = model.forward(*X)
+        value, policies = out[0], out[1]  # AuxBaseResNet returns a 3-tuple; ignore aux at inference
 
     policies = torch.softmax(policies.reshape(-1), dim=0)
     return value.item(), policies.cpu().numpy().reshape(POLICY_SHAPE)
@@ -1317,14 +1698,126 @@ def play_game(config, interference_network, game_number=None, screen=None):
 
     return data, stats
 
+
+async def aplay_game(config, evaluator, game_number=None, screen=None):
+    """Async mirror of play_game. Uses amcts + BatchedEvaluator. Pygame rendering
+    only when `screen` is non-None (caller decides which single game gets the window)."""
+    do_render = (screen is not None and config.visual)
+    if do_render:
+        pygame.display.set_caption(f'Training game {game_number}')
+        pygame.event.get()
+
+    game = Game(config.ruleset)
+    game.setup()
+
+    game_data = [[], []]
+
+    if config.use_random_starting_moves:
+        scale = 0.04 * config.DIRICHLET_S
+        num_random_moves = np.random.exponential(scale=scale)
+
+        fast_config = config.copy()
+        fast_config.MAX_ITER = 1
+        fast_config.use_playout_cap_randomization = False
+        fast_config.use_dirichlet_noise = False
+        fast_config.use_forced_playouts_and_policy_target_pruning = False
+
+        while num_random_moves > 0 and game.is_terminal == False:
+            _, temp_tree, _ = await amcts(fast_config, game, evaluator)
+            move = pick_random_move_by_policy(temp_tree)
+            game.make_move(move)
+            num_random_moves -= 1
+
+    while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
+        move, tree, save = await amcts(config, game, evaluator)
+
+        if save or config.save_all:
+            search_matrix = search_statistics(tree)
+            move_data = [*game_to_X(game)]
+
+            if config.augment_data:
+                reflected_search_matrix = reflect_policy(search_matrix)
+
+                for active_player_idx in range(2):
+                    for other_player_idx in range(2):
+                        copied_data = []
+                        for feature in move_data:
+                            if isinstance(feature, np.ndarray):
+                                copied_data.append(feature.copy())
+                            elif type(feature) == list:
+                                copied_data.append([x[:] for x in feature])
+                            else:
+                                copied_data.append(feature)
+
+                        if active_player_idx == 1:
+                            copied_data[0] = reflect_grid(copied_data[0])
+                            copied_data[1] = reflect_pieces(copied_data[1])
+
+                        if other_player_idx == 1:
+                            copied_data[5] = reflect_grid(copied_data[5])
+                            copied_data[6] = reflect_pieces(copied_data[6])
+
+                        for i in range(len(copied_data)):
+                            if isinstance(copied_data[i], np.ndarray):
+                                copied_data[i] = copied_data[i].tolist()
+
+                        if active_player_idx == 0:
+                            copied_data.append(search_matrix)
+                        else:
+                            copied_data.append(reflected_search_matrix)
+
+                        game_data[game.turn].append(copied_data)
+            else:
+                for i in range(len(move_data)):
+                    if isinstance(move_data[i], np.ndarray):
+                        move_data[i] = move_data[i].tolist()
+
+                move_data.append(search_matrix)
+                game_data[game.turn].append(move_data)
+
+        game.make_move(move)
+
+        if do_render:
+            game.show(screen)
+            pygame.display.update()
+            await asyncio.sleep(0)  # yield to other coroutines
+
+    winner = game.winner
+    for player_idx in range(len(game_data)):
+        if winner == -1:
+            value = config.value_mid
+        elif winner == player_idx:
+            value = config.value_max
+        else:
+            value = config.value_min
+        for move_idx in range(len(game_data[player_idx])):
+            game_data[player_idx][move_idx].insert(-1, value)
+
+            if False:
+                board_metrics = calculate_board_metrics(game_data[player_idx][move_idx][0])
+                game_data[player_idx][move_idx].append(board_metrics["holes"])
+                game_data[player_idx][move_idx].append(board_metrics["avg_height"])
+
+    data = game_data[0]
+    data.extend(game_data[1])
+
+    stats = get_game_stats(config, game, highest_data_number(config) + 1, highest_model_number(config))
+
+    return data, stats
+
+
 def make_training_set(config, interference_network, num_games, save_game=False, save_stats=True, screen=None):
     # Creates a dataset of several AI games.
-    series_data = []
-    series_stats = []
-    for idx in range(1, num_games + 1):
-        data, stats = play_game(config, interference_network, game_number=idx, screen=screen)
-        series_data.extend(data)
-        series_stats.append(stats)
+    if config.model == 'pytorch' and config.batched_inference:
+        series_data, series_stats = asyncio.run(_make_training_set_async(
+            config, interference_network, num_games, screen))
+    else:
+        series_data = []
+        series_stats = []
+        for idx in range(1, num_games + 1):
+            data, stats = play_game(config, interference_network, game_number=idx, screen=screen)
+            series_data.extend(data)
+            series_stats.append(stats)
 
     if save_game == True:
         json_data = ujson.dumps(series_data)
@@ -1334,7 +1827,7 @@ def make_training_set(config, interference_network, num_games, save_game=False, 
 
         with open(f"{config.data_dir}/{next_set}.txt", 'w') as out_file:
             out_file.write(json_data)
-    
+
     if save_stats == True:
         averaged_stats = {
             "model_number": series_stats[0]["model_number"],
@@ -1347,9 +1840,33 @@ def make_training_set(config, interference_network, num_games, save_game=False, 
 
         with open(f"{logs_path}/stats.jsonl", 'a') as out_file:
             out_file.write(ujson.dumps(averaged_stats) + '\n')
-    
+
     else:
         return series_data
+
+
+async def _make_training_set_async(config, model, num_games, screen):
+    """Run num_games concurrently with shared BatchedEvaluator. Only game 1
+    receives a pygame screen (others run headless)."""
+    evaluator = BatchedEvaluator(model, config, max_batch=num_games)
+    await evaluator.start()
+    try:
+        coros = [
+            aplay_game(config, evaluator,
+                       game_number=idx,
+                       screen=(screen if idx == 1 else None))
+            for idx in range(1, num_games + 1)
+        ]
+        results = await asyncio.gather(*coros)
+    finally:
+        await evaluator.stop()
+
+    series_data = []
+    series_stats = []
+    for data, stats in results:
+        series_data.extend(data)
+        series_stats.append(stats)
+    return series_data, series_stats
 
 def load_data_and_train_model(config, model, data=None):
     path = config.data_dir
@@ -1458,12 +1975,20 @@ def get_data_filenames(config) -> list:
 def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, games, network_1_title='Network 1', network_2_title='Network 2', screen=None):
     # Battle two AI networks and returns results with optional early termination
     # Returns tuple of (wins_array, True if NN_1 met the threshold, False otherwise)
-    wins = np.zeros((2), dtype=int)
-    flip_color = False
-
     if config_1.ruleset != config_2.ruleset:
         raise NotImplementedError("Ruleset's aren't equal")
 
+    use_async = (
+        config_1.model == 'pytorch' and config_2.model == 'pytorch'
+        and config_1.batched_inference and config_2.batched_inference
+    )
+    if use_async:
+        wins = asyncio.run(_battle_networks_async(NN_1, config_1, NN_2, config_2, games))
+        accepted = _check_threshold(wins, games, threshold, threshold_type)
+        return wins, accepted
+
+    wins = np.zeros((2), dtype=int)
+    flip_color = False
     visual = config_1.visual and config_2.visual
 
     for i in range(games):
@@ -1525,6 +2050,69 @@ def battle_networks(NN_1, config_1, NN_2, config_2, threshold, threshold_type, g
     # If neither side eaches a cutoff, return None
     # print(*wins)
     return wins, None
+
+
+def _check_threshold(wins, games, threshold, threshold_type):
+    """Post-hoc threshold check for async battle (no early termination)."""
+    if threshold is None:
+        return None
+    if threshold_type == 'more':
+        if wins[0] > threshold * games:
+            return True
+        if wins[1] >= (1 - threshold) * games:
+            return False
+    elif threshold_type == 'moreorequal':
+        if wins[0] >= threshold * games:
+            return True
+        if wins[1] > (1 - threshold) * games:
+            return False
+    return None
+
+
+async def aplay_battle_game(config_1, config_2, ev1, ev2, side):
+    """Play one game between two networks. `side=0` → ev1 plays player 0;
+    `side=1` → ev1 plays player 1. Returns (winner_idx, side)."""
+    game = Game(config_1.ruleset)
+    game.setup()
+
+    while game.is_terminal == False and len(game.history.states) < MAX_MOVES:
+        if (game.turn == 0 and side == 0) or (game.turn == 1 and side == 1):
+            move, *_ = await amcts(config_1, game, ev1)
+        else:
+            move, *_ = await amcts(config_2, game, ev2)
+        game.make_move(move)
+
+    return game.winner, side
+
+
+async def _battle_networks_async(NN_1, config_1, NN_2, config_2, games):
+    """Run `games` battles concurrently with two BatchedEvaluators (one per network).
+    No early termination — all games play out. Returns wins array."""
+    ev1 = BatchedEvaluator(NN_1, config_1, max_batch=games)
+    ev2 = BatchedEvaluator(NN_2, config_2, max_batch=games)
+    await ev1.start()
+    await ev2.start()
+    try:
+        coros = [
+            aplay_battle_game(config_1, config_2, ev1, ev2, side=i % 2)
+            for i in range(games)
+        ]
+        results = await asyncio.gather(*coros)
+    finally:
+        await ev1.stop()
+        await ev2.stop()
+
+    wins = np.zeros((2), dtype=float)
+    for winner, side in results:
+        if winner == -1:
+            wins[0] += 0.5
+            wins[1] += 0.5
+        elif side == 0:
+            wins[winner] += 1
+        else:
+            wins[1 - winner] += 1
+    return wins
+
 
 def self_play_loop(config, skip_first_set=False):
     screen = None
@@ -1614,7 +2202,7 @@ def get_interference_network(config, training_network):
 
     if config.use_tflite and config.model == 'keras':
         # Load the model as a tflite interpreter
-        return get_interpreter(training_network)
+        return get_interpreter(training_network, num_threads=config.tflite_num_threads)
 
     else:
         # Load the model as a keras or pytorch model
@@ -1626,7 +2214,7 @@ def load_train_and_interference_models(config, model_number):
     if config.use_tflite and config.model == 'keras':
         # Load the model as a tflite interpreter
         model = load_model(config, model_number)
-        interpreter = get_interpreter(model)
+        interpreter = get_interpreter(model, num_threads=config.tflite_num_threads)
         return model, interpreter
 
     else:
@@ -1654,7 +2242,12 @@ def load_model(config, model_number):
             # Legacy checkpoints saved without an extension
             path = f"{config.model_dir}/{model_number}"
 
-        model = AlphaSame(config.model_config, config.use_tanh)
+        if isinstance(config.model_config, AuxBaseResNetConfig):
+            model = AuxBaseResNet(config.model_config, config.use_tanh)
+        elif isinstance(config.model_config, BaseResNetConfig):
+            model = BaseResNet(config.model_config, config.use_tanh)
+        else:
+            model = AlphaSame(config.model_config, config.use_tanh)
         model.load_state_dict(torch.load(path, weights_only=True))
         model.to(device)
         model.eval()
@@ -1671,10 +2264,14 @@ def load_best_model(config):
 
     return load_model(config, max_ver)
 
-def get_interpreter(model):
-    # Save a model as saved model, then load it as tflite
+def get_interpreter(model, num_threads=2):
+    # Save a model as saved model, then load it as tflite.
+    # num_threads caps the CPU pool used by the interpreter. Default 2 keeps the
+    # laptop responsive during self-play; the Step 2 benchmark showed
+    # Optimize.DEFAULT (prod_quant) is essentially batch-invariant so giving
+    # more threads has marginal upside but real responsiveness cost.
     blockPrint()
-    
+
     path = f"{directory_path}/TEMP_MODELS/savedmodel"
     model.export(path)
 
@@ -1699,7 +2296,7 @@ def get_interpreter(model):
 
     tflite_model = converter.convert()
 
-    interpreter = tf.lite.Interpreter(model_content=tflite_model)
+    interpreter = tf.lite.Interpreter(model_content=tflite_model, num_threads=num_threads)
     interpreter.allocate_tensors()
 
     enablePrint()

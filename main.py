@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import directory_path, MCTS, load_best_model, get_interpreter, Config, evaluate
+from ai import directory_path, MCTS, load_best_model, get_interference_network, Config, evaluate, BaseResNetConfig
 from const import *
 from game import Game
 from mover import Mover
@@ -12,13 +12,14 @@ import pstats
 
 import random
 
-DefaultConfig = Config(training=False, model='keras')
+# To play vs the PyTorch BaseResNet, change to: Config(training=False, model='pytorch', model_config=BaseResNetConfig())
+DefaultConfig = Config(training=False, model='pytorch', model_config=BaseResNetConfig())
 if DefaultConfig.visual == False:
     raise Exception("Visual must be true to play the bot!")
 
 # Load neural network
 model = load_best_model(DefaultConfig)
-interpreter = get_interpreter(model)
+interpreter = get_interference_network(DefaultConfig, model)
 
 class Main:
 

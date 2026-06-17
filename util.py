@@ -1500,21 +1500,31 @@ def visualize_high_depth_replay(network, max_iter):
 
 # ===== GIF RECORDING =====
 
-def record_game_gif(output_path=None, max_iter=200, fps=8):
+def record_game_gif(output_path=None, backend='keras', model_config=None,
+                    model_version=None, max_iter=200, fps=8):
     """Play one AI vs AI game and save every frame as an animated GIF.
 
     Args:
-        output_path: destination path (default: Storage/game_replay.gif)
-        max_iter:    MCTS iterations per move — lower is faster to generate
-        fps:         GIF playback speed in frames per second
+        output_path:    destination path (default: Storage/plots/game_{backend}_v{ver}_m{n}.gif)
+        backend:        'keras' or 'pytorch'
+        model_config:   architecture config (BaseResNetConfig() or AlphaSameConfig()).
+                        If None, Config defaults to AlphaSameConfig.
+        model_version:  override Config.model_version (lets you point at a non-default
+                        checkpoint dir like s2.7.5). If None, use Config default.
+        max_iter:       MCTS iterations per move — lower is faster to generate
+        fps:            GIF playback speed in frames per second
     """
-    c = Config(MAX_ITER=max_iter)
+    kwargs = {'MAX_ITER': max_iter, 'model': backend, 'model_config': model_config}
+    if model_version is not None:
+        kwargs['model_version'] = model_version
+    c = Config(**kwargs)
+
+    network = load_best_model(c)
+    model_number = highest_model_number(c)
+    interpreter = get_interference_network(c, network)
 
     if output_path is None:
-        output_path = f"{directory_path}/game_replay.gif"
-
-    model = load_best_model(c)
-    interpreter = get_interpreter(model)
+        output_path = f"{plots_path}/game_{backend}_v{c.model_version}_m{model_number}.gif"
 
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Recording game GIF…")
@@ -1923,63 +1933,1253 @@ def migrate_stats_data():
     print(f"Processed {total_records} new records")
     print(f"Data written to: {output_file}")
 
-def migrate_data_board_height(src_data_version, dst_data_version, src_rows=26, ruleset='s2'):
+def _sync_device():
+    if device == 'mps':
+        torch.mps.synchronize()
+    elif device == 'cuda':
+        torch.cuda.synchronize()
+
+
+def _build_batch(sample, batch_size):
+    """Tile one sample's 11 features across the batch dim, return device tensors.
+    Output shapes match the model's forward signature:
+        grids  -> (B, 1, ROWS, COLS)
+        pieces -> (B, 7, 7)
+        scalars/color -> (B,)
     """
-    Pad every board and policy in src_data_version up from src_rows to the
-    current ROWS, writing to dst_data_version. Generic across src_rows.
+    feats = sample[:11]
+    out = []
+    for f in feats:
+        t = torch.tensor(f, dtype=torch.float32)
+        if t.dim() == 2 and t.shape == (ROWS, COLS):
+            t = t.unsqueeze(0).unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        elif t.dim() == 2:
+            t = t.unsqueeze(0).repeat(batch_size, 1, 1)
+        elif t.dim() == 0:
+            t = t.reshape(1).repeat(batch_size)
+        else:
+            raise ValueError(f"Unexpected feature dim: {t.dim()} shape {tuple(t.shape)}")
+        out.append(t.to(device))
+    return out
 
-    Sample layout (from game_to_X + play_game in ai.py): indices 0 and 5 are
-    boards shaped (src_rows, COLS); index 12 is the policy shaped
-    (POLICY_SHAPE[0], src_rows - 1, POLICY_SHAPE[2]); everything else passes
-    through. Empty rows are prepended at the top, assuming both boards and the
-    policy row axis are oriented top-down. If a spot-check shows the policy
-    landed on the wrong axis end, flip the policy padding (last two lines of
-    this function).
 
-    Streams one file at a time. Idempotent: skips files already present in dst.
+def benchmark_inference_filters_x_batch(
+    filters_sweep=(16, 32, 64, 96, 128),
+    batch_sweep=(1, 4, 16, 64, 128, 256),
+    blocks=6,
+    opp_hidden=128,
+    own_kernels=4,
+    n_warmup=5,
+    n_timed=30,
+    src_file=None,
+):
+    """
+    Benchmark BaseResNet forward latency across filters and batch sizes.
+    Returns (totals_df, per_game_df). Both indexed by filters, columns by batch.
+
+    - Methodology: model.eval() + no_grad. Warmup, then median of n_timed reps,
+      with device sync before each clock read.
+    - Inputs are tiled from one real sample in temp_data so activations are
+      realistic (sparse grids, valid pieces).
+    - On OOM the cell records NaN and the loop continues.
+    """
+    if src_file is None:
+        src_file = f"{directory_path}/temp_data/95.txt"
+    print(f"Loading sample from {src_file}")
+    sample = ujson.load(open(src_file, 'r'))[0]
+
+    totals_ms = {}    # (filters, batch) -> median ms
+    params_by_f = {}
+
+    for f in filters_sweep:
+        cfg = BaseResNetConfig(blocks=blocks, filters=f, opp_hidden=opp_hidden, own_kernels=own_kernels)
+        model = BaseResNet(cfg).to(device).eval()
+        params_by_f[f] = sum(p.numel() for p in model.parameters())
+
+        for B in batch_sweep:
+            try:
+                inputs = _build_batch(sample, B)
+                with torch.no_grad():
+                    # warmup
+                    for _ in range(n_warmup):
+                        model(*inputs)
+                    _sync_device()
+
+                    times = []
+                    for _ in range(n_timed):
+                        _sync_device()
+                        t0 = time.perf_counter()
+                        model(*inputs)
+                        _sync_device()
+                        times.append(time.perf_counter() - t0)
+
+                ms = float(np.median(times) * 1000)
+                totals_ms[(f, B)] = ms
+                print(f"  filters={f:>4}  batch={B:>4}  median={ms:7.3f} ms  per-game={ms/B:7.3f} ms")
+            except (RuntimeError, MemoryError) as e:
+                totals_ms[(f, B)] = float('nan')
+                print(f"  filters={f:>4}  batch={B:>4}  ERROR ({type(e).__name__}): {e}")
+
+        del model
+        gc.collect()
+        if device == 'mps':
+            torch.mps.empty_cache()
+
+    # Build dataframes
+    totals_df = pd.DataFrame(
+        [[totals_ms[(f, B)] for B in batch_sweep] for f in filters_sweep],
+        index=[f'filters={f}' for f in filters_sweep],
+        columns=[f'B={B}' for B in batch_sweep],
+    )
+    totals_df.insert(0, 'params (M)', [params_by_f[f] / 1e6 for f in filters_sweep])
+
+    per_game_df = pd.DataFrame(
+        [[totals_ms[(f, B)] / B for B in batch_sweep] for f in filters_sweep],
+        index=[f'filters={f}' for f in filters_sweep],
+        columns=[f'B={B}' for B in batch_sweep],
+    )
+    per_game_df.insert(0, 'params (M)', [params_by_f[f] / 1e6 for f in filters_sweep])
+
+    csv_path = f"{plots_path}/benchmark_inference_pytorch_filters_x_batch_totals.csv"
+    totals_df.to_csv(csv_path)
+    print(f"\nSaved totals CSV: {csv_path}")
+    per_csv_path = f"{plots_path}/benchmark_inference_pytorch_filters_x_batch_per_game.csv"
+    per_game_df.to_csv(per_csv_path)
+    print(f"Saved per-game CSV: {per_csv_path}")
+
+    print(f"\n=== Total batch time (ms, median over {n_timed} reps) — device={device} ===\n")
+    print(totals_df.to_string(float_format=lambda x: f"{x:7.3f}"))
+    print(f"\n=== Per-game time (ms = total / batch_size) — device={device} ===\n")
+    print(per_game_df.to_string(float_format=lambda x: f"{x:7.3f}"))
+
+    return totals_df, per_game_df
+
+
+def plot_training_loss(model_version=None, backend=None, save=True):
+    """Plot loss/value_loss/policy_loss from training_log.jsonl. If multiple backends
+    are present (and backend is None), overlay them with different colors."""
+    entries = []
+    with open(f"{logs_path}/training_log.jsonl") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = ujson.loads(line)
+            except Exception:
+                continue
+            if model_version is not None and e.get('model_version') != model_version:
+                continue
+            if backend is not None and e.get('backend') != backend:
+                continue
+            entries.append(e)
+
+    if not entries:
+        print(f"No entries matching model_version={model_version}, backend={backend}")
+        return None, None
+
+    df = pd.DataFrame(entries)
+    # If backend missing, assume 'pytorch' (back-compat for entries logged before the field existed)
+    if 'backend' in df.columns:
+        df['backend'] = df['backend'].fillna('pytorch')
+    else:
+        df['backend'] = 'pytorch'
+
+    backends_present = sorted(df['backend'].unique())
+    colors = {'pytorch': '#ff6f3c', 'keras': '#3a86ff'}
+
+    fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    title_tail = f" (model_version={model_version})" if model_version is not None else ""
+    fig.suptitle(f"Training loss curve{title_tail} — {len(df)} entries")
+
+    # If overlaying multiple backends, use per-backend sequential index so curves
+    # line up (data_number can differ between runs).
+    overlay = len(backends_present) > 1
+    xlabel = 'training step (per-backend sequential)' if overlay else None
+    for be in backends_present:
+        sub = df[df['backend'] == be]
+        if overlay:
+            sub = sub.reset_index(drop=True)
+            x = sub.index
+        elif sub['data_number'].nunique() > 1:
+            sub = sub.sort_values('data_number').reset_index(drop=True)
+            x = sub['data_number']
+            xlabel = 'data_number (training file index)'
+        else:
+            sub = sub.reset_index(drop=True)
+            x = sub.index
+            xlabel = 'training step (sequential)'
+        for ax, col in zip(axs, ['loss', 'value_loss', 'policy_loss']):
+            ax.plot(x, sub[col], marker='o', linewidth=1.2, markersize=3,
+                    color=colors.get(be, None), label=be)
+
+    for ax, label in zip(axs, ['total loss', 'value loss (MSE)', 'policy loss (CE)']):
+        ax.set_ylabel(label)
+        ax.grid(True, alpha=0.3)
+        if len(backends_present) > 1:
+            ax.legend(loc='upper right', fontsize=9)
+    axs[-1].set_xlabel(xlabel)
+
+    if save:
+        suffix = f"_v{model_version}" if model_version is not None else ""
+        out = f"{plots_path}/training_loss{suffix}.png"
+        plt.tight_layout()
+        plt.savefig(out, dpi=150, bbox_inches='tight', facecolor='white')
+        print(f"Saved: {out}")
+    return fig, axs
+
+
+def _build_train_set_keras(samples):
+    """Pack a list of samples into Keras input/target tensors (channels-last)."""
+    n = len(samples)
+    own_grid = np.zeros((n, ROWS, COLS, 1), dtype=np.float32)
+    own_pieces = np.zeros((n, 2 + PREVIEWS, len(MINOS)), dtype=np.float32)
+    own_b2b = np.zeros((n, 1), dtype=np.float32)
+    own_combo = np.zeros((n, 1), dtype=np.float32)
+    own_garbage = np.zeros((n, 1), dtype=np.float32)
+    opp_grid = np.zeros((n, ROWS, COLS, 1), dtype=np.float32)
+    opp_pieces = np.zeros((n, 2 + PREVIEWS, len(MINOS)), dtype=np.float32)
+    opp_b2b = np.zeros((n, 1), dtype=np.float32)
+    opp_combo = np.zeros((n, 1), dtype=np.float32)
+    opp_garbage = np.zeros((n, 1), dtype=np.float32)
+    color = np.zeros((n, 1), dtype=np.float32)
+    value_targets = np.zeros((n, 1), dtype=np.float32)
+    policy_targets = np.zeros((n, POLICY_SIZE), dtype=np.float32)
+
+    for i, s in enumerate(samples):
+        own_grid[i, :, :, 0] = s[0]
+        own_pieces[i] = s[1]
+        own_b2b[i, 0] = s[2]
+        own_combo[i, 0] = s[3]
+        own_garbage[i, 0] = s[4]
+        opp_grid[i, :, :, 0] = s[5]
+        opp_pieces[i] = s[6]
+        opp_b2b[i, 0] = s[7]
+        opp_combo[i, 0] = s[8]
+        opp_garbage[i, 0] = s[9]
+        color[i, 0] = s[10]
+        value_targets[i, 0] = s[11]
+        policy_targets[i] = np.asarray(s[12], dtype=np.float32).flatten()
+
+    inputs = [own_grid, own_pieces, own_b2b, own_combo, own_garbage,
+              opp_grid, opp_pieces, opp_b2b, opp_combo, opp_garbage, color]
+    return inputs, value_targets, policy_targets
+
+
+def train_baseresnet_keras_on_temp_data(epochs=1, learning_rate=0.001, weight_decay=1e-4, batch_size=256):
+    """Mirror of train_baseresnet_on_temp_data but with the Keras BaseResNet.
+    Saves to {model_dir}/0.keras and logs with backend='keras'."""
+    config = Config(
+        model='keras',
+        model_config=BaseResNetConfig(),
+        epochs=epochs,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        batch_size=batch_size,
+    )
+
+    model = gen_baseresnet_keras(config.model_config, use_tanh=config.use_tanh)
+    model.compile(
+        optimizer=keras.optimizers.AdamW(learning_rate=learning_rate, weight_decay=weight_decay),
+        loss=[keras.losses.MeanSquaredError(),
+              keras.losses.CategoricalCrossentropy()],
+        loss_weights=config.loss_weights,
+    )
+
+    temp_dir = f"{directory_path}/temp_data"
+    files = [f for f in os.listdir(temp_dir) if f.endswith('.txt')]
+    files.sort(key=lambda name: int(name.split('.')[0]))
+    print(f"Training Keras BaseResNet on {len(files)} files from {temp_dir}")
+
+    for filename in files:
+        path = f"{temp_dir}/{filename}"
+        file_number = int(filename.split('.')[0])
+        print(f"  loading {filename}")
+        samples = ujson.load(open(path, 'r'))
+        inputs, value_targets, policy_targets = _build_train_set_keras(samples)
+
+        model.fit(x=inputs, y=[value_targets, policy_targets],
+                  batch_size=batch_size, epochs=epochs, shuffle=True, verbose=0)
+
+        # Per-head losses, mirroring the existing Keras path (policy head outputs softmax probs)
+        preds_value, preds_policy = model.predict(inputs, verbose=0, batch_size=batch_size)
+        value_loss = float(np.mean((preds_value.flatten() - value_targets.flatten()) ** 2))
+        policy_loss = float(-np.mean(np.sum(
+            policy_targets * np.log(np.clip(preds_policy, 1e-7, 1.0)), axis=1)))
+
+        log_entry = {
+            "model_version": config.model_version,
+            "data_number": file_number,
+            "loss": value_loss + policy_loss,
+            "value_loss": value_loss,
+            "policy_loss": policy_loss,
+            "backend": "keras",
+        }
+        with open(f"{logs_path}/training_log.jsonl", 'a') as f:
+            f.write(ujson.dumps(log_entry) + '\n')
+        print(f"    loss={value_loss + policy_loss:.4f}  value={value_loss:.4f}  policy={policy_loss:.4f}")
+
+        del samples, inputs, value_targets, policy_targets, preds_value, preds_policy
+        gc.collect()
+
+    os.makedirs(config.model_dir, exist_ok=True)
+    model_path = f"{config.model_dir}/0.keras"
+    model.save(model_path)
+    append_version_record(config, 0)
+    print(f"Model directory: {config.model_dir}")
+    print(f"Saved model:     {model_path}")
+
+
+def train_baseresnet_on_temp_data(epochs=1, learning_rate=0.001, weight_decay=1e-4, batch_size=256):
+    """
+    Train a fresh BaseResNet on all files in Storage/temp_data, then save to
+    `{config.model_dir}/0.pt` as model version 0 with a versions.jsonl entry.
+
+    Uses the default BaseResNetConfig (blocks=8, filters=32, opp_hidden=128,
+    own_kernels=4) and Config defaults for model_version (7.0) / data_version (2.9).
+    AdamW via the existing train_network_pytorch path because config.weight_decay is wired in.
+    """
+    config = Config(
+        model='pytorch',
+        model_config=BaseResNetConfig(),
+        epochs=epochs,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        batch_size=batch_size,
+    )
+
+    model = instantiate_network(config, save_network=False, show_summary=False)
+
+    temp_dir = f"{directory_path}/temp_data"
+    files = [f for f in os.listdir(temp_dir) if f.endswith('.txt')]
+    files.sort(key=lambda name: int(name.split('.')[0]))
+
+    print(f"Training BaseResNet on {len(files)} file(s) from {temp_dir}")
+
+    for filename in files:
+        path = f"{temp_dir}/{filename}"
+        file_number = int(filename.split('.')[0])
+        print(f"  loading {filename}")
+        samples = ujson.load(open(path, 'r'))
+        train_network_pytorch(config, model, samples, data_number=file_number)
+        del samples
+        gc.collect()
+
+    os.makedirs(config.model_dir, exist_ok=True)
+    model_path = f"{config.model_dir}/0.pt"
+    torch.save(model.state_dict(), model_path)
+    append_version_record(config, 0)
+
+    print(f"Model directory: {config.model_dir}")
+    print(f"Saved model:     {model_path}")
+
+
+def _compute_aux_targets_numpy(own_grid_chlast: np.ndarray) -> np.ndarray:
+    """Numpy port of compute_aux_targets (architectures.py) for Keras training.
+    Input: (B, ROWS, COLS, 1) channels-last in {0,1}. Returns (B, 2) [holes_norm, height_norm]."""
+    g = own_grid_chlast[..., 0]
+    filled = (g > 0.5).astype(np.float32)
+    has_above = (np.cumsum(filled, axis=1) > 0).astype(np.float32)
+    holes = ((1.0 - filled) * has_above).sum(axis=(1, 2))
+
+    any_filled = filled.sum(axis=1) > 0       # (B, COLS)
+    top_idx = filled.argmax(axis=1)           # (B, COLS) -- 0 when col is empty
+    heights = np.where(any_filled, (ROWS - top_idx).astype(np.float32), 0.0)
+    height_sum = heights.sum(axis=1)
+
+    denom = float(ROWS * COLS)
+    return np.stack([holes / denom, height_sum / denom], axis=1).astype(np.float32)
+
+
+def train_auxbaseresnet_keras_on_temp_data(epochs=1, learning_rate=0.001, weight_decay=1e-4, batch_size=256):
+    """Train a fresh Keras AuxBaseResNet on all files in Storage/temp_data, then save
+    to `{config.model_dir}/0.keras`. Three losses (value MSE + policy CCE + aux MSE),
+    weighted [1, 1, aux_weight] to match the PyTorch path's total loss formula.
+    """
+    aux_cfg = AuxBaseResNetConfig()
+    config = Config(
+        model='keras',
+        model_config=aux_cfg,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        batch_size=batch_size,
+    )
+
+    model = gen_auxbaseresnet_keras(aux_cfg, use_tanh=config.use_tanh)
+    model.compile(
+        optimizer=keras.optimizers.AdamW(learning_rate=learning_rate, weight_decay=weight_decay),
+        loss=[
+            keras.losses.MeanSquaredError(),
+            keras.losses.CategoricalCrossentropy(),
+            keras.losses.MeanSquaredError(),
+        ],
+        loss_weights=[1.0, 1.0, aux_cfg.aux_weight],
+    )
+
+    temp_dir = f"{directory_path}/temp_data"
+    files = [f for f in os.listdir(temp_dir) if f.endswith('.txt')]
+    files.sort(key=lambda name: int(name.split('.')[0]))
+    print(f"Training Keras AuxBaseResNet on {len(files)} files from {temp_dir}")
+
+    for filename in files:
+        path = f"{temp_dir}/{filename}"
+        file_number = int(filename.split('.')[0])
+        print(f"  loading {filename}")
+        samples = ujson.load(open(path, 'r'))
+        inputs, value_targets, policy_targets = _build_train_set_keras(samples)
+        aux_targets = _compute_aux_targets_numpy(inputs[0])
+
+        model.fit(x=inputs, y=[value_targets, policy_targets, aux_targets],
+                  batch_size=batch_size, epochs=epochs, shuffle=True, verbose=0)
+
+        preds_value, preds_policy, preds_aux = model.predict(inputs, verbose=0, batch_size=batch_size)
+        value_loss = float(np.mean((preds_value.flatten() - value_targets.flatten()) ** 2))
+        policy_loss = float(-np.mean(np.sum(
+            policy_targets * np.log(np.clip(preds_policy, 1e-7, 1.0)), axis=1)))
+        aux_loss = float(np.mean((preds_aux - aux_targets) ** 2))
+        total = value_loss + policy_loss + aux_cfg.aux_weight * aux_loss
+
+        log_entry = {
+            "model_version": config.model_version,
+            "data_number": file_number,
+            "loss": total,
+            "value_loss": value_loss,
+            "policy_loss": policy_loss,
+            "aux_loss": aux_loss,
+            "backend": "keras",
+        }
+        with open(f"{logs_path}/training_log.jsonl", 'a') as f:
+            f.write(ujson.dumps(log_entry) + '\n')
+        print(f"    loss={total:.4f}  value={value_loss:.4f}  policy={policy_loss:.4f}  aux={aux_loss:.4f}")
+
+        del samples, inputs, value_targets, policy_targets, aux_targets
+        del preds_value, preds_policy, preds_aux
+        gc.collect()
+
+    os.makedirs(config.model_dir, exist_ok=True)
+    model_path = f"{config.model_dir}/0.keras"
+    model.save(model_path)
+    append_version_record(config, 0)
+    print(f"Model directory: {config.model_dir}")
+    print(f"Saved model:     {model_path}")
+    return model, config
+
+
+def port_keras_auxbaseresnet_to_pytorch(keras_model, model_config: AuxBaseResNetConfig, use_tanh=False):
+    """Copy weights from a Keras AuxBaseResNet (built by gen_auxbaseresnet_keras)
+    into a fresh PyTorch AuxBaseResNet. Layer names in the Keras model are the
+    bridge: every weight-bearing Keras layer was named to match a PyTorch
+    state_dict prefix. Returns the populated PyTorch model in eval() mode on device.
+
+    Keras Flatten over (B, ROWS, COLS, K) yields [r, c, k] element order, but
+    PyTorch flatten(1) over (B, K, ROWS, COLS) yields [k, r, c]. The 3 Dense
+    heads that consume the flattened own-side map (policy, value_hidden,
+    aux_hidden) therefore need their first K*ROWS*COLS input rows permuted.
+    """
+    pt = AuxBaseResNet(model_config, use_tanh=use_tanh)
+    sd = pt.state_dict()
+
+    K = model_config.own_kernels
+    flat_size = K * ROWS * COLS
+    # perm[pt_pos] = keras_pos: row j in the PyTorch weight matrix reads from row perm[j] in Keras's.
+    perm = np.empty(flat_size, dtype=np.int64)
+    for r in range(ROWS):
+        for c in range(COLS):
+            for kk in range(K):
+                kpos = r * COLS * K + c * K + kk   # Keras: [r,c,k] row-major
+                ppos = kk * ROWS * COLS + r * COLS + c  # PyTorch: [k,r,c] row-major
+                perm[ppos] = kpos
+
+    def cp_conv(kname, pt_prefix):
+        w = keras_model.get_layer(kname).get_weights()[0]  # (kH, kW, in, out)
+        kernel = np.transpose(w, (3, 2, 0, 1))
+        sd[f'{pt_prefix}.weight'].copy_(torch.from_numpy(np.ascontiguousarray(kernel)))
+
+    def cp_bn(kname, pt_prefix):
+        g, b, m, v = keras_model.get_layer(kname).get_weights()
+        sd[f'{pt_prefix}.weight'].copy_(torch.from_numpy(g.copy()))
+        sd[f'{pt_prefix}.bias'].copy_(torch.from_numpy(b.copy()))
+        sd[f'{pt_prefix}.running_mean'].copy_(torch.from_numpy(m.copy()))
+        sd[f'{pt_prefix}.running_var'].copy_(torch.from_numpy(v.copy()))
+
+    def cp_dense(kname, pt_prefix):
+        w, b = keras_model.get_layer(kname).get_weights()  # (in, out), (out,)
+        sd[f'{pt_prefix}.weight'].copy_(torch.from_numpy(np.ascontiguousarray(w.T)))
+        sd[f'{pt_prefix}.bias'].copy_(torch.from_numpy(b.copy()))
+
+    def cp_dense_head(kname, pt_prefix):
+        """Like cp_dense, but permute the first flat_size input rows to match
+        PyTorch's [k,r,c] layout."""
+        w, b = keras_model.get_layer(kname).get_weights()
+        w_flat_keras = w[:flat_size, :]
+        w_rest       = w[flat_size:, :]
+        w_flat_pt    = w_flat_keras[perm, :]
+        w_combined   = np.concatenate([w_flat_pt, w_rest], axis=0)
+        sd[f'{pt_prefix}.weight'].copy_(torch.from_numpy(np.ascontiguousarray(w_combined.T)))
+        sd[f'{pt_prefix}.bias'].copy_(torch.from_numpy(b.copy()))
+
+    # Stem
+    cp_conv('stem_conv', 'stem.0')
+    cp_bn('stem_bn',     'stem.1')
+
+    # Trunk blocks
+    for i in range(model_config.blocks):
+        cp_conv(f'block{i}_conv1', f'trunk.{i}.conv1')
+        cp_bn(  f'block{i}_bn1',   f'trunk.{i}.bn1')
+        cp_conv(f'block{i}_conv2', f'trunk.{i}.conv2')
+        cp_bn(  f'block{i}_bn2',   f'trunk.{i}.bn2')
+
+    # Opp collapse
+    cp_conv('opp_collapse_conv', 'opp_collapse.0')
+    cp_bn(  'opp_collapse_bn',   'opp_collapse.1')
+
+    # Opp encode
+    cp_dense('opp_encode_dense', 'opp_encode.0')
+    cp_bn(   'opp_encode_bn',    'opp_encode.1')
+
+    # Bias project
+    cp_dense('bias_project', 'bias_project')
+
+    # Own collapse
+    cp_conv('own_collapse_conv', 'own_collapse.0')
+    cp_bn(  'own_collapse_bn',   'own_collapse.1')
+
+    # Policy head (single Linear, consumes head_x → permute)
+    cp_dense_head('policy', 'policy_head')
+
+    # Value head (Linear consumes head_x → permute; BN + final Linear are post-flat)
+    cp_dense_head('value_hidden',    'value_head.0')
+    cp_bn(        'value_hidden_bn', 'value_head.1')
+    cp_dense(     'value',           'value_head.3')
+
+    # Aux head (same pattern as value head)
+    cp_dense_head('aux_hidden',    'aux_head.0')
+    cp_bn(        'aux_hidden_bn', 'aux_head.1')
+    cp_dense(     'aux',           'aux_head.3')
+
+    pt.load_state_dict(sd)
+    pt.to(device)
+    pt.eval()
+    return pt
+
+
+def battle_royale_backends(num_games=200, **train_kwargs):
+    """Train a Keras AuxBaseResNet on temp_data, port its weights to PyTorch, convert
+    to tflite, then round-robin battle all 3 backends.
+
+    Trains the Keras model and saves it (0.keras). Ports weights to a fresh PyTorch
+    AuxBaseResNet (saves 0.pt under the pytorch model_dir). Converts the same trained
+    Keras model to tflite via get_interpreter (dynamic-range quantization).
+
+    Sanity check: all three are evaluated on one fresh-game position and the
+    backend-to-backend differences are printed. Keras vs PyTorch should agree to
+    ~1e-4; tflite may drift to ~1e-2 due to quantization.
+
+    Then battle_royale plays num_games per pair (3 pairs total). Returns the score dict.
+    """
+    keras_model, keras_train_cfg = train_auxbaseresnet_keras_on_temp_data(**train_kwargs)
+
+    pt_cfg = Config(
+        model='pytorch',
+        model_config=AuxBaseResNetConfig(),
+        training=False,
+        use_playout_cap_randomization=False,
+        use_dirichlet_noise=False,
+        use_forced_playouts_and_policy_target_pruning=False,
+        visual=False,
+        batched_inference=False,
+    )
+    pt_model = port_keras_auxbaseresnet_to_pytorch(keras_model, AuxBaseResNetConfig(),
+                                                   use_tanh=pt_cfg.use_tanh)
+    os.makedirs(pt_cfg.model_dir, exist_ok=True)
+    pt_path = f"{pt_cfg.model_dir}/0.pt"
+    torch.save(pt_model.state_dict(), pt_path)
+    append_version_record(pt_cfg, 0)
+    print(f"PyTorch (ported) saved: {pt_path}")
+
+    tflite_interp = get_interpreter(keras_model)
+
+    tflite_cfg = Config(
+        model='keras', use_tflite=True,
+        model_config=AuxBaseResNetConfig(),
+        training=False,
+        use_playout_cap_randomization=False,
+        use_dirichlet_noise=False,
+        use_forced_playouts_and_policy_target_pruning=False,
+        visual=False,
+    )
+    keras_only_cfg = Config(
+        model='keras', use_tflite=False,
+        model_config=AuxBaseResNetConfig(),
+        training=False,
+        use_playout_cap_randomization=False,
+        use_dirichlet_noise=False,
+        use_forced_playouts_and_policy_target_pruning=False,
+        visual=False,
+    )
+
+    print("\nSanity check (single eval on a fresh game):")
+    g = Game(pt_cfg.ruleset); g.setup()
+    v_tflite, p_tflite = evaluate(tflite_cfg,    g, tflite_interp)
+    v_keras,  p_keras  = evaluate(keras_only_cfg, g, keras_model)
+    v_pt,     p_pt     = evaluate(pt_cfg,         g, pt_model)
+    print(f"  tflite : value={v_tflite:.5f}  policy_max={p_tflite.max():.5f}  policy_sum={p_tflite.sum():.5f}")
+    print(f"  keras  : value={v_keras:.5f}  policy_max={p_keras.max():.5f}  policy_sum={p_keras.sum():.5f}")
+    print(f"  pytorch: value={v_pt:.5f}  policy_max={p_pt.max():.5f}  policy_sum={p_pt.sum():.5f}")
+    print(f"  |keras - pytorch| value={abs(v_keras - v_pt):.5f}  policy_maxabs={np.abs(p_keras - p_pt).max():.5f}")
+    print(f"  |keras - tflite|  value={abs(v_keras - v_tflite):.5f}  policy_maxabs={np.abs(p_keras - p_tflite).max():.5f}  (quantized; ~1e-2 OK)")
+
+    print(f"\nbattle_royale across [tflite, keras, pytorch] @ {num_games} games per pair...")
+    scores = battle_royale(
+        [tflite_interp, keras_model, pt_model],
+        [tflite_cfg, keras_only_cfg, pt_cfg],
+        ['tflite', 'keras', 'pytorch'],
+        num_games,
+    )
+
+    print("\n=== Battle royale results (row vs column) ===")
+    header = ['tflite', 'keras', 'pytorch']
+    print(f"{'':10}  " + "  ".join(f"{h:>10}" for h in header))
+    for name in header:
+        cells = []
+        for opp in header:
+            cells.append("-" if opp == name else f"{scores[name].get(opp, '-'):>10}")
+        print(f"{name:10}  " + "  ".join(cells))
+    return scores
+
+
+def compare_backends_on_game(max_states=None, MAX_ITER=None, **train_kwargs):
+    """Train Keras AuxBaseResNet on temp_data, port to PyTorch + tflite (same weights),
+    play one self-play game of tflite-vs-tflite, then run all three backends on every
+    visited state and report per-pair output divergence.
+
+    Reported metrics per pair:
+      - value diff: mean and max of |v_a - v_b|
+      - policy diff: mean and max of max|p_a - p_b| over the 11583-dim distribution
+      - argmax agreement: fraction of states where both models would pick the same move
+
+    Intuition: keras vs pytorch should be ~float-noise (1e-7) since the port is exact.
+    tflite vs the others picks up dynamic-range quantization drift (~1e-3 typically).
+    """
+    keras_model, _ = train_auxbaseresnet_keras_on_temp_data(**train_kwargs)
+
+    pt_cfg = Config(
+        model='pytorch',
+        model_config=AuxBaseResNetConfig(),
+        training=False,
+        use_playout_cap_randomization=False,
+        use_dirichlet_noise=False,
+        use_forced_playouts_and_policy_target_pruning=False,
+        visual=False,
+        batched_inference=False,
+    )
+    if MAX_ITER is not None:
+        pt_cfg.MAX_ITER = MAX_ITER
+    pt_model = port_keras_auxbaseresnet_to_pytorch(keras_model, AuxBaseResNetConfig(),
+                                                   use_tanh=pt_cfg.use_tanh)
+    os.makedirs(pt_cfg.model_dir, exist_ok=True)
+    torch.save(pt_model.state_dict(), f"{pt_cfg.model_dir}/0.pt")
+    append_version_record(pt_cfg, 0)
+
+    tflite_interp = get_interpreter(keras_model)
+
+    tflite_cfg = Config(
+        model='keras', use_tflite=True,
+        model_config=AuxBaseResNetConfig(),
+        training=False, use_playout_cap_randomization=False, use_dirichlet_noise=False,
+        use_forced_playouts_and_policy_target_pruning=False, visual=False,
+    )
+    keras_only_cfg = Config(
+        model='keras', use_tflite=False,
+        model_config=AuxBaseResNetConfig(),
+        training=False, use_playout_cap_randomization=False, use_dirichlet_noise=False,
+        use_forced_playouts_and_policy_target_pruning=False, visual=False,
+    )
+    if MAX_ITER is not None:
+        tflite_cfg.MAX_ITER = MAX_ITER
+        keras_only_cfg.MAX_ITER = MAX_ITER
+
+    # tflite plays both sides; snapshot evaluations from all three backends at every state
+    g = Game(tflite_cfg.ruleset); g.setup()
+    records = []
+    while g.is_terminal == False and len(g.history.states) < MAX_MOVES:
+        if max_states is not None and len(records) >= max_states:
+            break
+        v_t, p_t = evaluate(tflite_cfg, g, tflite_interp)
+        v_k, p_k = evaluate(keras_only_cfg, g, keras_model)
+        v_p, p_p = evaluate(pt_cfg, g, pt_model)
+        records.append((v_t, v_k, v_p, p_t, p_k, p_p))
+        move, *_ = MCTS(tflite_cfg, g, tflite_interp)
+        g.make_move(move)
+
+    n = len(records)
+    print(f"\nVisited {n} states. Winner={g.winner} (-1 = draw)")
+
+    def summarize(name_a, idx_a, name_b, idx_b, p_idx_a, p_idx_b):
+        v_diff = np.array([abs(r[idx_a] - r[idx_b]) for r in records])
+        p_max  = np.array([np.abs(r[p_idx_a] - r[p_idx_b]).max() for r in records])
+        p_mean = np.array([np.abs(r[p_idx_a] - r[p_idx_b]).mean() for r in records])
+        argmax_match = sum(
+            1 for r in records
+            if np.unravel_index(np.argmax(r[p_idx_a]), r[p_idx_a].shape)
+            == np.unravel_index(np.argmax(r[p_idx_b]), r[p_idx_b].shape)
+        )
+        print(f"\n  {name_a} vs {name_b}:")
+        print(f"    value |diff|:        mean={v_diff.mean():.6e}  max={v_diff.max():.6e}")
+        print(f"    policy max|diff|:    mean={p_max.mean():.6e}  max={p_max.max():.6e}")
+        print(f"    policy mean|diff|:   mean={p_mean.mean():.6e}  max={p_mean.max():.6e}")
+        print(f"    argmax agreement:    {argmax_match}/{n} ({100*argmax_match/max(n,1):.1f}%)")
+
+    # tuple indices: (v_t=0, v_k=1, v_p=2, p_t=3, p_k=4, p_p=5)
+    summarize('keras',  1, 'pytorch', 2, 4, 5)
+    summarize('keras',  1, 'tflite',  0, 4, 3)
+    summarize('pytorch',2, 'tflite',  0, 5, 3)
+
+    return records
+
+
+def _build_batch_keras(sample, batch_size):
+    """Tile one sample into Keras (channels-last) numpy arrays.
+    grids -> (B, ROWS, COLS, 1); pieces -> (B, 7, 7); scalars/color -> (B, 1)."""
+    feats = sample[:11]
+    out = []
+    for f in feats:
+        arr = np.asarray(f, dtype=np.float32)
+        if arr.shape == (ROWS, COLS):
+            arr = arr[np.newaxis, :, :, np.newaxis].repeat(batch_size, axis=0)
+        elif arr.ndim == 2:
+            arr = arr[np.newaxis, :, :].repeat(batch_size, axis=0)
+        elif arr.ndim == 0:
+            arr = np.full((batch_size, 1), float(arr), dtype=np.float32)
+        else:
+            raise ValueError(f"unexpected feature shape: {arr.shape}")
+        out.append(arr)
+    return out
+
+
+def benchmark_inference_filters_x_batch_keras(
+    filters_sweep=(16, 32, 64, 96, 128),
+    batch_sweep=(1, 4, 16, 64, 128, 256),
+    blocks=6,
+    opp_hidden=128,
+    own_kernels=4,
+    n_warmup=5,
+    n_timed=30,
+    src_file=None,
+):
+    """Same sweep as the PyTorch filters benchmark, but on Keras BaseResNet."""
+    if src_file is None:
+        src_file = f"{directory_path}/temp_data/95.txt"
+    print(f"Loading sample from {src_file}")
+    sample = ujson.load(open(src_file, 'r'))[0]
+
+    totals_ms, params_by_f = {}, {}
+    for f in filters_sweep:
+        cfg = BaseResNetConfig(blocks=blocks, filters=f, opp_hidden=opp_hidden, own_kernels=own_kernels)
+        model = gen_baseresnet_keras(cfg)
+        params_by_f[f] = model.count_params()
+
+        for B in batch_sweep:
+            try:
+                inputs = _build_batch_keras(sample, B)
+                for _ in range(n_warmup):
+                    model.predict_on_batch(inputs)
+                times = []
+                for _ in range(n_timed):
+                    t0 = time.perf_counter()
+                    model.predict_on_batch(inputs)
+                    times.append(time.perf_counter() - t0)
+                ms = float(np.median(times) * 1000)
+                totals_ms[(f, B)] = ms
+                print(f"  [keras] filters={f:>4} batch={B:>4}  median={ms:7.3f} ms  per-game={ms/B:7.3f} ms")
+            except (RuntimeError, MemoryError, tf.errors.ResourceExhaustedError) as e:
+                totals_ms[(f, B)] = float('nan')
+                print(f"  [keras] filters={f:>4} batch={B:>4}  ERROR ({type(e).__name__}): {e}")
+
+        del model
+        gc.collect()
+
+    totals_df = pd.DataFrame(
+        [[totals_ms[(f, B)] for B in batch_sweep] for f in filters_sweep],
+        index=[f'filters={f}' for f in filters_sweep],
+        columns=[f'B={B}' for B in batch_sweep],
+    )
+    totals_df.insert(0, 'params (M)', [params_by_f[f] / 1e6 for f in filters_sweep])
+    per_game_df = pd.DataFrame(
+        [[totals_ms[(f, B)] / B for B in batch_sweep] for f in filters_sweep],
+        index=[f'filters={f}' for f in filters_sweep],
+        columns=[f'B={B}' for B in batch_sweep],
+    )
+    per_game_df.insert(0, 'params (M)', [params_by_f[f] / 1e6 for f in filters_sweep])
+
+    totals_df.to_csv(f"{plots_path}/benchmark_inference_keras_filters_x_batch_totals.csv")
+    per_game_df.to_csv(f"{plots_path}/benchmark_inference_keras_filters_x_batch_per_game.csv")
+    print(f"\n=== KERAS Total batch time (ms, median over {n_timed} reps) ===\n")
+    print(totals_df.to_string(float_format=lambda x: f"{x:7.3f}"))
+    print(f"\n=== KERAS Per-game time (ms) ===\n")
+    print(per_game_df.to_string(float_format=lambda x: f"{x:7.3f}"))
+    return totals_df, per_game_df
+
+
+def benchmark_inference_filters_x_batch_tflite(
+    filters_sweep=(16, 32, 64, 96, 128),
+    batch_sweep=(1, 4, 16, 64, 128, 256),
+    blocks=6,
+    opp_hidden=128,
+    own_kernels=4,
+    n_warmup=5,
+    n_timed=30,
+    src_file=None,
+):
+    """Convert the Keras BaseResNet to TFLite (once per filters value), then time invoke()."""
+    if src_file is None:
+        src_file = f"{directory_path}/temp_data/95.txt"
+    print(f"Loading sample from {src_file}")
+    sample = ujson.load(open(src_file, 'r'))[0]
+
+    totals_ms, params_by_f = {}, {}
+    for f in filters_sweep:
+        cfg = BaseResNetConfig(blocks=blocks, filters=f, opp_hidden=opp_hidden, own_kernels=own_kernels)
+        keras_model = gen_baseresnet_keras(cfg)
+        params_by_f[f] = keras_model.count_params()
+        print(f"  [tflite] filters={f}  exporting + converting...")
+
+        # Use saved_model route (works around BN ReadVariableOp issue in from_keras_model)
+        export_dir = f"{directory_path}/TEMP_MODELS/baseresnet_export_{f}"
+        keras_model.export(export_dir)
+        converter = tf.lite.TFLiteConverter.from_saved_model(export_dir)
+        converter.target_spec.supported_ops = [
+            tf.lite.OpsSet.TFLITE_BUILTINS,
+            tf.lite.OpsSet.SELECT_TF_OPS,
+        ]
+        tflite_blob = converter.convert()
+
+        for B in batch_sweep:
+            try:
+                interp = tf.lite.Interpreter(model_content=tflite_blob)
+                # Resize every input to this batch size
+                for det in interp.get_input_details():
+                    shape = list(det['shape'])
+                    shape[0] = B
+                    interp.resize_tensor_input(det['index'], shape)
+                interp.allocate_tensors()
+
+                inputs = _build_batch_keras(sample, B)
+                # Match each numpy array to the interpreter input by name "0".."10"
+                input_details = interp.get_input_details()
+                name_to_idx = {det['name'].split(':')[0].split('serving_default_')[-1]: det['index']
+                               for det in input_details}
+                # Keras input names "0".."10" carry through to tflite as "serving_default_0:0" or similar
+                # Build idx_map by stripping prefix/suffix and matching positionally
+                ordered_indices = []
+                for i in range(11):
+                    key = str(i)
+                    # try various forms
+                    candidates = [k for k in name_to_idx if k.endswith(key) or k == key]
+                    if not candidates:
+                        raise RuntimeError(f"could not find input {i} in {list(name_to_idx)}")
+                    ordered_indices.append(name_to_idx[candidates[0]])
+
+                # Warmup
+                for _ in range(n_warmup):
+                    for arr, idx in zip(inputs, ordered_indices):
+                        interp.set_tensor(idx, arr)
+                    interp.invoke()
+
+                times = []
+                for _ in range(n_timed):
+                    for arr, idx in zip(inputs, ordered_indices):
+                        interp.set_tensor(idx, arr)
+                    t0 = time.perf_counter()
+                    interp.invoke()
+                    times.append(time.perf_counter() - t0)
+                ms = float(np.median(times) * 1000)
+                totals_ms[(f, B)] = ms
+                print(f"  [tflite] filters={f:>4} batch={B:>4}  median={ms:7.3f} ms  per-game={ms/B:7.3f} ms")
+            except (RuntimeError, MemoryError, ValueError) as e:
+                totals_ms[(f, B)] = float('nan')
+                print(f"  [tflite] filters={f:>4} batch={B:>4}  ERROR ({type(e).__name__}): {e}")
+
+        del keras_model, tflite_blob
+        gc.collect()
+
+    totals_df = pd.DataFrame(
+        [[totals_ms[(f, B)] for B in batch_sweep] for f in filters_sweep],
+        index=[f'filters={f}' for f in filters_sweep],
+        columns=[f'B={B}' for B in batch_sweep],
+    )
+    totals_df.insert(0, 'params (M)', [params_by_f[f] / 1e6 for f in filters_sweep])
+    per_game_df = pd.DataFrame(
+        [[totals_ms[(f, B)] / B for B in batch_sweep] for f in filters_sweep],
+        index=[f'filters={f}' for f in filters_sweep],
+        columns=[f'B={B}' for B in batch_sweep],
+    )
+    per_game_df.insert(0, 'params (M)', [params_by_f[f] / 1e6 for f in filters_sweep])
+
+    totals_df.to_csv(f"{plots_path}/benchmark_inference_tflite_filters_x_batch_totals.csv")
+    per_game_df.to_csv(f"{plots_path}/benchmark_inference_tflite_filters_x_batch_per_game.csv")
+    print(f"\n=== TFLITE Total batch time (ms, median over {n_timed} reps) ===\n")
+    print(totals_df.to_string(float_format=lambda x: f"{x:7.3f}"))
+    print(f"\n=== TFLITE Per-game time (ms) ===\n")
+    print(per_game_df.to_string(float_format=lambda x: f"{x:7.3f}"))
+    return totals_df, per_game_df
+
+
+def _convert_tflite_for_precision(saved_model_dir, precision):
+    """Convert a saved Keras model to TFLite with the named precision profile.
+
+    precision values:
+      - 'prod_quant': Optimize.DEFAULT (dynamic-range quant) — matches ai.get_interpreter
+      - 'fp32':       no optimizations — matches the existing filters_x_batch benchmark
+      - 'fp16':       target_spec.supported_types = [tf.float16] (float16 weights)
+    """
+    converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
+    converter.target_spec.supported_ops = [
+        tf.lite.OpsSet.TFLITE_BUILTINS,
+        tf.lite.OpsSet.SELECT_TF_OPS,
+    ]
+    if precision == 'prod_quant':
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    elif precision == 'fp16':
+        converter.target_spec.supported_types = [tf.float16]
+    elif precision == 'fp32':
+        pass
+    else:
+        raise ValueError(f"unknown precision: {precision}")
+    return converter.convert()
+
+
+def benchmark_inference_blocks_x_filters_x_batch_tflite(
+    blocks_sweep=(2, 6, 12, 16),
+    filters_sweep=(8, 16, 32, 64),
+    batch_sweep=(1, 4, 8, 16, 32, 64),
+    precision_sweep=('prod_quant', 'fp32', 'fp16'),
+    num_threads=2,
+    opp_hidden=128,
+    own_kernels=4,
+    n_warmup=5,
+    n_timed=30,
+    src_file=None,
+    resume=True,
+):
+    """4D TFLite sweep: blocks × filters × batch × precision.
+
+    For each (blocks, filters): build + export Keras model once. For each
+    precision: convert with the matching converter profile. For each batch:
+    resize_tensor_input + allocate + warmup + time `invoke`.
+
+    Outputs (under plots_path):
+      - benchmark_inference_tflite_blocks_x_filters_x_batch_precision.csv (long)
+      - benchmark_inference_tflite_blocks{N}_{precision}_filters_x_batch_per_game.csv (per pair)
+
+    Checkpointing: the long CSV is rewritten after each completed (blocks,
+    filters, precision) row. With resume=True, cells already present in that
+    CSV are skipped on restart.
+    """
+    if src_file is None:
+        src_file = f"{directory_path}/temp_data/95.txt"
+    print(f"Loading sample from {src_file}")
+    sample = ujson.load(open(src_file, 'r'))[0]
+
+    long_csv = f"{plots_path}/benchmark_inference_tflite_blocks_x_filters_x_batch_precision.csv"
+
+    # ---- Resume: load existing rows so we can skip them ----
+    done = set()
+    long_rows = []  # list of dicts that will become the long-format CSV
+    if resume and os.path.exists(long_csv):
+        prev = pd.read_csv(long_csv)
+        for _, r in prev.iterrows():
+            key = (int(r['blocks']), int(r['filters']), str(r['precision']), int(r['batch']))
+            done.add(key)
+            long_rows.append(r.to_dict())
+        print(f"Resuming: {len(done)} cells already done in {long_csv}")
+
+    def _flush_long_csv():
+        if not long_rows:
+            return
+        df = pd.DataFrame(long_rows)
+        df = df[['blocks', 'filters', 'precision', 'batch', 'params_M', 'total_ms', 'per_inference_ms']]
+        df.to_csv(long_csv, index=False)
+
+    n_cells_total = len(blocks_sweep) * len(filters_sweep) * len(precision_sweep) * len(batch_sweep)
+    n_cells_done_start = len(done)
+    print(f"Sweeping {n_cells_total} cells "
+          f"({len(blocks_sweep)}×{len(filters_sweep)}×{len(precision_sweep)}×{len(batch_sweep)}); "
+          f"already done: {n_cells_done_start}")
+
+    params_by_pair = {}
+    for blocks in blocks_sweep:
+        for f in filters_sweep:
+            # Build + export once per (blocks, filters)
+            cfg = BaseResNetConfig(blocks=blocks, filters=f,
+                                   opp_hidden=opp_hidden, own_kernels=own_kernels)
+            keras_model = gen_baseresnet_keras(cfg)
+            params_M = keras_model.count_params() / 1e6
+            params_by_pair[(blocks, f)] = params_M
+
+            export_dir = f"{directory_path}/TEMP_MODELS/baseresnet_export_b{blocks}_f{f}"
+            print(f"\n[blocks={blocks} filters={f}]  params={params_M:.3f}M  exporting...")
+            keras_model.export(export_dir)
+
+            for precision in precision_sweep:
+                # Skip whole precision if all its batch cells are already done
+                pending = [B for B in batch_sweep
+                           if (blocks, f, precision, B) not in done]
+                if not pending:
+                    print(f"  [{precision}] all batches already done — skipping conversion")
+                    continue
+
+                print(f"  [{precision}] converting...")
+                try:
+                    tflite_blob = _convert_tflite_for_precision(export_dir, precision)
+                except Exception as e:
+                    print(f"  [{precision}] CONVERSION FAILED ({type(e).__name__}): {e}")
+                    for B in pending:
+                        long_rows.append(dict(
+                            blocks=blocks, filters=f, precision=precision, batch=B,
+                            params_M=params_M, total_ms=float('nan'),
+                            per_inference_ms=float('nan'),
+                        ))
+                        done.add((blocks, f, precision, B))
+                    _flush_long_csv()
+                    continue
+
+                for B in batch_sweep:
+                    if (blocks, f, precision, B) in done:
+                        continue
+                    try:
+                        interp = tf.lite.Interpreter(model_content=tflite_blob,
+                                                     num_threads=num_threads)
+                        for det in interp.get_input_details():
+                            shape = list(det['shape'])
+                            shape[0] = B
+                            interp.resize_tensor_input(det['index'], shape)
+                        interp.allocate_tensors()
+
+                        inputs = _build_batch_keras(sample, B)
+                        # Build positional mapping: feature index i (0..10) -> interpreter input idx
+                        input_details = interp.get_input_details()
+                        name_to_idx = {}
+                        for det in input_details:
+                            n = det['name'].split(':')[0].split('serving_default_')[-1]
+                            name_to_idx[n] = det['index']
+                        ordered_indices = []
+                        for i in range(11):
+                            key = str(i)
+                            candidates = [k for k in name_to_idx
+                                          if k.endswith(key) or k == key]
+                            if not candidates:
+                                raise RuntimeError(
+                                    f"could not match input {i} in {list(name_to_idx)}")
+                            ordered_indices.append(name_to_idx[candidates[0]])
+
+                        for _ in range(n_warmup):
+                            for arr, idx in zip(inputs, ordered_indices):
+                                interp.set_tensor(idx, arr)
+                            interp.invoke()
+
+                        times = []
+                        for _ in range(n_timed):
+                            for arr, idx in zip(inputs, ordered_indices):
+                                interp.set_tensor(idx, arr)
+                            t0 = time.perf_counter()
+                            interp.invoke()
+                            times.append(time.perf_counter() - t0)
+
+                        ms = float(np.median(times) * 1000)
+                        per_inf = ms / B
+                        print(f"  [{precision}] blocks={blocks:>2} filters={f:>3} "
+                              f"B={B:>3}  median={ms:7.3f} ms  per_inf={per_inf:7.3f} ms")
+                    except (RuntimeError, MemoryError, ValueError) as e:
+                        ms = float('nan')
+                        per_inf = float('nan')
+                        print(f"  [{precision}] blocks={blocks} filters={f} "
+                              f"B={B}  ERROR ({type(e).__name__}): {e}")
+
+                    long_rows.append(dict(
+                        blocks=blocks, filters=f, precision=precision, batch=B,
+                        params_M=params_M, total_ms=ms, per_inference_ms=per_inf,
+                    ))
+                    done.add((blocks, f, precision, B))
+
+                _flush_long_csv()  # checkpoint after each (blocks, filters, precision)
+                del tflite_blob
+
+            del keras_model
+            gc.collect()
+
+    # ---- Write per-(blocks, precision) 2D CSVs ----
+    long_df = pd.DataFrame(long_rows)
+    long_df = long_df[['blocks', 'filters', 'precision', 'batch',
+                       'params_M', 'total_ms', 'per_inference_ms']]
+    long_df.to_csv(long_csv, index=False)
+    print(f"\nWrote long CSV: {long_csv}")
+
+    for blocks in blocks_sweep:
+        for precision in precision_sweep:
+            sub = long_df[(long_df['blocks'] == blocks)
+                          & (long_df['precision'] == precision)]
+            if sub.empty:
+                continue
+            pivot = sub.pivot(index='filters', columns='batch', values='per_inference_ms')
+            pivot.index = [f'filters={i}' for i in pivot.index]
+            pivot.columns = [f'B={c}' for c in pivot.columns]
+            params_col = [params_by_pair[(blocks, f)] for f in filters_sweep
+                          if (blocks, f) in params_by_pair]
+            if len(params_col) == len(pivot.index):
+                pivot.insert(0, 'params (M)', params_col)
+            out = (f"{plots_path}/benchmark_inference_tflite_"
+                   f"blocks{blocks}_{precision}_filters_x_batch_per_game.csv")
+            pivot.to_csv(out)
+
+    print("\n=== Summary (per-inference ms; min across precisions per cell) ===")
+    summary = (long_df.groupby(['blocks', 'filters', 'batch'])['per_inference_ms']
+               .min().unstack('batch'))
+    print(summary.to_string(float_format=lambda x: f"{x:7.3f}"))
+
+    return long_df
+
+
+def benchmark_inference_own_kernels_x_batch(
+    own_kernels_sweep=(4, 2, 1),
+    batch_sweep=(1, 4, 16, 64, 128, 256),
+    filters=32,
+    blocks=6,
+    opp_hidden=128,
+    n_warmup=5,
+    n_timed=30,
+    src_file=None,
+):
+    """
+    Sweep own_kernels (rows) x batch (cols) on BaseResNet, keeping filters fixed.
+    Tests whether the own-side 1x1 collapse (filters -> own_kernels) is a
+    meaningful latency knob. Same methodology as the filters sweep.
+    """
+    if src_file is None:
+        src_file = f"{directory_path}/temp_data/95.txt"
+    print(f"Loading sample from {src_file}")
+    sample = ujson.load(open(src_file, 'r'))[0]
+
+    totals_ms = {}
+    params_by_k = {}
+
+    for k in own_kernels_sweep:
+        cfg = BaseResNetConfig(blocks=blocks, filters=filters, opp_hidden=opp_hidden, own_kernels=k)
+        model = BaseResNet(cfg).to(device).eval()
+        params_by_k[k] = sum(p.numel() for p in model.parameters())
+
+        for B in batch_sweep:
+            try:
+                inputs = _build_batch(sample, B)
+                with torch.no_grad():
+                    for _ in range(n_warmup):
+                        model(*inputs)
+                    _sync_device()
+
+                    times = []
+                    for _ in range(n_timed):
+                        _sync_device()
+                        t0 = time.perf_counter()
+                        model(*inputs)
+                        _sync_device()
+                        times.append(time.perf_counter() - t0)
+
+                ms = float(np.median(times) * 1000)
+                totals_ms[(k, B)] = ms
+                print(f"  own_kernels={k}  batch={B:>4}  median={ms:7.3f} ms  per-game={ms/B:7.3f} ms")
+            except (RuntimeError, MemoryError) as e:
+                totals_ms[(k, B)] = float('nan')
+                print(f"  own_kernels={k}  batch={B:>4}  ERROR ({type(e).__name__}): {e}")
+
+        del model
+        gc.collect()
+        if device == 'mps':
+            torch.mps.empty_cache()
+
+    totals_df = pd.DataFrame(
+        [[totals_ms[(k, B)] for B in batch_sweep] for k in own_kernels_sweep],
+        index=[f'own_kernels={k}' for k in own_kernels_sweep],
+        columns=[f'B={B}' for B in batch_sweep],
+    )
+    totals_df.insert(0, 'params (M)', [params_by_k[k] / 1e6 for k in own_kernels_sweep])
+
+    per_game_df = pd.DataFrame(
+        [[totals_ms[(k, B)] / B for B in batch_sweep] for k in own_kernels_sweep],
+        index=[f'own_kernels={k}' for k in own_kernels_sweep],
+        columns=[f'B={B}' for B in batch_sweep],
+    )
+    per_game_df.insert(0, 'params (M)', [params_by_k[k] / 1e6 for k in own_kernels_sweep])
+
+    csv_path = f"{plots_path}/benchmark_inference_pytorch_own_kernels_x_batch_totals.csv"
+    totals_df.to_csv(csv_path)
+    per_csv_path = f"{plots_path}/benchmark_inference_pytorch_own_kernels_x_batch_per_game.csv"
+    per_game_df.to_csv(per_csv_path)
+    print(f"\nSaved totals CSV: {csv_path}")
+    print(f"Saved per-game CSV: {per_csv_path}")
+
+    print(f"\n=== Total batch time (ms, filters={filters}, blocks={blocks}) — device={device} ===\n")
+    print(totals_df.to_string(float_format=lambda x: f"{x:7.3f}"))
+    print(f"\n=== Per-game time (ms = total / batch_size) — device={device} ===\n")
+    print(per_game_df.to_string(float_format=lambda x: f"{x:7.3f}"))
+
+    return totals_df, per_game_df
+
+
+def convert_data_2_8_to_2_9(set):
+    """
+    Convert data from version 2.8 to 2.9.
+    Pads boards from (26, COLS) to (ROWS, COLS) and the policy row axis
+    from 25 to ROWS-1, prepending zero-rows at the top of each.
+    """
+    SRC_ROWS = 26
+    pad_top = ROWS - SRC_ROWS
+    if pad_top == 0:
+        return
+    for move in set:
+        for board_idx in (0, 5):
+            board = np.asarray(move[board_idx])
+            padded = np.zeros((ROWS, COLS), dtype=board.dtype)
+            padded[pad_top:, :] = board
+            move[board_idx] = padded.tolist()
+        policy = np.asarray(move[12])
+        padded_policy = np.zeros(POLICY_SHAPE, dtype=policy.dtype)
+        padded_policy[:, pad_top:, :] = policy
+        move[12] = padded_policy.tolist()
+
+
+def prepare_experiment_data(src_data_version=2.8, ruleset='s2', n_files=10,
+                            convert_fn=convert_data_2_8_to_2_9):
+    """
+    Copy the n_files most-recent data files from src_data_version, apply
+    convert_fn in place, and write them to Storage/temp_data/ for use in
+    benchmarks and architecture experiments. Idempotent: skips files already
+    present in temp_data.
     """
     src_dir = f"{directory_path}/data/{ruleset}.{src_data_version}"
-    dst_dir = f"{directory_path}/data/{ruleset}.{dst_data_version}"
+    dst_dir = f"{directory_path}/temp_data"
     os.makedirs(dst_dir, exist_ok=True)
 
-    pad_top = ROWS - src_rows
-    if pad_top < 0:
-        raise ValueError(f"ROWS ({ROWS}) must be >= src_rows ({src_rows})")
-    if pad_top == 0:
-        print(f"Nothing to do: ROWS == src_rows == {ROWS}")
-        return
+    candidates = []
+    for f in os.listdir(src_dir):
+        stem = f.split('.')[0]
+        if stem.isdigit():
+            candidates.append((int(stem), f))
+    candidates.sort(reverse=True)
+    selected = candidates[:n_files]
 
-    filenames = sorted(f for f in os.listdir(src_dir) if f.endswith('.txt'))
-    print(f"Migrating {len(filenames)} files: rows {src_rows} -> {ROWS}")
-
-    for fname in filenames:
+    print(f"Preparing {len(selected)} files: {src_dir} -> {dst_dir}")
+    for _, fname in selected:
         src_path = f"{src_dir}/{fname}"
         dst_path = f"{dst_dir}/{fname}"
-        if os.path.exists(dst_path):
+        if os.path.exists(dst_path) and os.path.getsize(dst_path) > 0:
             print(f"  skip {fname} (exists)")
             continue
-
         samples = ujson.load(open(src_path, 'r'))
-        for sample in samples:
-            for board_idx in (0, 5):
-                board = np.asarray(sample[board_idx])
-                assert board.shape == (src_rows, COLS), f"board shape {board.shape} != ({src_rows}, {COLS})"
-                padded = np.zeros((ROWS, COLS), dtype=board.dtype)
-                padded[pad_top:, :] = board
-                sample[board_idx] = padded.tolist()
-
-            policy = np.asarray(sample[12])
-            assert policy.shape == (POLICY_SHAPE[0], src_rows - 1, POLICY_SHAPE[2]), \
-                f"policy shape {policy.shape} != ({POLICY_SHAPE[0]}, {src_rows - 1}, {POLICY_SHAPE[2]})"
-            padded_policy = np.zeros(POLICY_SHAPE, dtype=policy.dtype)
-            padded_policy[:, pad_top:, :] = policy
-            sample[12] = padded_policy.tolist()
-
+        convert_fn(samples)
         ujson.dump(samples, open(dst_path, 'w'))
-        src_mb = os.path.getsize(src_path) / 1e6
-        dst_mb = os.path.getsize(dst_path) / 1e6
-        print(f"  {fname}: {len(samples)} samples, {src_mb:.1f} MB -> {dst_mb:.1f} MB")
-
+        size_mb = os.path.getsize(dst_path) / 1e6
+        print(f"  {fname}: {len(samples)} samples, {size_mb:.1f} MB")
     print(f"Done. Output: {dst_dir}")
 
 
@@ -2650,7 +3850,7 @@ if __name__ == "__main__":
     # analyze_fpu(n_games=5)
     # plot_value_loss_over_training(n=50)
     # plot_mcts_iter_scaling(n_games=10)
-    plot_gating_outcomes()
+    # plot_gating_outcomes()
     # populate_training_log()
     # plot_training_loss_curves()
 
@@ -2660,7 +3860,7 @@ if __name__ == "__main__":
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
 
     # ===== REPLAY / VISUALIZATION =====
-    # record_game_gif(max_iter=800)
+    record_game_gif(max_iter=200, model='pytorch', fps=3)
     # test_reflected_policy()
     # visualize_policy()
     # visualize_policy_from_data()
@@ -2696,7 +3896,5 @@ if __name__ == "__main__":
 
     # ===== DATA MIGRATION =====
     # migrate_stats_data()
-
-    instantiate_network(c, show_summary=True)
 
 "/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/util.py"
