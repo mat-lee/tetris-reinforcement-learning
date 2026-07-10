@@ -215,20 +215,26 @@ class Player:
 
     # AI methods
     def copy(self):
-        new_player = Player(self.ruleset)
+        # __new__ skips Player.__init__ (Board/Queue allocations that would be
+        # immediately replaced). Matches the old copy exactly: stats start from
+        # a fresh Stats (lines_cleared/lines_sent reset) and garbage_to_send
+        # starts empty — MCTS only copies between moves, when it's flushed.
+        new_player = object.__new__(Player)
 
         new_player.board = self.board.copy()
         new_player.queue = self.queue.copy()
+        new_player.stats = Stats(self.ruleset)
         new_player.stats.pieces = self.stats.pieces
         new_player.stats.b2b = self.stats.b2b
         new_player.stats.b2b_level = self.stats.b2b_level
         new_player.stats.combo = self.stats.combo
         new_player.game_over = self.game_over
-        if self.piece != None:
-            new_player.piece = self.piece.copy()
+        new_player.piece = self.piece.copy() if self.piece is not None else None
         new_player.held_piece = self.held_piece
         new_player.garbage_to_receive = self.garbage_to_receive[:]
+        new_player.garbage_to_send = []
         new_player.color = self.color
+        new_player.ruleset = self.ruleset
 
         return new_player
 

@@ -80,7 +80,7 @@ class Config():
         batched_inference=False, # Pytorch only. If True, self-play and battle run all games
                                 # concurrently and coalesce NN calls into one batched forward.
                                 # If False, falls back to the original serial loop (one game at a time, BS=1).
-        model_config=AuxBaseResNetConfig(), # Architecture Parameters
+        model_config=AuxBaseResNetV2Config(), # Architecture Parameters
         move_algorithm='convolutional', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
         use_tanh=False, # If false means using sigmoid; affects data saving and model activation
@@ -94,7 +94,7 @@ class Config():
         gating_threshold=0.52, # Minimum winrate to replace the best model
         gating_threshold_type='moreorequal', # 'moreorequal' or 'more'
 
-        MAX_ITER=400, 
+        MAX_ITER=160, 
         CPUCT=0.75, # CPUCT is the scalar multiple of the policy term in PUCT
         DPUCT=1, # DPUCT is an additive scalar in the denominator of in PUCT
 
@@ -404,15 +404,13 @@ def MCTS(config, game, interference_network) -> tuple[tuple, MCTSTree, bool]:
 
         # Update policy, move_list and generate new nodes
         if node_state.game.is_terminal == False: # Avoid is node game is over
-            value, policy = evaluate(config, node_state.game, interference_network)
+            value, policy, policy_fmt = evaluate_raw(config, node_state.game, interference_network)
             # value, policy = random_evaluate()
-                
-            # Make sure that no values of the policy are below 0
-            policy[policy<=0] = 1e-25
 
             if node_state.game.no_move == False:
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn], algo=config.move_algorithm)
-                move_list = get_move_list(move_matrix, policy)
+                # get_move_list clamps policy values <= 0 to 1e-25
+                move_list = get_move_list(move_matrix, policy, fmt=policy_fmt)
 
                 assert len(move_list) > 0 # There should always be a legal move
 
@@ -733,10 +731,14 @@ class BatchedEvaluator:
             out = self.model.forward(*xs)
         values_t, policies_t = out[0], out[1]
 
-        # Softmax per-sample, matching evaluate_pytorch
-        policies_flat = torch.softmax(policies_t.reshape(len(batch), -1), dim=1)
+        fmt = getattr(self.config.model_config, 'policy_format', 'original')
+        # Heatmap = raw occupancy expectation; no softmax. Other formats: per-sample joint softmax.
+        if fmt in ('heatmap_AM', 'heatmap_FFT'):
+            policies_np = policies_t.detach().cpu().numpy().reshape(len(batch), *_raw_policy_shape(fmt))
+        else:
+            policies_flat = torch.softmax(policies_t.reshape(len(batch), -1), dim=1)
+            policies_np = policies_flat.detach().cpu().numpy().reshape(len(batch), *_raw_policy_shape(fmt))
         values_np = values_t.detach().cpu().numpy().reshape(-1)
-        policies_np = policies_flat.detach().cpu().numpy().reshape(len(batch), *POLICY_SHAPE)
 
         for i, (_, fut) in enumerate(batch):
             fut.set_result((float(values_np[i]), policies_np[i]))
@@ -757,10 +759,13 @@ def _build_features_for_batcher(game):
 
 
 async def aevaluate(config, game, evaluator: BatchedEvaluator):
-    """Async drop-in for evaluate(): submits features to the batcher and awaits result."""
+    """Async drop-in for evaluate_raw(): submits features to the batcher and awaits result."""
     x = _build_features_for_batcher(game)
     value, policy = await evaluator.submit(x)
-    return value, policy
+    fmt = getattr(config.model_config, 'policy_format', 'original')
+    if fmt in ('original', 'spatial_list'):
+        return value, policy, fmt
+    return value, _decode_policy_lazy(policy, fmt), 'original'
 
 
 async def amcts(config, game, evaluator: BatchedEvaluator) -> tuple[tuple, MCTSTree, bool]:
@@ -845,12 +850,12 @@ async def amcts(config, game, evaluator: BatchedEvaluator) -> tuple[tuple, MCTST
             node_state.game.make_move(node_state.move, add_bag=False, add_history=False)
 
         if node_state.game.is_terminal == False:
-            value, policy = await aevaluate(config, node_state.game, evaluator)
-            policy[policy <= 0] = 1e-25
+            value, policy, policy_fmt = await aevaluate(config, node_state.game, evaluator)
 
             if node_state.game.no_move == False:
                 move_matrix = get_move_matrix(node_state.game.players[node_state.game.turn], algo=config.move_algorithm)
-                move_list = get_move_list(move_matrix, policy)
+                # get_move_list clamps policy values <= 0 to 1e-25
+                move_list = get_move_list(move_matrix, policy, fmt=policy_fmt)
                 assert len(move_list) > 0
 
                 policies, moves = map(list, zip(*move_list))
@@ -1013,15 +1018,36 @@ def pick_random_move_by_policy(tree: MCTSTree) -> tuple:
     move = random.choices(moves, policies)[0]
     return move
 
-def get_move_list(move_matrix, policy_matrix):
-    # Returns list of possible moves with their policy
-    # Removes buffer
-    move_list = np.argwhere(move_matrix)
+def get_move_list(move_matrix, policy_matrix, fmt='original'):
+    # Returns list of possible moves with their policy, clamping values <= 0
+    # to 1e-25 so downstream log/normalize math stays valid.
+    # move_matrix is always in the legacy POLICY_SHAPE layout; policy_matrix is
+    # either legacy ('original') or the network-native (ROWS, COLS, 27) layout
+    # ('spatial_list'), which is gathered directly at the legal-move positions
+    # instead of being decoded to the legacy tensor first.
+    moves = np.argwhere(move_matrix)
+    pis, ris, cis = moves[:, 0], moves[:, 1], moves[:, 2]
+
+    if fmt == 'spatial_list':
+        # Legacy (ri, ci) -> spatial (new_row, new_col) through the common
+        # padded-bbox reference (see buffer definitions in const.py). Legacy
+        # cells with no spatial counterpart decode to 0 (then clamp below).
+        nrs = ris + LEGACY_POLICY_ROW_BUFFER - POLICY_ROW_BUFFER_ARR[pis]
+        ncs = cis + LEGACY_POLICY_COL_BUFFER - POLICY_COL_BUFFER_ARR[pis]
+        in_range = ((nrs >= 0) & (nrs <= POLICY_ROW_MAX_ARR[pis])
+                    & (ncs >= 0) & (ncs <= POLICY_COL_MAX_ARR[pis]))
+        values = np.where(
+            in_range,
+            policy_matrix[np.clip(nrs, 0, ROWS - 1), np.clip(ncs, 0, COLS - 1), pis],
+            np.float32(0.0),
+        )
+    else:
+        values = policy_matrix[pis, ris, cis]
+
+    values = np.where(values <= 0, np.float32(1e-25), values)
 
     # Formats moves from (policy index, row, col) to (value, (policy index, col - 2, row))
-    move_list = [(policy_matrix[pi, ri, ci], (pi, ci - 2, ri)) for pi, ri, ci in move_list]
-
-    return move_list
+    return [(v, (pi, ci - 2, ri)) for v, pi, ri, ci in zip(values, pis, ris, cis)]
 
 ##### Neural Network #####
 # 
@@ -1038,14 +1064,18 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
     # Apply value head and policy head 
 
     if config.model == 'keras':
-        if isinstance(config.model_config, AuxBaseResNetConfig):
+        if isinstance(config.model_config, AuxBaseResNetV2Config):
+            model = gen_auxbaseresnetv2_keras(config.model_config, config.use_tanh)
+        elif isinstance(config.model_config, AuxBaseResNetConfig):
             model = gen_auxbaseresnet_keras(config.model_config, config.use_tanh)
         elif isinstance(config.model_config, BaseResNetConfig):
             model = gen_baseresnet_keras(config.model_config, config.use_tanh)
         else:
             model = gen_alphasame_nn(config.model_config, config.use_tanh)
     elif config.model == 'pytorch':
-        if isinstance(config.model_config, AuxBaseResNetConfig):
+        if isinstance(config.model_config, AuxBaseResNetV2Config):
+            model = AuxBaseResNetV2(config.model_config, config.use_tanh)
+        elif isinstance(config.model_config, AuxBaseResNetConfig):
             model = AuxBaseResNet(config.model_config, config.use_tanh)
         elif isinstance(config.model_config, BaseResNetConfig):
             model = BaseResNet(config.model_config, config.use_tanh)
@@ -1057,12 +1087,7 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
         if plot_model == True:
             keras.utils.plot_model(model, to_file=f"{directory_path}/model_{config.model_version}_img.png", show_shapes=True)
 
-        # Loss is the sum of MSE of values and Cross entropy of policies
-        model.compile(optimizer=keras.optimizers.Adam(
-            learning_rate=config.learning_rate),
-            loss=["mean_squared_error", "categorical_crossentropy"],
-            loss_weights=config.loss_weights
-            )
+        _compile_keras_model(config, model)
 
         if show_summary: model.summary()
 
@@ -1084,7 +1109,75 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
 
         return model
 
+def _compute_aux_targets_numpy(grid_batch: np.ndarray) -> np.ndarray:
+    """NumPy mirror of architectures.compute_aux_targets for the Keras training path.
+
+    grid_batch shape (B, ROWS, COLS) float; returns (B, 2) [holes_norm, height_norm] in [0, 1].
+    """
+    filled = (grid_batch > 0.5).astype(np.float32)
+    has_filled_above = (np.cumsum(filled, axis=1) > 0).astype(np.float32)
+    holes = ((1.0 - filled) * has_filled_above).sum(axis=(1, 2))
+    any_filled = filled.sum(axis=1) > 0          # (B, COLS)
+    top_idx = filled.argmax(axis=1)              # (B, COLS); 0 if column empty
+    heights = np.where(any_filled, ROWS - top_idx, 0).astype(np.float32)
+    height_sum = heights.sum(axis=1)
+    denom = float(ROWS * COLS)
+    return np.stack([holes / denom, height_sum / denom], axis=1)
+
+
+def _policy_target_size(policy_format):
+    """Flat target size for the policy loss, per policy_format."""
+    if policy_format == 'original':
+        return POLICY_SIZE
+    return ROWS * COLS * POLICY_SHAPE[0]
+
+
+def _keras_policy_loss(policy_format):
+    """Per-format policy loss for Keras compile."""
+    if policy_format == 'original':
+        return 'categorical_crossentropy'
+    if policy_format == 'spatial_list':
+        flat_size = ROWS * COLS * POLICY_SHAPE[0]
+        def spatial_cce(y_true, y_pred):
+            y_true_flat = tf.reshape(y_true, (-1, flat_size))
+            y_pred_flat = tf.reshape(y_pred, (-1, flat_size))
+            return tf.keras.losses.categorical_crossentropy(y_true_flat, y_pred_flat)
+        return spatial_cce
+    if policy_format in ('heatmap_AM', 'heatmap_FFT'):
+        return 'mean_squared_error'
+    raise ValueError(f"unknown policy_format: {policy_format!r}")
+
+
+def _compile_keras_model(config, model):
+    """Compile a Keras model with the value/policy/aux losses implied by config.
+
+    Called from both instantiate_network (fresh models) and load_model (checkpoints
+    loaded with compile=False to skip custom-loss deserialization).
+    """
+    # Policy loss dispatch on policy_format:
+    #   'original'/'spatial_list' -> CCE over the flat distribution (spatial joint)
+    #   'heatmap_*'               -> MSE over the heatmap (occupancy expectation)
+    policy_loss = _keras_policy_loss(getattr(config.model_config, 'policy_format', 'original'))
+    losses = ["mean_squared_error", policy_loss]
+    loss_weights = list(config.loss_weights)
+    if isinstance(config.model_config, (AuxBaseResNetConfig, AuxBaseResNetV2Config)):
+        losses.append("mean_squared_error")
+        loss_weights.append(config.model_config.aux_weight)
+    model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=config.learning_rate),
+        loss=losses,
+        loss_weights=loss_weights,
+    )
+
+
 def train_network(config, model, set):
+    # Raw samples on disk store policies in POLICY_SHAPE (piece × rotation-row × col).
+    # Non-'original' formats need per-sample conversion before the downstream reshapes
+    # in train_network_keras/pytorch expect ROWS × COLS × POLICY_SHAPE[0].
+    fmt = getattr(config.model_config, 'policy_format', 'original')
+    if fmt != 'original':
+        from util import _convert_samples  # lazy: util imports from ai
+        set = _convert_samples(set, fmt)
     if config.model == 'keras':
         train_network_keras(config, model, set)
     elif config.model == 'pytorch':
@@ -1105,16 +1198,28 @@ def train_network_keras(config, model, set, data_number=None):
     policies = features.pop()
     values = features.pop()
 
-    # Reshape policies
-    policies = np.array(policies).reshape((-1, POLICY_SIZE))
+    # Reshape policies — flat for 'original', native (B, ROWS, COLS, 27) for spatial formats.
+    fmt = getattr(config.model_config, 'policy_format', 'original')
+    if fmt == 'original':
+        policies = np.array(policies).reshape((-1, POLICY_SIZE))
+    else:
+        policies = np.array(policies).reshape((-1, ROWS, COLS, POLICY_SHAPE[0]))
 
     # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
     # Adjust learning rate HOW???
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
 
+    targets = [values, policies]
+    if isinstance(config.model_config, (AuxBaseResNetConfig, AuxBaseResNetV2Config)):
+        # Aux target computed from active player's grid (features[0]).
+        a_grid = np.asarray(features[0])
+        if a_grid.ndim == 4:  # (B, H, W, 1)
+            a_grid = a_grid[..., 0]
+        targets.append(_compute_aux_targets_numpy(a_grid))
+
     history = model.fit(x=features,
-                        y=[values, policies],
+                        y=targets,
                         batch_size=64,
                         epochs=config.epochs,
                         shuffle=config.shuffle)
@@ -1124,7 +1229,15 @@ def train_network_keras(config, model, set, data_number=None):
     value_preds = preds[0].flatten()
     policy_preds = preds[1]
     value_loss = float(np.mean((value_preds - values.flatten()) ** 2))
-    policy_loss = float(-np.mean(np.sum(policies * np.log(np.clip(policy_preds, 1e-7, 1.0)), axis=-1)))
+    if fmt == 'original':
+        policy_loss = float(-np.mean(np.sum(policies * np.log(np.clip(policy_preds, 1e-7, 1.0)), axis=-1)))
+    elif fmt == 'spatial_list':
+        flat_size = ROWS * COLS * POLICY_SHAPE[0]
+        p_flat = policies.reshape(-1, flat_size)
+        pp_flat = policy_preds.reshape(-1, flat_size)
+        policy_loss = float(-np.mean(np.sum(p_flat * np.log(np.clip(pp_flat, 1e-7, 1.0)), axis=-1)))
+    else:  # heatmap_*
+        policy_loss = float(np.mean((policy_preds - policies) ** 2))
 
     log_entry = {
         "model_version": config.model_version,
@@ -1148,12 +1261,18 @@ def train_network_pytorch(config, model, set, data_number=None):
     dataset = torch.utils.data.TensorDataset(*features)
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=config.shuffle)
 
+    fmt = getattr(config.model_config, 'policy_format', 'original')
+    target_size = _policy_target_size(fmt)
     loss_fn_value = nn.MSELoss()
-    loss_fn_policy = nn.CrossEntropyLoss()
+    # Use built-in CCE that expects raw logits + probability targets, MSE for heatmap.
+    if fmt in ('original', 'spatial_list'):
+        loss_fn_policy = nn.CrossEntropyLoss()
+    else:  # heatmap_*
+        loss_fn_policy = nn.MSELoss()
     loss_fn_aux = nn.MSELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
-    has_aux = isinstance(config.model_config, AuxBaseResNetConfig)
+    has_aux = isinstance(config.model_config, (AuxBaseResNetConfig, AuxBaseResNetV2Config))
     aux_weight = config.model_config.aux_weight if has_aux else 0.0
 
     model.train()
@@ -1164,7 +1283,7 @@ def train_network_pytorch(config, model, set, data_number=None):
         for data_point in dataloader:
             data_point = [feat.to(device) for feat in data_point]
 
-            y_policy = data_point.pop().reshape(-1, POLICY_SIZE)
+            y_policy = data_point.pop().reshape(-1, target_size).type(torch.float)
             y_value = data_point.pop().type(torch.float)
 
             if has_aux:
@@ -1174,7 +1293,7 @@ def train_network_pytorch(config, model, set, data_number=None):
                 pred_value, pred_policy = model(*data_point)
 
             pred_value = pred_value.reshape(-1)
-            pred_policy = pred_policy.reshape(-1, POLICY_SIZE)
+            pred_policy = pred_policy.reshape(-1, target_size)
 
             loss_1 = loss_fn_value(pred_value, y_value)
             loss_2 = loss_fn_policy(pred_policy, y_policy)
@@ -1219,17 +1338,46 @@ def train_network_pytorch(config, model, set, data_number=None):
     with open(f"{logs_path}/training_log.jsonl", 'a') as f:
         f.write(ujson.dumps(log_entry) + '\n')
 
-def evaluate(config, game, network):
+def _decode_policy_lazy(policy_raw, fmt):
+    """Lazy import of util.decode_policy — util imports from ai, so we defer the import."""
+    from util import decode_policy
+    return decode_policy(policy_raw, fmt)
+
+
+def evaluate_raw(config, game, network):
+    """Evaluate without decoding the policy to the legacy layout.
+
+    Returns (value, policy, fmt) where policy stays in the network's native
+    layout for 'original' and 'spatial_list' (get_move_list gathers spatial
+    values directly — no per-eval decode). Rarer formats (heatmaps) are
+    decoded to the legacy layout and reported as 'original'.
+    """
+    fmt = getattr(config.model_config, 'policy_format', 'original')
     if config.model == 'keras':
         if config.use_tflite:
-            # Use tflite interpreter
-            return evaluate_from_tflite(game, network)
+            value, policy_raw = evaluate_from_tflite(game, network, fmt)
         else:
-            return evaluate_from_keras(game, network)
+            value, policy_raw = evaluate_from_keras(game, network, fmt)
     elif config.model == 'pytorch':
-        return evaluate_pytorch(game, network)
+        value, policy_raw = evaluate_pytorch(game, network, fmt)
+
+    if fmt in ('original', 'spatial_list'):
+        return value, policy_raw, fmt
+    return value, _decode_policy_lazy(policy_raw, fmt), 'original'
+
+
+def evaluate(config, game, network):
+    # Legacy-layout evaluation, kept for analysis/plotting tools and for
+    # testing the old policy format; MCTS uses evaluate_raw.
+    value, policy, fmt = evaluate_raw(config, game, network)
+    return value, _decode_policy_lazy(policy, fmt)
     
-def evaluate_from_tflite(game, interpreter):
+def _raw_policy_shape(fmt):
+    """Shape the raw network output should be reshaped to before decoding."""
+    return POLICY_SHAPE if fmt == 'original' else (ROWS, COLS, POLICY_SHAPE[0])
+
+
+def evaluate_from_tflite(game, interpreter, fmt='original'):
     # Use a neural network to return value and policy.
 
     # Build metadata cache once per interpreter instance (never changes after allocation).
@@ -1247,14 +1395,21 @@ def evaluate_from_tflite(game, interpreter):
             'idx_map': idx_map,
             'val_idx': output_details[0]['index'],
             'pol_idx': output_details[1]['index'],
+            'scalar_bufs': {},  # feature position -> reused (1, 1) float32 buffer
         }
     cache = interpreter._eval_cache
+    scalar_bufs = cache['scalar_bufs']
 
     data = game_to_X(game)
     X = []
-    for feature in data:
+    for k, feature in enumerate(data):
         if type(feature) in (float, int):
-            X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
+            # set_tensor copies immediately, so reusing one buffer per slot is safe
+            buf = scalar_bufs.get(k)
+            if buf is None:
+                buf = scalar_bufs.setdefault(k, np.empty((1, 1), dtype=np.float32))
+            buf[0, 0] = feature
+            X.append(buf)
         else:
             # np.asarray avoids a copy when feature is already float32 ndarray
             np_feature = np.expand_dims(np.asarray(feature, dtype=np.float32), axis=0)
@@ -1268,11 +1423,11 @@ def evaluate_from_tflite(game, interpreter):
     interpreter.invoke()
 
     value    = interpreter.get_tensor(cache['val_idx']).item()
-    policies = interpreter.get_tensor(cache['pol_idx']).reshape(POLICY_SHAPE)
+    policies = interpreter.get_tensor(cache['pol_idx']).reshape(_raw_policy_shape(fmt))
 
     return value, policies
 
-def evaluate_from_keras(game, model):
+def evaluate_from_keras(game, model, fmt='original'):
     # Use a neural network to return value and policy.
     data = game_to_X(game)
     X = []
@@ -1289,11 +1444,11 @@ def evaluate_from_keras(game, model):
     # AuxBaseResNet (3 outputs) returns [value, policy, aux]; ignore aux at inference.
     value, policies = out[0], out[1]
     value = value.item()
-    policies = policies.reshape(POLICY_SHAPE)
+    policies = policies.reshape(_raw_policy_shape(fmt))
 
     return value, policies
 
-def evaluate_pytorch(game, model):
+def evaluate_pytorch(game, model, fmt='original'):
     # Use a neural network to return value and policy.
     data = game_to_X(game)
     X = []
@@ -1315,8 +1470,13 @@ def evaluate_pytorch(game, model):
         out = model.forward(*X)
         value, policies = out[0], out[1]  # AuxBaseResNet returns a 3-tuple; ignore aux at inference
 
-    policies = torch.softmax(policies.reshape(-1), dim=0)
-    return value.item(), policies.cpu().numpy().reshape(POLICY_SHAPE)
+    # Heatmaps are raw occupancy expectations — no softmax. Original / spatial_list
+    # apply joint softmax over the flat output.
+    if fmt in ('heatmap_AM', 'heatmap_FFT'):
+        policy_np = policies.cpu().numpy()
+    else:
+        policy_np = torch.softmax(policies.reshape(-1), dim=0).cpu().numpy()
+    return value.item(), policy_np.reshape(_raw_policy_shape(fmt))
 
 def random_evaluate():
     # For testing how fast the MCTS is
@@ -1380,12 +1540,12 @@ def get_pieces(game):
     piece_table = np.zeros((2, 2 + PREVIEWS, len(MINOS)), dtype=np.float32)
     for i, player in enumerate(game.players):
         if player.piece:  # Active piece: 0
-            piece_table[i][0][MINOS.index(player.piece.type)] = 1
+            piece_table[i][0][MINO_TO_INDEX[player.piece.type]] = 1
         if player.held_piece:  # Held piece: 1
-            piece_table[i][1][MINOS.index(player.held_piece)] = 1
+            piece_table[i][1][MINO_TO_INDEX[player.held_piece]] = 1
         # Limit previews
         for j, piece in enumerate(player.queue.pieces[:PREVIEWS]):  # Queue pieces: 2-6
-            piece_table[i][j + 2][MINOS.index(piece)] = 1
+            piece_table[i][j + 2][MINO_TO_INDEX[piece]] = 1
     return reverse_if_needed(piece_table, game.turn == 1)
 
 def get_stat(game, stat_name):
@@ -1470,9 +1630,6 @@ def reflect_policy(policy_matrix):
     for policy_index in range(POLICY_SHAPE[0]):
         piece, rotation, t_spin_index = policy_index_to_piece[policy_index]
 
-        # Save the piece size
-        piece_size = len(piece_dict[piece])
-
         # Swap pieces that aren't the same as their mirrors
         new_piece = piece
         if new_piece in piece_swap_dict:
@@ -1482,34 +1639,28 @@ def reflect_policy(policy_matrix):
         new_rotation = rotation
         if new_rotation in rotation_dict:
             new_rotation = rotation_dict[new_rotation]
-        
-        # If the new rotation is a redunant shape, adjust where the piece goes
-        post_col_adjustment = 0
-        if new_piece in ["Z", "S", "I"]:
-            # If the new rotation is 3, it needs to be shifted back after being flipped
-            if new_rotation == 3:
-                post_col_adjustment = -1
-                new_rotation -= 2
+
+        # Z/S/I rotation 3 is rotation 1 shifted, and only rotation 1 is
+        # encoded. In the stripped-bbox frame below they coincide exactly,
+        # so remapping needs no column adjustment.
+        if new_piece in ["Z", "S", "I"] and new_rotation == 3:
+            new_rotation -= 2
 
         new_policy_index = policy_piece_to_index[new_piece][new_rotation][t_spin_index]
+
+        # Legacy col -> stripped-bbox (spatial) col via the per-piece buffers,
+        # flip within the stripped frame, then convert back. The mirror piece
+        # has the same stripped width, so the flip is just c_max - col.
+        to_spatial = LEGACY_POLICY_COL_BUFFER - policy_col_buffer[policy_index]
+        to_legacy = policy_col_buffer[new_policy_index] - LEGACY_POLICY_COL_BUFFER
+        c_max = policy_col_range[new_policy_index][1]
+
         for col in range(POLICY_SHAPE[2]):
             for row in range(POLICY_SHAPE[1]):
                 value = policy_matrix[policy_index][row][col]
                 if value > 0:
                     new_row = row
-                    new_col = col
-
-                    # Remove buffer
-                    new_col += -2
-
-                    # Flip column
-                    new_col = 10 - new_col - piece_size # 9 - col - piece_size + 1
-                    
-                    # Add back buffer
-                    new_col += 2
-
-                    # Add column adjustment if needed
-                    new_col += post_col_adjustment
+                    new_col = (c_max - (col + to_spatial)) + to_legacy
 
                     reflected_policy_matrix[new_policy_index][new_row][new_col] = value
     
@@ -2235,14 +2386,20 @@ def load_model(config, model_number):
     if config.model == 'keras':
         path = f"{config.model_dir}/{model_number}.keras"
 
-        model = keras.models.load_model(path)
+        # compile=False bypasses custom-loss deserialization (e.g. the spatial_cce closure
+        # used by 'spatial_list' models); re-compile with the closure we just built so
+        # downstream .fit() calls work.
+        model = keras.models.load_model(path, compile=False)
+        _compile_keras_model(config, model)
     elif config.model == 'pytorch':
         path = f"{config.model_dir}/{model_number}.pt"
         if not os.path.exists(path):
             # Legacy checkpoints saved without an extension
             path = f"{config.model_dir}/{model_number}"
 
-        if isinstance(config.model_config, AuxBaseResNetConfig):
+        if isinstance(config.model_config, AuxBaseResNetV2Config):
+            model = AuxBaseResNetV2(config.model_config, config.use_tanh)
+        elif isinstance(config.model_config, AuxBaseResNetConfig):
             model = AuxBaseResNet(config.model_config, config.use_tanh)
         elif isinstance(config.model_config, BaseResNetConfig):
             model = BaseResNet(config.model_config, config.use_tanh)

@@ -76,16 +76,16 @@ class MoveGenerator:
         
     def generate_moves(self, algorithm='brute-force'):
         """Main entry point for move generation."""
-        new_policy = np.zeros(self.POLICY_SHAPE)
-        
+        new_policy = np.zeros(self.POLICY_SHAPE, dtype=bool)
+
         # Try both current piece and held piece
         piece_types = self._get_piece_types_to_check()
-        
+
         for piece_type in piece_types:
             if piece_type is not None:
                 piece_moves = self._generate_moves_for_piece(piece_type, algorithm)
-                new_policy = np.logical_or(new_policy, piece_moves)
-        
+                np.logical_or(new_policy, piece_moves, out=new_policy)
+
         return new_policy
     
     def _get_piece_types_to_check(self):
@@ -106,7 +106,7 @@ class MoveGenerator:
     
     def _generate_moves_for_piece(self, piece_type, algorithm):
         """Generate all possible moves for a specific piece type."""
-        policy_matrix = np.zeros(self.POLICY_SHAPE)
+        policy_matrix = np.zeros(self.POLICY_SHAPE, dtype=bool)
         
         # Set up simulation state — conv algo never writes to the board, so skip board copy
         if algorithm == 'convolutional':
@@ -174,10 +174,9 @@ class MoveGenerator:
     def _get_highest_row(self):
         """Find the highest occupied row in the grid."""
         grid = self.sim_player.board.grid
-        for i, row in enumerate(grid):
-            if any(row):
-                return i
-        return len(grid)
+        occupied = (grid != 0).any(axis=1)
+        first = int(occupied.argmax())
+        return first if occupied[first] else len(grid)
     
     def _add_state_to_queue(self, piece_location):
         """Add a location to the queue."""
@@ -653,7 +652,7 @@ class MoveGenerator:
         Accepts either PieceLocation objects (brute-force path) or plain 5-tuples
         (x, y, rot, rotation_just_occurred, used_last_kick) (convolutional path).
         """
-        policy_matrix = np.zeros(self.POLICY_SHAPE)
+        policy_matrix = np.zeros(self.POLICY_SHAPE, dtype=bool)
 
         piece_type = self.piece.type
         is_T = (piece_type == "T")
@@ -744,7 +743,7 @@ class MoveGenerator:
                 ci_list.append(new_col + 2)
 
         if pi_list:
-            policy_matrix[pi_list, ri_list, ci_list] = 1
+            policy_matrix[pi_list, ri_list, ci_list] = True
 
         return policy_matrix
 

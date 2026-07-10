@@ -149,11 +149,15 @@ class AlphaSame(nn.Module):
 
 @dataclass
 class BaseResNetConfig:
-    blocks: int = 8
-    filters: int = 32
-    opp_hidden: int = 128   # width of the opponent encoding before it is combined with own extras
-    own_kernels: int = 4    # channels after the own-side 1x1 collapse before flatten -> heads
+    blocks: int = 10
+    filters: int = 16
+    opp_hidden: int = 16   # width of the opponent encoding before it is combined with own extras
+    own_kernels: int = 1    # channels after the own-side 1x1 collapse before flatten -> heads
     value_hidden: int = 16  # width of the value-head hidden layer
+    # 'original'                     -> flat Linear(POLICY_SIZE), raw logits (existing behavior).
+    # 'spatial_list'                 -> 1x1 conv on FiLM-biased map -> (B, ROWS, COLS, 27) logits.
+    # 'heatmap_AM' / 'heatmap_FFT'   -> same spatial 1x1 conv head, used as a heatmap (linear output).
+    policy_format: str = 'original'
 
 
 class _BaseResBlock(nn.Module):
@@ -228,7 +232,13 @@ class BaseResNet(nn.Module):
             + _SCALARS_PER_PLAYER
             + 1
         )
-        self.policy_head = nn.Linear(head_in, POLICY_SIZE)
+        self.policy_format = model_config.policy_format
+        if self.policy_format == 'original':
+            self.policy_head = nn.Linear(head_in, POLICY_SIZE)
+        else:
+            # 1x1 conv on the FiLM-biased trunk output -> (B, 27, ROWS, COLS).
+            # Scalar/piece context already enters via the FiLM bias; no extra tiling needed.
+            self.policy_head = nn.Conv2d(f, POLICY_SHAPE[0], kernel_size=1)
         self.value_head = nn.Sequential(
             nn.Linear(head_in, model_config.value_hidden),
             nn.BatchNorm1d(model_config.value_hidden),
@@ -268,7 +278,11 @@ class BaseResNet(nn.Module):
             a_b2b.unsqueeze(1), a_combo.unsqueeze(1), a_garbage.unsqueeze(1),
             color.unsqueeze(1),
         ], dim=1)
-        return self.value_head(head_x), self.policy_head(head_x)
+        if self.policy_format == 'original':
+            policy = self.policy_head(head_x)
+        else:
+            policy = self.policy_head(biased).permute(0, 2, 3, 1).contiguous()
+        return self.value_head(head_x), policy
 
 
 # ── AuxBaseResNet (PyTorch) ───────────────────────────────────────────────────
@@ -350,7 +364,124 @@ class AuxBaseResNet(BaseResNet):
             a_b2b.unsqueeze(1), a_combo.unsqueeze(1), a_garbage.unsqueeze(1),
             color.unsqueeze(1),
         ], dim=1)
-        return self.value_head(head_x), self.policy_head(head_x), self.aux_head(head_x)
+        if self.policy_format == 'original':
+            policy = self.policy_head(head_x)
+        else:
+            policy = self.policy_head(biased).permute(0, 2, 3, 1).contiguous()
+        return self.value_head(head_x), policy, self.aux_head(head_x)
+
+
+# ── AuxBaseResNetV2 (PyTorch) ─────────────────────────────────────────────────
+# Symmetric pre-trunk channel-bias conditioning + joint value/policy bottleneck.
+# Per player: project (pieces ⊕ scalars ⊕ color/1-color) → (B, f) bias, add to
+# 5x5 stem output, run shared residual trunk. Both trunks then go through a
+# shared 1x1 collapse. The active collapsed map feeds the aux head directly;
+# both collapsed maps are flattened+concatenated into a Dense+BN+ReLU bottleneck
+# of width value_head_neurons. That vector drives the value head AND projects
+# (value_head_neurons → f) into a channel bias added to the active trunk before
+# a 1x1 conv emits the spatial policy. Independent dataclass — does NOT subclass
+# AuxBaseResNetConfig, so ai.py dispatch must match v2 explicitly.
+
+@dataclass
+class AuxBaseResNetV2Config:
+    blocks: int = 8
+    filters: int = 32
+    value_head_neurons: int = 64
+    own_kernels: int = 4
+    aux_hidden: int = 16
+    aux_weight: float = 1.5
+    l2_reg: float = 1e-4              # Keras kernel_regularizer; PyTorch uses AdamW weight_decay.
+    policy_format: str = 'spatial_list'  # v2 is natively spatial; kept for ai.py introspection.
+
+
+class AuxBaseResNetV2(nn.Module):
+    def __init__(self, model_config: AuxBaseResNetV2Config, use_tanh: bool = False):
+        super().__init__()
+        f = model_config.filters
+        vhn = model_config.value_head_neurons
+
+        # Shared pre-trunk piece/scalar/color → channel bias
+        feat_in = _PIECES_PER_PLAYER + _SCALARS_PER_PLAYER + 1
+        self.feat_bias = nn.Linear(feat_in, f)
+
+        # 5x5 stem (shared across both players)
+        self.stem = nn.Sequential(
+            nn.Conv2d(1, f, kernel_size=5, padding='same', bias=False),
+            nn.BatchNorm2d(f),
+            nn.ReLU(),
+        )
+        # Residual trunk (shared) — same shape as AuxBaseResNet.
+        self.trunk = nn.Sequential(*[_BaseResBlock(f) for _ in range(model_config.blocks)])
+
+        # Shared 1x1 collapse to own_kernels channels
+        self.collapse = nn.Sequential(
+            nn.Conv2d(f, model_config.own_kernels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(model_config.own_kernels),
+            nn.ReLU(),
+        )
+        collapsed_flat = model_config.own_kernels * ROWS * COLS
+
+        # Aux head: from active player's collapsed map only
+        self.aux_head = nn.Sequential(
+            nn.Linear(collapsed_flat, model_config.aux_hidden),
+            nn.BatchNorm1d(model_config.aux_hidden),
+            nn.ReLU(),
+            nn.Linear(model_config.aux_hidden, 2),
+            nn.Sigmoid(),
+        )
+
+        # Joint bottleneck: both collapsed maps → value_head_neurons
+        self.joint = nn.Sequential(
+            nn.Linear(2 * collapsed_flat, vhn),
+            nn.BatchNorm1d(vhn),
+            nn.ReLU(),
+        )
+
+        # Value head
+        self.value_head = nn.Sequential(
+            nn.Linear(vhn, 1),
+            nn.Tanh() if use_tanh else nn.Sigmoid(),
+        )
+
+        # Policy head: vhn → f channel bias, broadcast-added to a_feat, then 1x1 conv.
+        self.policy_bias = nn.Linear(vhn, f)
+        self.policy_conv = nn.Conv2d(f, POLICY_SHAPE[0], kernel_size=1)
+
+        self.policy_format = model_config.policy_format
+
+    def _make_bias(self, pieces, b2b, combo, garbage, color_signal):
+        return self.feat_bias(torch.cat([
+            pieces.flatten(1),
+            b2b.unsqueeze(1), combo.unsqueeze(1), garbage.unsqueeze(1),
+            color_signal.unsqueeze(1),
+        ], dim=1))
+
+    def _run_trunk(self, grid, bias_vec):
+        x = self.stem(grid)
+        x = x + bias_vec.view(-1, bias_vec.size(1), 1, 1)
+        return self.trunk(x)
+
+    def forward(self, a_grid, a_pieces, a_b2b, a_combo, a_garbage,
+                o_grid, o_pieces, o_b2b, o_combo, o_garbage, color):
+        a_bias = self._make_bias(a_pieces, a_b2b, a_combo, a_garbage, color)
+        o_bias = self._make_bias(o_pieces, o_b2b, o_combo, o_garbage, 1.0 - color)
+
+        a_feat = self._run_trunk(a_grid, a_bias)
+        o_feat = self._run_trunk(o_grid, o_bias)
+
+        a_flat = self.collapse(a_feat).flatten(1)
+        o_flat = self.collapse(o_feat).flatten(1)
+
+        aux = self.aux_head(a_flat)
+        vhn_vec = self.joint(torch.cat([a_flat, o_flat], dim=1))
+
+        value = self.value_head(vhn_vec)
+
+        policy_bias = self.policy_bias(vhn_vec)
+        policy_biased = a_feat + policy_bias.view(-1, policy_bias.size(1), 1, 1)
+        policy = self.policy_conv(policy_biased).permute(0, 2, 3, 1).contiguous()
+
+        return value, policy, aux
 
 
 # ── Keras ─────────────────────────────────────────────────────────────────────
@@ -452,9 +583,28 @@ def gen_baseresnet_keras(model_config: BaseResNetConfig, use_tanh: bool = False)
     v = keras.layers.BatchNormalization()(v)
     v = keras.layers.ReLU()(v)
     value = keras.layers.Dense(1, activation='tanh' if use_tanh else 'sigmoid', name='value')(v)
-    policy = keras.layers.Dense(POLICY_SIZE, activation='softmax', name='policy')(head_x)
+    policy = _build_keras_policy_head(model_config.policy_format, head_x, biased)
 
     return keras.Model(inputs=inputs, outputs=[value, policy])
+
+
+def _build_keras_policy_head(policy_format: str, head_x, biased):
+    """Build the right Keras policy head for the given format.
+
+    'original'     -> Dense(POLICY_SIZE, softmax) on head_x; (B, 7722) probabilities.
+    'spatial_list' -> 1x1 Conv2D(27) on biased + spatial softmax; (B, ROWS, COLS, 27) probs.
+    'heatmap_*'    -> 1x1 Conv2D(27, linear) on biased; (B, ROWS, COLS, 27) raw heatmap.
+    """
+    if policy_format == 'original':
+        return keras.layers.Dense(POLICY_SIZE, activation='softmax', name='policy')(head_x)
+    if policy_format == 'spatial_list':
+        spatial = keras.layers.Conv2D(POLICY_SHAPE[0], 1, name='policy_conv')(biased)
+        flat = keras.layers.Flatten()(spatial)
+        softmaxed = keras.layers.Softmax(name='policy_softmax')(flat)
+        return keras.layers.Reshape((ROWS, COLS, POLICY_SHAPE[0]), name='policy')(softmaxed)
+    if policy_format in ('heatmap_AM', 'heatmap_FFT'):
+        return keras.layers.Conv2D(POLICY_SHAPE[0], 1, name='policy')(biased)
+    raise ValueError(f"unknown policy_format: {policy_format!r}")
 
 
 def _create_input_layers():
@@ -707,13 +857,127 @@ def gen_auxbaseresnet_keras(model_config: AuxBaseResNetConfig, use_tanh: bool = 
     v = keras.layers.ReLU()(v)
     value = keras.layers.Dense(1, activation='tanh' if use_tanh else 'sigmoid', name='value')(v)
 
-    # Policy head (softmax baked in; matches gen_baseresnet_keras convention)
-    policy = keras.layers.Dense(POLICY_SIZE, activation='softmax', name='policy')(head_x)
+    # Policy head — flat softmax / spatial softmax / spatial heatmap per policy_format.
+    policy = _build_keras_policy_head(model_config.policy_format, head_x, biased)
 
     # Aux head (2 outputs: holes_norm, height_norm)
     a = keras.layers.Dense(model_config.aux_hidden, name='aux_hidden')(head_x)
     a = keras.layers.BatchNormalization(epsilon=eps, name='aux_hidden_bn')(a)
     a = keras.layers.ReLU()(a)
     aux = keras.layers.Dense(2, activation='sigmoid', name='aux')(a)
+
+    return keras.Model(inputs=inputs, outputs=[value, policy, aux])
+
+
+def gen_auxbaseresnetv2_keras(model_config: AuxBaseResNetV2Config, use_tanh: bool = False) -> keras.Model:
+    """Keras (channels-last) port of AuxBaseResNetV2.
+
+    Outputs: [value, policy, aux] matching the PyTorch class. Every weight-bearing
+    layer is named and carries an L2 kernel_regularizer (l2_reg). BN epsilon=1e-5
+    to match torch.nn.BatchNorm default for potential cross-backend porting.
+    """
+    f = model_config.filters
+    vhn = model_config.value_head_neurons
+    eps = 1e-5
+    reg = keras.regularizers.l2(model_config.l2_reg) if model_config.l2_reg else None
+    grid_shape = (ROWS, COLS, 1)
+    piece_shape = (2 + PREVIEWS, len(MINOS))
+
+    a_grid    = keras.Input(shape=grid_shape,  name='0')
+    a_pieces  = keras.Input(shape=piece_shape, name='1')
+    a_b2b     = keras.Input(shape=(1,),        name='2')
+    a_combo   = keras.Input(shape=(1,),        name='3')
+    a_garbage = keras.Input(shape=(1,),        name='4')
+    o_grid    = keras.Input(shape=grid_shape,  name='5')
+    o_pieces  = keras.Input(shape=piece_shape, name='6')
+    o_b2b     = keras.Input(shape=(1,),        name='7')
+    o_combo   = keras.Input(shape=(1,),        name='8')
+    o_garbage = keras.Input(shape=(1,),        name='9')
+    color     = keras.Input(shape=(1,),        name='10')
+    inputs = [a_grid, a_pieces, a_b2b, a_combo, a_garbage,
+              o_grid, o_pieces, o_b2b, o_combo, o_garbage, color]
+
+    # Opponent sees (1 - color). Rescaling(scale=-1, offset=1) is safely serializable
+    # (unlike a bare python-lambda Lambda layer, which blocks .keras load without
+    # enable_unsafe_deserialization).
+    opp_color = keras.layers.Rescaling(scale=-1.0, offset=1.0, name='opp_color')(color)
+
+    # ── Shared pre-trunk piece/scalar/color → (B, f) channel bias ──
+    feat_bias = keras.layers.Dense(f, name='feat_bias', kernel_regularizer=reg)
+    a_feat_in = keras.layers.Concatenate()([
+        keras.layers.Flatten()(a_pieces), a_b2b, a_combo, a_garbage, color,
+    ])
+    o_feat_in = keras.layers.Concatenate()([
+        keras.layers.Flatten()(o_pieces), o_b2b, o_combo, o_garbage, opp_color,
+    ])
+    a_bias_map = keras.layers.Reshape((1, 1, f))(feat_bias(a_feat_in))
+    o_bias_map = keras.layers.Reshape((1, 1, f))(feat_bias(o_feat_in))
+
+    # ── Shared 5x5 stem + residual trunk (weights shared across both players) ──
+    stem_conv = keras.layers.Conv2D(f, 5, padding='same', use_bias=False,
+                                    name='stem_conv', kernel_regularizer=reg)
+    stem_bn   = keras.layers.BatchNormalization(epsilon=eps, name='stem_bn')
+
+    blocks = []
+    for i in range(model_config.blocks):
+        blocks.append((
+            keras.layers.Conv2D(f, 3, padding='same', use_bias=False,
+                                name=f'block{i}_conv1', kernel_regularizer=reg),
+            keras.layers.BatchNormalization(epsilon=eps, name=f'block{i}_bn1'),
+            keras.layers.Conv2D(f, 3, padding='same', use_bias=False,
+                                name=f'block{i}_conv2', kernel_regularizer=reg),
+            keras.layers.BatchNormalization(epsilon=eps, name=f'block{i}_bn2'),
+        ))
+
+    def run_trunk(grid, bias_map):
+        x = keras.layers.ReLU()(stem_bn(stem_conv(grid)))
+        x = keras.layers.Add()([x, bias_map])
+        for conv1, bn1, conv2, bn2 in blocks:
+            y = keras.layers.ReLU()(bn1(conv1(x)))
+            y = bn2(conv2(y))
+            x = keras.layers.ReLU()(keras.layers.Add()([x, y]))
+        return x
+
+    a_feat = run_trunk(a_grid, a_bias_map)
+    o_feat = run_trunk(o_grid, o_bias_map)
+
+    # ── Shared 1x1 collapse → own_kernels channels ──
+    collapse_conv = keras.layers.Conv2D(model_config.own_kernels, 1, use_bias=False,
+                                        name='collapse_conv', kernel_regularizer=reg)
+    collapse_bn   = keras.layers.BatchNormalization(epsilon=eps, name='collapse_bn')
+
+    def collapse(t):
+        return keras.layers.ReLU()(collapse_bn(collapse_conv(t)))
+
+    a_flat = keras.layers.Flatten()(collapse(a_feat))
+    o_flat = keras.layers.Flatten()(collapse(o_feat))
+
+    # ── Aux head — fed from active player's collapsed map only ──
+    a_h = keras.layers.Dense(model_config.aux_hidden, name='aux_hidden',
+                             kernel_regularizer=reg)(a_flat)
+    a_h = keras.layers.BatchNormalization(epsilon=eps, name='aux_hidden_bn')(a_h)
+    a_h = keras.layers.ReLU()(a_h)
+    aux = keras.layers.Dense(2, activation='sigmoid', name='aux',
+                             kernel_regularizer=reg)(a_h)
+
+    # ── Joint value bottleneck ──
+    joint_in = keras.layers.Concatenate()([a_flat, o_flat])
+    j = keras.layers.Dense(vhn, name='joint_dense', kernel_regularizer=reg)(joint_in)
+    j = keras.layers.BatchNormalization(epsilon=eps, name='joint_bn')(j)
+    vhn_vec = keras.layers.ReLU()(j)
+
+    # ── Value head ──
+    value = keras.layers.Dense(1, activation='tanh' if use_tanh else 'sigmoid',
+                               name='value', kernel_regularizer=reg)(vhn_vec)
+
+    # ── Policy head: vhn → (B, f) channel bias → add to a_feat → 1x1 conv → spatial softmax ──
+    policy_bias = keras.layers.Dense(f, name='policy_bias', kernel_regularizer=reg)(vhn_vec)
+    policy_bias_map = keras.layers.Reshape((1, 1, f))(policy_bias)
+    policy_biased = keras.layers.Add()([a_feat, policy_bias_map])
+    spatial = keras.layers.Conv2D(POLICY_SHAPE[0], 1, name='policy_conv',
+                                  kernel_regularizer=reg)(policy_biased)
+    flat = keras.layers.Flatten()(spatial)
+    softmaxed = keras.layers.Softmax(name='policy_softmax')(flat)
+    policy = keras.layers.Reshape((ROWS, COLS, POLICY_SHAPE[0]), name='policy')(softmaxed)
 
     return keras.Model(inputs=inputs, outputs=[value, policy, aux])

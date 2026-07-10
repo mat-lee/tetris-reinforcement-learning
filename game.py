@@ -225,9 +225,15 @@ class Game:
             return -1
 
     def copy(self):
-        new_game = Game(self.ruleset)
+        # __new__ skips Game.__init__ — MCTS copies never use the History,
+        # renderers, or the Human/AI players that __init__ would build.
+        new_game = Game.__new__(Game)
+        new_game.ruleset = self.ruleset
         new_game.players = [player.copy() for player in self.players]
         new_game.turn = self.turn
+        new_game.history = None
+        new_game.evaluator = None
+        new_game.renderers = None
 
         return new_game
 

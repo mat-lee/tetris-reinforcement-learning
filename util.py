@@ -1060,22 +1060,23 @@ def profile_inference(n=1000) -> None:
     Prints a table showing time spent in each phase per call, then estimates
     non-inference overhead by timing full MCTS calls and subtracting.
     """
+    from ai import _raw_policy_shape
+
     c = Config()
+    fmt = getattr(c.model_config, 'policy_format', 'original')
+    raw_shape = _raw_policy_shape(fmt)
     interpreter = get_interpreter(load_best_model(c))
 
     # Build a dummy game to get a real input
     game = Game(c.ruleset)
     game.setup()
 
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    output_details_sorted = sorted(output_details, key=lambda x: x['name'])
-
-    # ---- warm-up (10 calls, discarded) ----
+    # ---- warm-up (10 calls, discarded; also builds interpreter._eval_cache) ----
     for _ in range(10):
-        evaluate_from_tflite(game, interpreter)
+        evaluate_from_tflite(game, interpreter, fmt)
+    cache = interpreter._eval_cache
 
-    # ---- sub-step timing ----
+    # ---- sub-step timing (mirrors evaluate_from_tflite step for step) ----
     t_feature = 0.0
     t_tensor  = 0.0
     t_invoke  = 0.0
@@ -1093,16 +1094,11 @@ def profile_inference(n=1000) -> None:
             if type(feature) in (float, int):
                 X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
             else:
-                np_feature = np.expand_dims(np.float32(feature), axis=0)
-                if np_feature.shape == (1, 26, 10):
+                np_feature = np.expand_dims(np.asarray(feature, dtype=np.float32), axis=0)
+                if np_feature.shape == (1, ROWS, COLS):
                     np_feature = np.expand_dims(np_feature, axis=-1)
                 X.append(np_feature)
-        for i in range(len(X)):
-            split_str = input_details[i]['name'].split(":")[0]
-            if len(split_str) == 12:
-                idx = 0
-            else:
-                idx = int(split_str.split("_")[2])
+        for i, idx in enumerate(cache['idx_map']):
             interpreter.set_tensor(i, X[idx])
         t2 = time.perf_counter()
 
@@ -1111,14 +1107,20 @@ def profile_inference(n=1000) -> None:
         t3 = time.perf_counter()
 
         # 4. Output fetch
-        value   = interpreter.get_tensor(output_details_sorted[0]['index']).item()
-        policies = interpreter.get_tensor(output_details_sorted[1]['index']).reshape(POLICY_SHAPE)
+        value   = interpreter.get_tensor(cache['val_idx']).item()
+        policies = interpreter.get_tensor(cache['pol_idx']).reshape(raw_shape)
         t4 = time.perf_counter()
 
         t_feature += t1 - t0
         t_tensor  += t2 - t1
         t_invoke  += t3 - t2
         t_output  += t4 - t3
+
+    # ---- full evaluate() (includes any policy decode) for comparison ----
+    t5 = time.perf_counter()
+    for _ in range(n):
+        evaluate(c, game, interpreter)
+    t_evaluate = time.perf_counter() - t5
 
     total = t_feature + t_tensor + t_invoke + t_output
     rows = [
@@ -1127,6 +1129,7 @@ def profile_inference(n=1000) -> None:
         ("interpreter.invoke()",         t_invoke),
         ("get_tensor + reshape",         t_output),
         ("TOTAL inference",              total),
+        ("full evaluate() incl. decode", t_evaluate),
     ]
 
     col_w = 32
@@ -1145,7 +1148,7 @@ def profile_inference(n=1000) -> None:
     t_mcts_total = time.perf_counter() - t_mcts_start
 
     avg_mcts_ms   = t_mcts_total / n_mcts * 1000
-    avg_infer_ms  = total / n * 1000
+    avg_infer_ms  = t_evaluate / n * 1000  # full evaluate() — what MCTS actually calls
     overhead_ms   = avg_mcts_ms - avg_infer_ms * c.MAX_ITER
     print(f"MCTS avg wall time : {avg_mcts_ms:.1f} ms  ({c.MAX_ITER} iters)")
     print(f"Inference share    : {avg_infer_ms * c.MAX_ITER:.1f} ms  ({avg_infer_ms:.3f} ms/call)")
@@ -3345,6 +3348,493 @@ def plot_placement_heatmap(last_n_sets: int = 20) -> None:
     print(f"Saved → {out_path}")
 
 
+# ===== SPATIAL HEATMAP POLICY (A, M) VISUALIZATION =====
+# A_matrices and M_matrices live in const.py.
+# A_matrices[policy_index]: (ROWS, COLS, n) — slice [:, :, j] is the binary heatmap of placement j.
+# M_matrices[policy_index]: (n, ROWS, COLS) — slice [j, :, :] is the recovery filter for placement j.
+
+
+def _A_panel(ax, policy_index):
+    A = A_matrices[policy_index]
+    n = A.shape[2]
+    A_flat = A.reshape(ROWS * COLS, n)
+    piece, rotation, _ = policy_index_to_piece[policy_index]
+    ax.imshow(A_flat, cmap='gray_r', aspect='auto', interpolation='nearest', vmin=0, vmax=1)
+    ax.set_title(f'A[{policy_index}] {piece} r{rotation}  ({ROWS*COLS}x{n})', fontsize=9)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+
+def _M_panel(ax, policy_index):
+    M = M_matrices[policy_index]
+    n = M.shape[0]
+    M_flat = M.reshape(n, ROWS * COLS)
+    piece, rotation, _ = policy_index_to_piece[policy_index]
+    vmax = float(np.abs(M_flat).max()) if M_flat.size else 1.0
+    ax.imshow(M_flat, cmap='RdBu_r', aspect='auto', interpolation='nearest',
+              vmin=-vmax, vmax=vmax)
+    ax.set_title(f'M[{policy_index}] {piece} r{rotation}  ({n}x{ROWS*COLS})', fontsize=9)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+
+policy_AM_path = plots_path / "policy_AM"
+policy_AM_path.mkdir(exist_ok=True)
+
+
+def plot_A_matrix(policy_index: int, show: bool = False) -> None:
+    """Save one A matrix image to plots/policy_AM/."""
+    piece, rotation, _ = policy_index_to_piece[policy_index]
+    fig, ax = plt.subplots(figsize=(5, 8))
+    _A_panel(ax, policy_index)
+    plt.tight_layout()
+    out_path = policy_AM_path / f"{policy_index:02d}_{piece}_r{rotation}_A.png"
+    plt.savefig(out_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def plot_M_matrix(policy_index: int, show: bool = False) -> None:
+    """Save one M matrix image to plots/policy_AM/."""
+    piece, rotation, _ = policy_index_to_piece[policy_index]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    _M_panel(ax, policy_index)
+    plt.tight_layout()
+    out_path = policy_AM_path / f"{policy_index:02d}_{piece}_r{rotation}_M.png"
+    plt.savefig(out_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def plot_all_A_and_M_matrices(show: bool = False) -> None:
+    """Save one A image and one M image per canonical policy index to plots/policy_AM/."""
+    for pi in sorted(A_matrices):
+        plot_A_matrix(pi, show=show)
+        plot_M_matrix(pi, show=show)
+    print(f"Saved {len(A_matrices)} A and {len(M_matrices)} M images → {policy_AM_path}")
+
+
+def _verify_A_M_matrices() -> None:
+    """Sanity asserts on A and M for every policy_index."""
+    for policy_index, A in A_matrices.items():
+        M = M_matrices[policy_index]
+        n = A.shape[2]
+        A_flat = A.reshape(ROWS * COLS, n)
+        M_flat = M.reshape(n, ROWS * COLS)
+        assert A.shape == (ROWS, COLS, n), f"policy {policy_index}: A.shape {A.shape}"
+        assert M.shape == (n, ROWS, COLS), f"policy {policy_index}: M.shape {M.shape}"
+        assert n > 0
+        assert np.all(A_flat.sum(axis=0) == 4), f"policy {policy_index}: column with != 4 minos"
+        assert np.allclose(M_flat @ A_flat, np.eye(n), atol=1e-4), f"policy {policy_index}: M @ A != I"
+        w = M_flat @ A_flat[:, 0]
+        assert int(np.argmax(w)) == 0 and abs(w[0] - 1.0) < 1e-4, f"policy {policy_index}: round-trip"
+    print(f"OK — verified {len(A_matrices)} A/M matrices")
+
+
+# ---------------------------------------------------------------------------
+# Policy-format converters (training-target translation).
+#
+# Old (Option 1) policy:  shape POLICY_SHAPE = (27, 39, 11) = (pi, ri, ci)
+#   ri + LEGACY_POLICY_ROW_BUFFER = padded-bbox top row in board frame.
+#   ci + LEGACY_POLICY_COL_BUFFER = padded-bbox top col in board frame.
+# New (Option 2/3a/3b):    shape (ROWS, COLS, 27)         = (row, col, pi)
+#   new_row + policy_row_buffer[pi] = padded-bbox top row in board frame.
+#   new_col + policy_col_buffer[pi] = padded-bbox top col in board frame.
+# Conversion goes through the common reference; see const.py.
+# ---------------------------------------------------------------------------
+
+def convert_target_to_spatial_list(P_old: np.ndarray) -> np.ndarray:
+    """Re-index an old (27, 39, 11) policy target into a (ROWS, COLS, 27) board-frame action list."""
+    P_old = np.asarray(P_old, dtype=np.float32)
+    assert P_old.shape == POLICY_SHAPE, f"expected {POLICY_SHAPE}, got {P_old.shape}"
+    P_new = np.zeros((ROWS, COLS, POLICY_SHAPE[0]), dtype=np.float32)
+    pis, ris, cis = np.nonzero(P_old)
+    for pi, ri, ci in zip(pis.tolist(), ris.tolist(), cis.tolist()):
+        # Go through the common reference (padded-bbox top-left in board frame).
+        padded_top_row = ri + LEGACY_POLICY_ROW_BUFFER
+        padded_top_col = ci + LEGACY_POLICY_COL_BUFFER
+        new_row = padded_top_row - policy_row_buffer[pi]
+        new_col = padded_top_col - policy_col_buffer[pi]
+        r_min, r_max = policy_row_range[pi]
+        c_min, c_max = policy_col_range[pi]
+        if not (r_min <= new_row <= r_max and c_min <= new_col <= c_max):
+            raise ValueError(
+                f"policy {pi} entry (ri={ri}, ci={ci}) maps to (row={new_row}, col={new_col}) "
+                f"outside valid range rows{policy_row_range[pi]} cols{policy_col_range[pi]}"
+            )
+        P_new[new_row, new_col, pi] += P_old[pi, ri, ci]
+    return P_new
+
+
+def convert_target_to_heatmap(P_old: np.ndarray) -> np.ndarray:
+    """(27, 39, 11) policy target -> (ROWS, COLS, 27) mino-occupancy heatmap.
+
+    Heatmap channel pi at (r, c) = expected mino occupancy if a placement is sampled
+    from the per-channel action-weight distribution. For each legacy policy entry,
+    map to the padded-bbox top-left in board frame and use Piece.get_mino_coords to
+    enumerate the four occupied cells. T-spin variants (pi 19-26) share geometry
+    with their no-spin twin via piece+rotation but keep a distinct channel.
+    """
+    P_old = np.asarray(P_old, dtype=np.float32)
+    assert P_old.shape == POLICY_SHAPE, f"expected {POLICY_SHAPE}, got {P_old.shape}"
+    H = np.zeros((ROWS, COLS, POLICY_SHAPE[0]), dtype=np.float32)
+    pis, ris, cis = np.nonzero(P_old)
+    for pi, ri, ci in zip(pis.tolist(), ris.tolist(), cis.tolist()):
+        v = float(P_old[pi, ri, ci])
+        padded_top_row = ri + LEGACY_POLICY_ROW_BUFFER
+        padded_top_col = ci + LEGACY_POLICY_COL_BUFFER
+        piece, rotation, _ = policy_index_to_piece[pi]
+        for col, row in Piece.get_mino_coords(padded_top_col, padded_top_row, rotation, piece):
+            H[row, col, pi] += v
+    return H
+
+
+def _canonical_pi_for_tspin(pi: int) -> int:
+    """Map T-spin variants (19-26) to their no-spin geometric twin (15-18)."""
+    piece, rotation, _ = policy_index_to_piece[pi]
+    for canonical_pi, (p, r, s) in policy_index_to_piece.items():
+        if p == piece and r == rotation and s == 0:
+            return canonical_pi
+    raise KeyError(f"no canonical (no-spin) twin for policy_index {pi}")
+
+
+# ---------------------------------------------------------------------------
+# Policy-format decoders: take a raw network output for a given format and
+# convert it to the (27, 39, 11) matrix that MCTS's get_move_list consumes.
+# ---------------------------------------------------------------------------
+
+def decode_original(y: np.ndarray) -> np.ndarray:
+    """Identity — network already produces (27, 39, 11)."""
+    return np.asarray(y, dtype=np.float32)
+
+
+def decode_spatial_list(y: np.ndarray) -> np.ndarray:
+    """(ROWS, COLS, 27) action list -> (27, 39, 11). Inverse of convert_target_to_spatial_list."""
+    y = np.asarray(y, dtype=np.float32)
+    assert y.shape == (ROWS, COLS, POLICY_SHAPE[0]), f"expected ({ROWS},{COLS},{POLICY_SHAPE[0]}), got {y.shape}"
+    P_old = np.zeros(POLICY_SHAPE, dtype=np.float32)
+    for pi in range(POLICY_SHAPE[0]):
+        r_buf = policy_row_buffer[pi]
+        c_buf = policy_col_buffer[pi]
+        r_min, r_max = policy_row_range[pi]
+        c_min, c_max = policy_col_range[pi]
+        for nr in range(r_min, r_max + 1):
+            # Go through the common reference.
+            padded_top_row = nr + r_buf
+            ri = padded_top_row - LEGACY_POLICY_ROW_BUFFER
+            if ri < 0 or ri >= POLICY_SHAPE[1]:
+                continue
+            for nc in range(c_min, c_max + 1):
+                padded_top_col = nc + c_buf
+                ci = padded_top_col - LEGACY_POLICY_COL_BUFFER
+                if ci < 0 or ci >= POLICY_SHAPE[2]:
+                    continue
+                P_old[pi, ri, ci] = y[nr, nc, pi]
+    return P_old
+
+
+def _action_list_from_kernel_weights(canonical_pi: int, w: np.ndarray) -> np.ndarray:
+    """Place a length-n kernel-weight vector into an (ROWS, COLS) slice using stripped-grid origin."""
+    kh, kw = policy_piece_grids_no_padding[canonical_pi].shape
+    k_cols = COLS - kw + 1
+    n = w.shape[0]
+    plane = np.zeros((ROWS, COLS), dtype=np.float32)
+    for k in range(n):
+        plane[k // k_cols, k % k_cols] = w[k]
+    return plane
+
+
+def decode_heatmap_AM(y: np.ndarray) -> np.ndarray:
+    """(ROWS, COLS, 27) mino-occupancy heatmap -> (27, 39, 11) via per-channel M @ y."""
+    y = np.asarray(y, dtype=np.float32)
+    assert y.shape == (ROWS, COLS, POLICY_SHAPE[0]), f"expected ({ROWS},{COLS},{POLICY_SHAPE[0]}), got {y.shape}"
+    W = np.zeros((ROWS, COLS, POLICY_SHAPE[0]), dtype=np.float32)
+    for pi in range(POLICY_SHAPE[0]):
+        canonical_pi = pi if pi in A_matrices else _canonical_pi_for_tspin(pi)
+        M = M_matrices[canonical_pi]
+        n = M.shape[0]
+        w = M.reshape(n, ROWS * COLS) @ y[:, :, pi].ravel()
+        W[:, :, pi] = _action_list_from_kernel_weights(canonical_pi, w)
+    return decode_spatial_list(W)
+
+
+def deconv2d_fft(Y: np.ndarray, K: np.ndarray, lam: float = 1e-3) -> np.ndarray:
+    """Wiener deconvolution via FFT. Recovers W from Y = conv(K, W) up to lam-smoothing."""
+    H, W = Y.shape
+    kh, kw = K.shape
+    Hp, Wp = H + kh - 1, W + kw - 1
+    Yp = np.zeros((Hp, Wp), dtype=np.float64)
+    Yp[:H, :W] = Y
+    Kp = np.zeros((Hp, Wp), dtype=np.float64)
+    Kp[:kh, :kw] = K
+    Yf = np.fft.fft2(Yp)
+    Kf = np.fft.fft2(Kp)
+    Wf = np.conj(Kf) * Yf / (np.abs(Kf) ** 2 + lam)
+    return np.fft.ifft2(Wf).real[:H, :W].astype(np.float32)
+
+
+def decode_heatmap_FFT(y: np.ndarray, lam: float = 1e-3) -> np.ndarray:
+    """(ROWS, COLS, 27) heatmap -> (27, 39, 11) via per-channel FFT Wiener deconv."""
+    y = np.asarray(y, dtype=np.float32)
+    assert y.shape == (ROWS, COLS, POLICY_SHAPE[0]), f"expected ({ROWS},{COLS},{POLICY_SHAPE[0]}), got {y.shape}"
+    W = np.zeros((ROWS, COLS, POLICY_SHAPE[0]), dtype=np.float32)
+    for pi in range(POLICY_SHAPE[0]):
+        canonical_pi = pi if pi in A_matrices else _canonical_pi_for_tspin(pi)
+        # piece_dict stores color codes, not 0/1 — A_matrices binarize them, so do the same here.
+        K = (policy_piece_grids_no_padding[canonical_pi] != 0).astype(np.float32)
+        kh, kw = K.shape
+        w_hat = deconv2d_fft(y[:, :, pi], K, lam=lam)
+        # Only the top-left [0, ROWS-kh] x [0, COLS-kw] region holds valid placements.
+        r_max = ROWS - kh + 1
+        c_max = COLS - kw + 1
+        W[:r_max, :c_max, pi] = w_hat[:r_max, :c_max]
+    return decode_spatial_list(W)
+
+
+_DECODERS = {
+    'original':    decode_original,
+    'spatial_list': decode_spatial_list,
+    'heatmap_AM':  decode_heatmap_AM,
+    'heatmap_FFT': decode_heatmap_FFT,
+}
+
+
+def decode_policy(y: np.ndarray, policy_format: str) -> np.ndarray:
+    """Dispatch to the decoder for the given format. Returns (27, 39, 11)."""
+    if policy_format not in _DECODERS:
+        raise ValueError(f"unknown policy_format: {policy_format!r}; expected one of {sorted(_DECODERS)}")
+    return _DECODERS[policy_format](y)
+
+
+# ---------------------------------------------------------------------------
+# 4-way policy-format comparison: train three models on the same fixed slice
+# of temp_data and save each under models/{ruleset}.cmp.{name}/. The heatmap
+# model serves both 'heatmap_AM' and 'heatmap_FFT' decoders at battle time.
+# ---------------------------------------------------------------------------
+
+_COMPARISON_PLAN = [
+    # (model_name on disk, policy_format used for training)
+    ('original',     'original'),
+    ('spatial_list', 'spatial_list'),
+    ('heatmap',      'heatmap_AM'),
+]
+
+
+def _load_training_slice(last_n_sets: int):
+    td = directory_path / 'temp_data'
+    files = sorted(td.glob('*.txt'), key=lambda p: int(p.stem))[-last_n_sets:]
+    samples = []
+    for fp in files:
+        with open(fp) as f:
+            samples.extend(ujson.load(f))
+    return samples, files
+
+
+def _convert_samples(samples, policy_format):
+    """Per-sample policy target conversion. Returns new list; does not mutate input."""
+    if policy_format == 'original':
+        return samples
+    convert = (convert_target_to_spatial_list if policy_format == 'spatial_list'
+               else convert_target_to_heatmap)
+    out = []
+    for s in samples:
+        new_s = list(s)
+        P_old = np.asarray(new_s[-1], dtype=np.float32).reshape(POLICY_SHAPE)
+        new_s[-1] = convert(P_old)
+        out.append(new_s)
+    return out
+
+
+def _save_trained_model(cfg, model, model_number: int):
+    import ai
+    path = cfg.model_dir
+    os.makedirs(path, exist_ok=True)
+    if cfg.model == 'keras':
+        model.save(f'{path}/{model_number}.keras')
+    else:
+        import torch
+        torch.save(model.state_dict(), f'{path}/{model_number}.pt')
+    ai.append_version_record(cfg, model_number)
+
+
+def train_comparison_models(last_n_sets: int = 20, epochs: int = 5, batch_size: int = 64,
+                            backend: str = 'keras', dry_run: bool = False):
+    """Train the three comparison models on the same fixed slice from temp_data/.
+
+    backend: 'keras' or 'pytorch'.
+    dry_run: build models and run 1 batch, don't save — for smoke testing.
+    """
+    import ai
+    from architectures import AuxBaseResNetConfig
+
+    samples, files = _load_training_slice(last_n_sets)
+    if not files:
+        raise FileNotFoundError(f"no .txt files under {directory_path / 'temp_data'}")
+    print(f"Loaded {len(samples)} moves from {len(files)} files: "
+          f"{files[0].name}..{files[-1].name}")
+
+    for model_name, policy_format in _COMPARISON_PLAN:
+        print(f"\n=== Training '{model_name}' (policy_format={policy_format}) ===")
+        cfg = ai.Config(
+            model=backend,
+            model_version=f'cmp.{model_name}',
+            epochs=1 if dry_run else epochs,
+            batch_size=batch_size,
+        )
+        cfg.model_config = AuxBaseResNetConfig(policy_format=policy_format)
+
+        # train_network handles per-sample format conversion internally.
+        subset = samples[:batch_size * 2] if dry_run else samples
+
+        model = ai.instantiate_network(cfg, show_summary=False, save_network=not dry_run)
+        ai.train_network(cfg, model, subset)
+        if not dry_run:
+            _save_trained_model(cfg, model, model_number=1)
+            print(f"Saved trained model -> {cfg.model_dir}/1.{'keras' if backend == 'keras' else 'pt'}")
+
+
+FOUR_COMPETITORS = [
+    # (name, model_version on disk, policy_format)
+    ('original',    'cmp.original',     'original'),
+    ('spatial_list', 'cmp.spatial_list', 'spatial_list'),
+    ('heatmap_AM',  'cmp.heatmap',      'heatmap_AM'),
+    ('heatmap_FFT', 'cmp.heatmap',      'heatmap_FFT'),
+]
+
+
+def _build_competitor_config(model_version: str, policy_format: str, backend: str = 'keras',
+                              visual: bool = False) -> 'ai.Config':
+    import ai
+    from architectures import AuxBaseResNetConfig
+    cfg = ai.Config(model=backend, model_version=model_version, visual=visual)
+    cfg.model_config = AuxBaseResNetConfig(policy_format=policy_format)
+    return cfg
+
+
+def cross_battle_four(n_games: int = 200, model_number: int = 1, backend: str = 'keras',
+                      max_iter: int | None = None, visual: bool = True):
+    """Run a 4x4 round-robin between the three comparison checkpoints (4 competitors —
+    heatmap_AM and heatmap_FFT share the heatmap checkpoint, decoders differ).
+
+    max_iter overrides Config.MAX_ITER for all competitors (useful to speed up smoke runs).
+    visual=True opens a pygame window showing each game; False runs headless.
+
+    Returns a dict with the 4x4 win matrix and total games played per pair.
+    """
+    import ai
+
+    # Build configs and load each checkpoint exactly once per disk path.
+    cfgs = {}
+    for name, ver, fmt in FOUR_COMPETITORS:
+        cfgs[name] = _build_competitor_config(ver, fmt, backend=backend, visual=visual)
+        if max_iter is not None:
+            cfgs[name].MAX_ITER = max_iter
+
+    # Three unique checkpoints on disk. Load each once, then wrap as the
+    # interference network MCTS expects (TFLite interpreter when use_tflite=True).
+    ckpts = {}
+    for name, ver, fmt in FOUR_COMPETITORS:
+        if ver not in ckpts:
+            raw = ai.load_model(cfgs[name], model_number)
+            ckpts[ver] = ai.get_interference_network(cfgs[name], raw)
+    models = {name: ckpts[ver] for name, ver, _ in FOUR_COMPETITORS}
+
+    # Reusable pygame surface for visual mode (battle_networks creates one per call otherwise).
+    screen = None
+    if visual:
+        import pygame
+        from const import WIDTH, HEIGHT
+        pygame.init()
+        screen = pygame.display.set_mode((WIDTH, HEIGHT))
+
+    # Run upper-triangle pairings; battle_networks alternates color internally per game.
+    # threshold=None disables early termination so all n_games actually play out.
+    names = [c[0] for c in FOUR_COMPETITORS]
+    wins = np.zeros((4, 4), dtype=float)
+    for i in range(4):
+        for j in range(i + 1, 4):
+            a, b = names[i], names[j]
+            print(f"\n--- Battle: {a} vs {b}  ({n_games} games) ---")
+            pair_wins, _ = ai.battle_networks(
+                models[a], cfgs[a], models[b], cfgs[b],
+                threshold=None, threshold_type='moreorequal', games=n_games,
+                network_1_title=a, network_2_title=b, screen=screen,
+            )
+            # battle_networks adds 0.5 to each side on MAX_MOVES timeouts; sum == n_games.
+            # Draws are inferred from the half-integer offset in each side's count.
+            wins[i, j] = float(pair_wins[0])
+            wins[j, i] = float(pair_wins[1])
+            draws = int(round(2 * (pair_wins[0] - int(pair_wins[0]))))
+            print(f"  {a}: {pair_wins[0]}  |  {b}: {pair_wins[1]}  |  draws: {draws}")
+
+    # Pretty-print matrix.
+    print("\n=== Cross-battle results (rows = wins, cols = losses) ===")
+    print(f"{'':>14} " + " ".join(f"{n:>13}" for n in names))
+    for i, n in enumerate(names):
+        row = " ".join(f"{wins[i, j]:>13}" for j in range(4))
+        print(f"{n:>14} {row}")
+    totals = wins.sum(axis=1)
+    print("\nTotal wins:")
+    for n, t in sorted(zip(names, totals), key=lambda x: -x[1]):
+        print(f"  {n:<14} {t}")
+
+    return {'names': names, 'wins': wins, 'n_games': n_games}
+
+
+def _verify_policy_converters(sample_path: str | None = None) -> None:
+    """Round-trip a real per-move policy target through the converters.
+
+    Defaults to the last file in Storage/temp_data/. Skips silently if the
+    directory is absent so this can be called from a smoke test.
+    """
+    if sample_path is None:
+        td = directory_path / "temp_data"
+        if not td.exists():
+            print("No temp_data/ — skipping converter verification.")
+            return
+        files = sorted(td.glob("*.txt"), key=lambda p: int(p.stem))
+        if not files:
+            print("temp_data/ is empty — skipping converter verification.")
+            return
+        sample_path = str(files[-1])
+    with open(sample_path) as f:
+        data = ujson.load(f)
+
+    n_checked = 0
+    max_fft_err = 0.0
+    for sample in data:
+        P_old = np.asarray(sample[-1], dtype=np.float32)
+        if P_old.shape != POLICY_SHAPE:
+            continue
+        # Encode each direction.
+        W = convert_target_to_spatial_list(P_old)
+        H = convert_target_to_heatmap(P_old)
+        # Mass preservation on spatial_list.
+        assert abs(float(W.sum()) - float(P_old.sum())) < 1e-4, "spatial_list mass mismatch"
+        if P_old.sum() > 0:
+            ratio = float(H.sum()) / (4.0 * float(W.sum()))
+            assert abs(ratio - 1.0) < 1e-3, f"heatmap mass != 4 * action mass (ratio={ratio:.4f})"
+        # Round-trip each decoder.
+        assert np.allclose(decode_spatial_list(W), P_old, atol=1e-5), "decode_spatial_list round-trip failed"
+        assert np.allclose(decode_heatmap_AM(H), P_old, atol=1e-3), "decode_heatmap_AM round-trip failed"
+        # FFT decoder is approximate; check argmax for peaky samples and bound L_inf.
+        P_fft = decode_heatmap_FFT(H)
+        err = float(np.abs(P_fft - P_old).max())
+        max_fft_err = max(max_fft_err, err)
+        if P_old.sum() > 0:
+            old_argmax = np.unravel_index(int(np.argmax(P_old)), P_old.shape)
+            fft_argmax = np.unravel_index(int(np.argmax(P_fft)), P_fft.shape)
+            assert old_argmax == fft_argmax, f"FFT argmax mismatch: {old_argmax} vs {fft_argmax}"
+        n_checked += 1
+        if n_checked >= 20:
+            break
+    print(f"OK — {n_checked} samples round-tripped through all decoders; FFT max abs err = {max_fft_err:.4g}")
+
+
 def plot_policy_entropy_over_training(last_n_sets: int = 50) -> None:
     """Policy entropy over training iterations.
 
@@ -3860,7 +4350,7 @@ if __name__ == "__main__":
     # view_visit_count_and_policy_with_and_without_dirichlet_noise()
 
     # ===== REPLAY / VISUALIZATION =====
-    record_game_gif(max_iter=200, model='pytorch', fps=3)
+    # record_game_gif(max_iter=200, model='pytorch', fps=3)
     # test_reflected_policy()
     # visualize_policy()
     # visualize_policy_from_data()
@@ -3896,5 +4386,11 @@ if __name__ == "__main__":
 
     # ===== DATA MIGRATION =====
     # migrate_stats_data()
+
+    # 1. Train 3 checkpoints on the last 20 files of temp_data/.        
+    # train_comparison_models(last_n_sets=20, epochs=2, backend='keras')
+
+    # 2. Round-robin battle (200 games per pair = 1200 games total at default MAX_ITER=400).
+    cross_battle_four(n_games=200)
 
 "/Users/matthewlee/Documents/Code/Tetris Game/SRC/.venv/bin/python" "/Users/matthewlee/Documents/Code/Tetris Game/src/util.py"

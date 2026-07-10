@@ -1,4 +1,5 @@
 import pygame
+import numpy as np
 from numpy import prod
 
 # Board Dimensions:
@@ -66,6 +67,7 @@ STAT_SETTINGS = [
 ]
 
 MINOS = "ZLOSIJT"
+MINO_TO_INDEX = {m: i for i, m in enumerate(MINOS)}
 
 # Piece Matrices:
 # For encoding AI information
@@ -511,15 +513,116 @@ piece_hover_coordinates = {
     ],
 }
 
+### New Policy Format
+
+policy_piece_grids_no_padding = {}
+
+def rotate_grid_clockwise(grid):
+    return np.rot90(grid, k=-1)
+
+def strip_zero_padding(grid):
+    rows = np.any(grid, axis=1)
+    cols = np.any(grid, axis=0)
+    return grid[np.ix_(rows, cols)]
+
+for policy_index in policy_index_to_piece:
+    piece, rotation, t_spin_index = policy_index_to_piece[policy_index]
+    grid = np.array(piece_dict[piece])
+    for _ in range(rotation):
+        grid = rotate_grid_clockwise(grid)
+
+    policy_piece_grids_no_padding[policy_index] = strip_zero_padding(grid)
+
+# Per-policy-index buffers. Both legacy index (ri, ci) and spatial index
+# (new_row, new_col) map to a common reference coordinate — the rotated PADDED
+# bbox's top-left in board frame — via their respective buffers:
+#   ri      + LEGACY_POLICY_ROW_BUFFER = padded_top_row
+#   ci      + LEGACY_POLICY_COL_BUFFER = padded_top_col
+#   new_row + policy_row_buffer[pi]    = padded_top_row
+#   new_col + policy_col_buffer[pi]    = padded_top_col
+# Since stripped_top = padded_top + pad_offset and new_(row,col) = stripped_top,
+# the new-frame buffer is -pad_offset. Conversion goes through the common ref:
+#   new_row = (ri + LEGACY_POLICY_ROW_BUFFER) - policy_row_buffer[pi]
+#   new_col = (ci + LEGACY_POLICY_COL_BUFFER) - policy_col_buffer[pi]
+LEGACY_POLICY_ROW_BUFFER = 0    # ri IS the padded-bbox top row.
+LEGACY_POLICY_COL_BUFFER = -2   # ci = padded-bbox top col + 2.
+
+policy_row_buffer = {}
+policy_col_buffer = {}
+policy_row_range = {}  # (min, max) inclusive, valid new_row range per policy_index
+policy_col_range = {}
+
+for policy_index in policy_index_to_piece:
+    piece, rotation, _ = policy_index_to_piece[policy_index]
+    padded = np.array(piece_dict[piece])
+    for _ in range(rotation):
+        padded = rotate_grid_clockwise(padded)
+    pad_offset_row = int(np.argmax(np.any(padded, axis=1)))
+    pad_offset_col = int(np.argmax(np.any(padded, axis=0)))
+    policy_row_buffer[policy_index] = -pad_offset_row
+    policy_col_buffer[policy_index] = -pad_offset_col
+
+    kh, kw = policy_piece_grids_no_padding[policy_index].shape
+    policy_row_range[policy_index] = (0, ROWS - kh)
+    policy_col_range[policy_index] = (0, COLS - kw)
+
+# Vectorized copies of the buffers/ranges above, indexed by policy_index, so
+# legacy (pi, ri, ci) indices can be converted to spatial (new_row, new_col)
+# in bulk without materializing the legacy tensor (see ai.get_move_list).
+_policy_indices = sorted(policy_index_to_piece)
+POLICY_ROW_BUFFER_ARR = np.array([policy_row_buffer[i] for i in _policy_indices], dtype=np.intp)
+POLICY_COL_BUFFER_ARR = np.array([policy_col_buffer[i] for i in _policy_indices], dtype=np.intp)
+POLICY_ROW_MAX_ARR = np.array([policy_row_range[i][1] for i in _policy_indices], dtype=np.intp)
+POLICY_COL_MAX_ARR = np.array([policy_col_range[i][1] for i in _policy_indices], dtype=np.intp)
+
+# Generate A and M matrices for each policy index.
+#
+# A_matrices[policy_index] has shape (ROWS, COLS, n): each "kernel" along axis 2 is
+# the binary occupancy heatmap of one valid placement of the (stripped) piece grid.
+# Forward: heatmap y = A @ w where w is the action weights (length n).
+# M_matrices[policy_index] has shape (n, ROWS, COLS): rows of the Moore-Penrose
+# pseudoinverse of A.reshape(ROWS*COLS, n). Backward: w = M @ y_flat.
+#
+# T-spin policy indices (15-26) get the same geometric A as their no-spin
+# counterparts (the spin label has no effect on which cells the piece occupies).
+
+A_matrices = {}
+M_matrices = {}
+
+for policy_index in policy_piece_grids_no_padding:
+    piece, rotation, t_spin_index = policy_index_to_piece[policy_index]
+    # T-spin variants (policy_index 19-26) share geometry with the no-spin
+    # rotation (15-18) and reuse the same A/M; skip storing duplicates.
+    if t_spin_index != 0:
+        continue
+
+    piece_matrix = policy_piece_grids_no_padding[policy_index]
+    piece_matrix_rows, piece_matrix_cols = np.shape(piece_matrix)
+
+    kernel_rows = ROWS - piece_matrix_rows + 1
+    kernel_cols = COLS - piece_matrix_cols + 1
+    kernels = kernel_rows * kernel_cols
+
+    A = np.zeros((ROWS, COLS, kernels), dtype=np.float32)
+
+    for kernel_row in range(kernel_rows):
+        for kernel_col in range(kernel_cols):
+            kernel_num = kernel_row * kernel_cols + kernel_col
+            for piece_row in range(piece_matrix_rows):
+                for piece_col in range(piece_matrix_cols):
+                    if piece_matrix[piece_row, piece_col] != 0:
+                        A[kernel_row + piece_row, kernel_col + piece_col, kernel_num] = 1.0
+
+    A_flat = A.reshape(ROWS * COLS, kernels)
+    M_flat = np.linalg.pinv(A_flat).astype(np.float32)
+
+    A_matrices[policy_index] = A
+    M_matrices[policy_index] = M_flat.reshape(kernels, ROWS, COLS)
+
+
+
+# __main__ stuff
+
 if __name__ == "__main__":
-    def negate_index_1(list):
-        return [[x[0], -x[1]] for x in list]
-    
-    l = [
-            [-1, 0],
-            [-1, -2],
-            [-1, -1],
-            [0, -2],
-            [0, -1]
-        ]
-    print(negate_index_1(l))
+    print(policy_row_range)
+    print(policy_col_range)
