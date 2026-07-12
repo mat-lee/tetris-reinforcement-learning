@@ -665,6 +665,69 @@ def convert_data_2_4_to_2_5(set):
         move.append(avg_height)
         move.append(holes)
 
+def convert_data_2_7_to_3_0(set):
+    """
+    Convert data from version 2.7 to 3.0.
+    - Pads both grids with 14 empty rows on top (26 -> 40 board height).
+    - Converts policy from (27, 25, 11), indexed by piece location
+      (row = y, col = x + 2), to (27, 40, 10), indexed by topmost/leftmost
+      mino: new = old - old_buffer + new_buffer, shifted down 14 rows.
+    """
+    # grids[0], pieces[0], b2b[0], combo[0], garbage[0],
+    # grids[1], pieces[1], b2b[1], combo[1], garbage[1],
+    # color, winner, search_matrix
+
+    OLD_ROWS = 26
+    ADDED_ROWS = ROWS - OLD_ROWS
+
+    for move in set:
+        # Pad both grids with empty rows on top
+        for grid in (move[0], move[5]):
+            grid[:0] = [[0] * COLS for _ in range(ADDED_ROWS)]
+
+        old_policy = move[-1]
+        new_policy = [[[0] * COLS for _ in range(ROWS)]
+                      for _ in range(POLICY_SHAPE[0])]
+
+        for policy_index, matrix in enumerate(old_policy):
+            row_shift = ADDED_ROWS - OLD_ROW_BUFFER + coords_to_policy_row_buffer[policy_index]
+            col_shift = -OLD_COL_BUFFER + coords_to_policy_col_buffer[policy_index]
+            for row, row_values in enumerate(matrix):
+                for col, value in enumerate(row_values):
+                    if value != 0:
+                        # Negative indices would wrap around silently
+                        new_row = row + row_shift
+                        new_col = col + col_shift
+                        assert new_row >= 0 and new_row < ROWS and new_col >= 0 and new_col < COLS
+                        new_policy[policy_index][row + row_shift][col + col_shift] = value
+
+        move[-1] = new_policy
+
+def convert_data_and_train_6_0_to_7_0():
+    config = Config(epochs=2, sets_to_train_with=50, shuffle=True, data_version=2.7, model_version=6.0)
+    new_network = instantiate_network(config, show_summary=True, save_network=False)
+
+    filenames = get_data_filenames(config)
+
+    path = f"{directory_path}/data/s2.2.7"
+
+    i = 0
+
+    for filename in filenames:
+        i += 1
+        set = ujson.load(open(f"{path}/{filename}", 'r'))
+
+        convert_data_2_7_to_3_0(set)
+    
+        # Train challenger network
+        train_network(config, new_network, set)
+        gc.collect()
+        
+        if i % 10 == 0:
+            new_network.save(f"{directory_path}/models/debug/{i}.keras")
+        
+    new_network.save(f"{directory_path}/models/debug/{i}.keras")
+
 def convert_data_and_train(c, init_data_ver, conversion_function, last_n_sets, epochs):
     c.epochs = epochs
     c.data_version = init_data_ver
@@ -1218,7 +1281,7 @@ if __name__ == "__main__":
     # load_data_and_train_model(c, model, last_n_sets=20)
     # model.save(f"{directory_path}/models/debug/test_model.keras")
 
-    evaluate_value_metrics(num_games=5)
+    convert_data_and_train_6_0_to_7_0()
 
 # Command for running python files
 # This is for running many tests at the same time

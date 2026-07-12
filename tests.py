@@ -25,11 +25,15 @@ def give_o_piece(player):
     player.piece.move_to_spawn()
     player.held_piece = "O"
 
+def pad_board(grid):
+    # Pad legacy 26-row fixture boards to the current board height
+    return [[0] * COLS for _ in range(ROWS - len(grid))] + [row[:] for row in grid]
+
 def move_matrix_for(grid, piece_type, held_piece):
     # Move matrix for a player with a given board and pieces (brute-force = ground truth)
     game = fresh_game()
     player = game.players[0]
-    player.board.grid = [row[:] for row in grid]
+    player.board.grid = pad_board(grid)
     player.piece = Piece(type=piece_type)
     player.piece.move_to_spawn()
     player.held_piece = held_piece
@@ -39,8 +43,9 @@ _TINY = {}
 def tiny_network():
     # One small keras network shared by the network tests
     if not _TINY:
-        config = Config(model='keras', use_tflite=False, blocks=2, pooling_blocks=1,
-                        filters=8, cpool=2, o_side_neurons=4, value_head_neurons=4, epochs=1)
+        config = Config(model='keras', use_tflite=False, epochs=1,
+                        model_config=AuxResnetConfig(blocks=2, pooling_blocks=1, filters=8,
+                                                     cpool=2, o_side_neurons=4, value_head_neurons=4))
         _TINY['config'] = config
         _TINY['model'] = instantiate_network(config, show_summary=False, save_network=False)
     return _TINY['config'], _TINY['model']
@@ -118,14 +123,15 @@ def test_mcts_terminal_backpropagation(monkeypatch):
     give_o_piece(game.players[0])
     give_o_piece(game.players[1])
 
-    # Wall on player 1's board covering the spawn area (rows 4-5), with side gaps so
-    # no line can complete: any placement leaves the next spawn blocked -> top-out
-    for row in (4, 5):
+    # Wall on player 1's board covering the spawn area (spawn row + 1/2), with side
+    # gaps so no line can complete: any placement leaves the next spawn blocked -> top-out
+    spawn_y = ROWS - SPAWN_ROW
+    for row in (spawn_y + 1, spawn_y + 2):
         for col in range(2, 8):
             game.players[1].board.grid[row][col] = 1
     # Park player 1's active piece below the wall so it starts collision-free
     game.players[1].piece.location.x = 0
-    game.players[1].piece.location.y = 10
+    game.players[1].piece.location.y = spawn_y + 7
     game.players[1].piece.coordinates = game.players[1].piece.get_self_coords
 
     _, tree, _ = MCTS(config, game, None)
@@ -157,23 +163,44 @@ def test_mcts_terminal_backpropagation(monkeypatch):
     assert revisited_children > 0
     assert visited_grandchildren > 0
 
+# ------------------------- Move generation -------------------------
+
+def test_move_matrix_algorithms_agree():
+    # Brute-force (ground truth) and convolutional move generation must find the
+    # same placements.
+    # Known pre-existing gap (predates the policy coordinate switch, verified at
+    # commit 56804952): on an EMPTY board the convolutional algorithm misses the
+    # T floor-rotations at the spawn column (x=3, y=23, rotations 1/2/3).
+    for piece_type in MINOS:
+        game = fresh_game()
+        player = game.players[game.turn]
+        player.board.grid = pad_board(util_t_spin_board)
+        player.piece = Piece(type=piece_type)
+        player.piece.move_to_spawn()
+        player.held_piece = piece_type
+
+        brute_force = get_move_matrix(player, algo='brute-force')
+        convolutional = get_move_matrix(player, algo='convolutional')
+        assert np.array_equal(brute_force.astype(bool), convolutional.astype(bool)), piece_type
+
 # ------------------------- get_move_list -------------------------
 
 def test_get_move_list():
-    # Formats (policy index, row, col) entries as (policy, (policy_index, col - 2, row))
+    # Formats (policy index, row, col) entries as
+    # (policy, (policy_index, col - col_buffer, row - row_buffer))
     move_matrix = np.zeros(POLICY_SHAPE)
     policy = np.zeros(POLICY_SHAPE)
 
-    move_matrix[0][5][0] = 1
-    policy[0][5][0] = 0.4
-    move_matrix[3][10][7] = 1
+    move_matrix[6][5][0] = 1   # I rotation 1: col buffer 2, row buffer 0
+    policy[6][5][0] = 0.4
+    move_matrix[3][10][7] = 1  # S rotation 0: col buffer 0, row buffer 0
     policy[3][10][7] = 0.6
     policy[2][3][3] = 0.9      # policy without a legal move: excluded
     move_matrix[4][4][4] = 1   # legal move with zero policy: excluded by the mask
 
     move_list = get_move_list(move_matrix, policy)
 
-    assert sorted(move_list) == [(0.4, (0, -2, 5)), (0.6, (3, 5, 10))]
+    assert sorted(move_list) == [(0.4, (6, -2, 5)), (0.6, (3, 7, 10))]
 
 # ------------------------- Network -------------------------
 
@@ -228,21 +255,21 @@ def test_network_training():
 # ------------------------- search_statistics -------------------------
 
 def test_search_statistics():
-    # Visit counts become probabilities at [policy_index][row][col + 2]
+    # Visit counts become probabilities at [policy_index][row + row_buffer][col + col_buffer]
     tree = treelib.Tree()
     tree.create_node(identifier="root", data=NodeState())
 
-    for move, visits in [((0, -2, 5), 6), ((5, 8, 10), 3), ((18, 0, 0), 1), ((1, 0, 0), 0)]:
+    for move, visits in [((6, -2, 5), 6), ((5, 5, 10), 3), ((18, 0, 0), 1), ((1, 0, 0), 0)]:
         state = NodeState(move=move)
         state.visit_count = visits
         tree.create_node(parent="root", data=state)
 
     matrix = search_statistics(tree)
 
-    assert matrix[0][5][0] == 0.6    # col -2 -> buffer index 0
-    assert matrix[5][10][10] == 0.3
-    assert matrix[18][0][2] == 0.1
-    assert matrix[1][0][2] == 0      # unvisited move excluded
+    assert matrix[6][5][0] == 0.6    # I rotation 1: col -2 + buffer 2 -> index 0
+    assert matrix[5][11][5] == 0.3   # I rotation 0: row buffer 1
+    assert matrix[18][0][0] == 0.1   # T rotation 3: no buffers
+    assert matrix[1][0][0] == 0      # unvisited move excluded
     assert np.sum(matrix) == pytest.approx(1)
     assert np.count_nonzero(matrix) == 3
 
@@ -349,23 +376,23 @@ def test_reflect_policy_matches_mirrored_board():
     # T is its own mirror; Z/L on the original correspond to S/J on the mirror.
     for pieces, mirrored_pieces in [(("T", "T"), ("T", "T")), (("Z", "L"), ("S", "J"))]:
         matrix = move_matrix_for(util_t_spin_board, *pieces)
-        mirrored_matrix = move_matrix_for(reflect_grid(util_t_spin_board), *mirrored_pieces)
+        mirrored_matrix = move_matrix_for(reflect_grid(pad_board(util_t_spin_board)), *mirrored_pieces)
 
         reflected = np.array(reflect_policy(matrix), dtype=float)
         assert np.array_equal(reflected.astype(bool), mirrored_matrix.astype(bool))
 
-def test_reflections():
+def test_reflections(monkeypatch):
     # Tests that double reflections return the original grid, pieces, and policy.
-    c = Config()
-    interpreter = get_interpreter(load_best_model(c))
+    # Saved models predate policy shape changes, so use a fake network
+    monkeypatch.setattr(ai, "evaluate", fake_uniform_evaluate)
+    c = Config(visual=False)
 
-    grid = [x[:] for x in util_t_spin_board] # copy
+    grid = pad_board(util_t_spin_board)
     game = Game(c.ruleset)
     game.setup()
     game.players[game.turn].board.grid = grid
     pieces = get_pieces(game)[0]
-    # _, policy = evaluate(c, game, interpreter)
-    move, tree, save = MCTS(c, game, interpreter)
+    move, tree, save = MCTS(c, game, None)
     search_matrix = search_statistics(tree)
 
     assert all([r == n for (rl, nl) in zip(reflect_grid(reflect_grid(grid)), grid) for (r, n) in zip(rl, nl)]) # Grid
@@ -419,6 +446,36 @@ def test_battle_networks_threshold(monkeypatch):
     wins, result = battle_networks("A", config, "B", config, 0.75, 'moreorequal', 4)
     assert result is True
     assert wins.tolist() == [3, 0]  # stopped as soon as 3 >= 0.75 * 4
+
+def test_convert_data_2_7_to_3_0():
+    from util import convert_data_2_7_to_3_0
+
+    # 2.7 move: grids at 0 and 5 (26 rows), policy last (27, 25, 11)
+    a_grid = [[0] * COLS for _ in range(26)]
+    a_grid[25] = [1] * 9 + [0]  # one filled bottom row for aux metrics
+    o_grid = [[0] * COLS for _ in range(26)]
+    policy = np.zeros((27, 25, 11)).tolist()
+
+    # Old coords are (row=y, col=x+2); new are true coords + per-piece buffers
+    # T rotation 2 (policy index 17) placed at x=3, y=5
+    policy[17][5][3 + 2] = 0.7
+    # I rotation 1 (policy index 6) at x=-2, y=10: old col hits index 0
+    policy[6][10][-2 + 2] = 0.3
+
+    move = [a_grid, None, None, None, None, o_grid, None, None, None, None,
+            None, 1, policy]
+    convert_data_2_7_to_3_0([move])
+
+    assert len(move[0]) == 40 and len(move[5]) == 40
+    assert move[0][:14] == [[0] * COLS for _ in range(14)]  # empty rows on top
+    assert move[0][39] == [1] * 9 + [0]                     # bottom row kept
+
+    new_policy = np.array(move[-1])
+    assert new_policy.shape == (27, 40, 10)
+    assert new_policy[17][5 + 14 + coords_to_policy_row_buffer[17]][3 + coords_to_policy_col_buffer[17]] == 0.7
+    assert new_policy[6][10 + 14 + coords_to_policy_row_buffer[6]][-2 + coords_to_policy_col_buffer[6]] == 0.3
+    assert new_policy.sum() == 1.0  # nothing else set
+    assert len(move) == 13  # no aux appended; targets are computed in training
 
 # pytest tests.py
 if __name__ == "__main__":

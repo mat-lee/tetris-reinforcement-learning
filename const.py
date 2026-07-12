@@ -2,7 +2,7 @@ import pygame
 from numpy import prod
 
 # Board Dimensions:
-ROWS = 26
+ROWS = 40
 SPAWN_ROW = 23
 GRID_ROWS = 20
 
@@ -39,7 +39,7 @@ SDF = 1/10
 PREVIEWS = 5
 
 # Screen Dimensions:
-MINO_SIZE = 30
+MINO_SIZE = 20
 
 N_BUFFER = 0
 S_BUFFER = 0
@@ -116,9 +116,11 @@ policy_index_to_piece = {
     26: ["T", 3, 2],
 }
 
-# Leftside buffer is 2
-# Can't place piece at the bottom most row
-POLICY_SHAPE = (len(policy_index_to_piece), ROWS - 1, COLS + 2 - 1)
+# Policy coordinate system: true coords + per-rotation buffers = policy coords
+# (piece_rotation_row/col_buffer and coords_to_policy_row/col_buffer, defined below).
+# Policy coords are the (row, col) of the topmost, leftmost mino of a placement,
+# so every placement lands within ROWS x COLS.
+POLICY_SHAPE = (len(policy_index_to_piece), ROWS, COLS)
 POLICY_SIZE = prod(POLICY_SHAPE)
 
 policy_piece_to_index = {
@@ -278,6 +280,27 @@ mino_coords_dict = {
         3: [[0, 1], [1, 0], [1, 1], [1, 2]],
     },
 }
+
+OLD_ROW_BUFFER = 0
+OLD_COL_BUFFER = 2
+
+# Number of empty columns (from the left) / rows (from the top) in each piece
+# matrix before reaching the piece, for all 4 rotations.
+# true coords + these buffers = policy coords (topmost, leftmost mino of the piece)
+piece_rotation_col_buffer = {
+    piece: {rotation: min(col for col, row in coords) for rotation, coords in rotations.items()}
+    for piece, rotations in mino_coords_dict.items()
+}
+piece_rotation_row_buffer = {
+    piece: {rotation: min(row for col, row in coords) for rotation, coords in rotations.items()}
+    for piece, rotations in mino_coords_dict.items()
+}
+
+# The same buffers keyed by policy index (canonical rotations only)
+coords_to_policy_col_buffer = {index: piece_rotation_col_buffer[piece][rotation]
+                               for index, (piece, rotation, _) in policy_index_to_piece.items()}
+coords_to_policy_row_buffer = {index: piece_rotation_row_buffer[piece][rotation]
+                               for index, (piece, rotation, _) in policy_index_to_piece.items()}
 
 # For generating moves quicker
 piece_hover_coordinates = {

@@ -5,6 +5,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from dataclasses import dataclass
+
 class ResidualBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -169,49 +171,21 @@ import tensorflow as tf
 
 
 def create_input_layers():
-    shapes = [(ROWS, COLS, 1), # Grid
-              (2 + PREVIEWS, len(MINOS)), # Pieces
-              (1,), # B2B
-              (1,), # Combo
-              (1,), # Garbage
-              (ROWS, COLS, 1), 
-              (2 + PREVIEWS, len(MINOS)), 
-              (1,), 
-              (1,), 
-              (1,),
-              (1,)] # Color (Whether you had first move or not)
+    grid_shape = (ROWS, COLS, 1)
+    piece_shape = (2 + PREVIEWS, len(MINOS))
 
-    inputs = []
-    active_features = []
-    active_grid = None
-    opponent_features = []
-    opponent_grid = None
-    
-    non_player_features = []
-
-    for i, shape in enumerate(shapes):
-        # Add input
-        input = keras.Input(shape=shape, name=f"{i}")
-        inputs.append(input)
-
-        num_inputs = len(shapes)
-        # Active player's features
-        if i < (num_inputs - 1) / 2: # Ignore last input, and take the first half
-            if shape == shapes[0]:
-                active_grid = input
-            else:
-                active_features.append(keras.layers.Flatten()(input))
-        # Other player's features
-        elif i < (num_inputs - 1): # Ignore last input, take remaining half
-            if shape == shapes[0]:
-                opponent_grid = input
-            else:
-                opponent_features.append(keras.layers.Flatten()(input))
-        # Other features
-        else:
-            non_player_features.append(keras.layers.Flatten()(input))
-    
-    return inputs, active_grid, active_features, opponent_grid, opponent_features, non_player_features
+    a_grid    = keras.Input(shape=grid_shape,  name='0')
+    a_pieces  = keras.Input(shape=piece_shape, name='1')
+    a_b2b     = keras.Input(shape=(1,),        name='2')
+    a_combo   = keras.Input(shape=(1,),        name='3')
+    a_garbage = keras.Input(shape=(1,),        name='4')
+    o_grid    = keras.Input(shape=grid_shape,  name='5')
+    o_pieces  = keras.Input(shape=piece_shape, name='6')
+    o_b2b     = keras.Input(shape=(1,),        name='7')
+    o_combo   = keras.Input(shape=(1,),        name='8')
+    o_garbage = keras.Input(shape=(1,),        name='9')
+    color     = keras.Input(shape=(1,),        name='10')
+    return a_grid, a_pieces, a_b2b, a_combo, a_garbage, o_grid, o_pieces, o_b2b, o_combo, o_garbage, color
 
 def gen_alphasame_nn(config) -> keras.Model:
     def ValueHead():
@@ -329,7 +303,10 @@ def gen_alphasame_nn(config) -> keras.Model:
             return out_1, out_2
         return inside
 
-    inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
+    a_grid, a_pieces, a_b2b, a_combo, a_garbage, o_grid, o_pieces, o_b2b, o_combo, o_garbage, color = create_input_layers()
+
+    raise Exception("Old")
+    # inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
 
     # Start with a convolutional layer
     # Because each grid needs the same network, use the same layers for each side
@@ -505,6 +482,7 @@ def gen_test_model(config) -> keras.Model:
             return out_1, out_2
         return inside
 
+    raise Exception("Old")
     inputs, a_grid, a_features, o_grid, o_features, non_player_features = create_input_layers()
 
     # Initial convolution for spatial features only
@@ -594,5 +572,206 @@ def gen_test_model(config) -> keras.Model:
         inputs=inputs, 
         outputs=[value_output, policy_output]
     )
+
+    return model
+
+@dataclass
+class AuxResnetConfig:
+    use_tanh: bool = False # If false means using sigmoid; affects data saving and model activation
+                           # Makes evaluation range from -1 to 1, while sigmoid ranges from 0 to 1
+    use_aux: bool = True
+    blocks: int = 10
+    pooling_blocks: int = 2   # number of GlobalPooling blocks (Keras only)
+    filters: int = 16
+    cpool: int = 4            # channels reserved for global pooling (Keras only)
+    dropout: float = 0.20
+    kernels: int = 1
+    o_side_neurons: int = 16
+    value_head_neurons: int = 16
+
+    aux_neurons: int = 16
+
+def gen_auxresnet(config) -> keras.Model:
+    # The network uses the same neural network to apply convolutions to both grids
+    def ResidualLayer():
+        # Uses skip conections
+        def inside(in_1, in_2):
+            batch_1 = keras.layers.BatchNormalization()
+            relu_1 = keras.layers.Activation('relu')
+            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+            batch_2 = keras.layers.BatchNormalization()
+            dropout_1 = keras.layers.Dropout(config.dropout)
+            relu_2 = keras.layers.Activation('relu')
+            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+
+            out_1 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_1)))))))
+            out_2 = conv_2(relu_2(dropout_1(batch_2(conv_1(relu_1(batch_1(in_2)))))))
+
+            out_1 = keras.layers.Add()([in_1, out_1])
+            out_2 = keras.layers.Add()([in_2, out_2])
+
+            return out_1, out_2
+        return inside
+    
+    def GlobalPoolingLayer():
+        # Uses skip conections and global pooling
+        def inside(in_1, in_2):
+            batch_1 = keras.layers.BatchNormalization()
+            relu_1 = keras.layers.Activation('relu')
+            conv_1 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+
+            out_1 = conv_1(relu_1(batch_1(in_1)))
+            out_2 = conv_1(relu_1(batch_1(in_2)))
+
+            # lambda_pool_1 = keras.layers.Lambda(lambda x: x[..., :config.cpool])
+            # lambda_rest_1 = keras.layers.Lambda(lambda x: x[..., config.cpool:])
+
+            # Split channels
+            out_1_pool = out_1[:, :, :, :config.cpool]
+            out_1_rest = out_1[:, :, :, config.cpool:]
+
+            out_2_pool = out_2[:, :, :, :config.cpool]
+            out_2_rest = out_2[:, :, :, config.cpool:]
+
+            # Use batch norm and relu on pooling layers
+            pool_batch_1 = keras.layers.BatchNormalization()
+            pool_relu_1 = keras.layers.Activation('relu')
+
+            out_1_pool_act = pool_relu_1(pool_batch_1(out_1_pool))
+            out_2_pool_act = pool_relu_1(pool_batch_1(out_2_pool))
+
+            # Global average and global pooling on the first cpool channels
+            avg_pool_1 = keras.layers.GlobalAveragePooling2D()
+            max_pool_1 = keras.layers.GlobalMaxPooling2D()
+
+            out_1_average_pooled = avg_pool_1(out_1_pool_act)
+            out_2_average_pooled = avg_pool_1(out_2_pool_act)
+
+            out_1_max_pooled = max_pool_1(out_1_pool)
+            out_2_max_pooled = max_pool_1(out_2_pool)
+
+            out_1_pooled = keras.layers.Concatenate()([out_1_average_pooled, out_1_max_pooled])
+            out_2_pooled = keras.layers.Concatenate()([out_2_average_pooled, out_2_max_pooled])
+
+            # Fully connected layer
+            dense_1 = keras.layers.Dense(config.filters - config.cpool)
+
+            out_1_dense = dense_1(out_1_pooled)
+            out_2_dense = dense_1(out_2_pooled)
+
+            # Reshape to match the remaining channels
+            out_1_biases = keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_1_dense)
+            out_2_biases = keras.layers.Reshape((1, 1, config.filters - config.cpool))(out_2_dense)
+
+            # Add the biases to the remaining channels
+            out_1_biased = keras.layers.Add()([out_1_rest, out_1_biases])
+            out_2_biased = keras.layers.Add()([out_2_rest, out_2_biases])
+
+            # Concatenate the pooled and biased channels
+            out_1 = keras.layers.Concatenate(axis=-1)([out_1_pool, out_1_biased])
+            out_2 = keras.layers.Concatenate(axis=-1)([out_2_pool, out_2_biased])
+
+            # Resume second half of the standard residual block
+            batch_2 = keras.layers.BatchNormalization()
+            dropout_1 = keras.layers.Dropout(config.dropout)
+            relu_2 = keras.layers.Activation('relu')
+            conv_2 = keras.layers.Conv2D(config.filters, (3, 3), padding="same")
+
+            out_1 = conv_2(relu_2(dropout_1(batch_2(out_1))))
+            out_2 = conv_2(relu_2(dropout_1(batch_2(out_2))))
+
+            out_1 = keras.layers.Add()([in_1, out_1])
+            out_2 = keras.layers.Add()([in_2, out_2])
+
+            return out_1, out_2
+        return inside
+
+    
+    a_grid, a_pieces, a_b2b, a_combo, a_garbage, o_grid, o_pieces, o_b2b, o_combo, o_garbage, a_color = create_input_layers()
+
+    inputs = [a_grid, a_pieces, a_b2b, a_combo, a_garbage, o_grid, o_pieces, o_b2b, o_combo, o_garbage, a_color]
+
+    o_color = keras.layers.Rescaling(scale=-1.0, offset=1.0, name='opp_color')(a_color)
+
+    # Start with a convolutional layer
+    # Because each grid needs the same network, use the same layers for each side
+    conv_1 = keras.layers.Conv2D(config.filters, (5, 5), padding="same")
+    
+    a_grid = conv_1(a_grid)
+    o_grid = conv_1(o_grid)
+
+    # Take other features and use a dense layer to add channelwise
+    feat_bias = keras.layers.Dense(config.filters)
+
+    a_feat_in = keras.layers.Concatenate()([
+        keras.layers.Flatten()(a_pieces), a_b2b, a_combo, a_garbage, a_color,
+    ])
+    o_feat_in = keras.layers.Concatenate()([
+        keras.layers.Flatten()(o_pieces), o_b2b, o_combo, o_garbage, o_color,
+    ])
+
+    a_features = feat_bias(a_feat_in)
+    o_features = feat_bias(o_feat_in)
+
+    a_biases = keras.layers.Reshape((1, 1, config.filters))(a_features)
+    o_biases = keras.layers.Reshape((1, 1, config.filters))(o_features)
+
+    a_grid = keras.layers.Add()([a_grid, a_biases])
+    o_grid = keras.layers.Add()([o_grid, o_biases])
+
+    # 10 layers: 8 residual, 2 global pooling
+    # Evenly space blocks
+    global_pool_indices = [round((i + 1) / (config.pooling_blocks + 1) * config.blocks) - 1 for i in range(config.pooling_blocks)]
+
+    for i in range(config.blocks):
+        if i in global_pool_indices:
+            layer = GlobalPoolingLayer()
+        else:
+            layer = ResidualLayer()
+        
+        a_grid, o_grid = layer(a_grid, o_grid)
+    
+    batch_1 = keras.layers.BatchNormalization()
+    relu_1 = keras.layers.Activation('relu')
+
+    a_trunk = relu_1(batch_1(a_grid))
+    o_trunk = relu_1(batch_1(o_grid))
+    
+    # 1x1 Kernel
+    kernel_1 = keras.layers.Conv2D(config.kernels, (1, 1))
+    batch_2 = keras.layers.BatchNormalization()
+    relu_2 = keras.layers.Activation('relu')
+    flatten_1 = keras.layers.Flatten()
+
+    a_flat = flatten_1(relu_2(batch_2(kernel_1(a_trunk))))
+    o_flat = flatten_1(relu_2(batch_2(kernel_1(o_trunk))))
+
+    # Aux head
+    aux_head = keras.layers.Dense(config.aux_neurons)(a_flat)
+    aux_head = keras.layers.BatchNormalization()(aux_head)
+    aux_head = keras.layers.ReLU()(aux_head)
+    aux_head = keras.layers.Dropout(config.dropout)(aux_head)
+    aux_head = keras.layers.Dense(2, activation='sigmoid')(aux_head)
+
+    # Value vector
+    joint = keras.layers.Concatenate()([a_flat, o_flat])
+    value_vector = keras.layers.Dense(config.value_head_neurons)(joint)
+    value_vector = keras.layers.BatchNormalization()(value_vector)
+    value_vector = keras.layers.ReLU()(value_vector)
+    # value_vector = keras.layers.Dropout(config.dropout)(value_vector)
+
+    # ── Value head ──
+    value_hidden = keras.layers.Dropout(config.dropout)(value_vector)
+    value_output = keras.layers.Dense(1, activation='tanh' if config.use_tanh else 'sigmoid')(value_hidden)
+
+    # ── Policy head
+    policy_bias = keras.layers.Dense(config.filters)(value_vector)
+    policy_bias_map = keras.layers.Reshape((1, 1, config.filters))(policy_bias)
+    policy_biased = keras.layers.Add()([a_trunk, policy_bias_map])
+    spatial = keras.layers.Conv2D(POLICY_SHAPE[0], 1)(policy_biased)
+    flat = keras.layers.Flatten()(spatial)
+    policy_output = keras.layers.Softmax(name='policy_softmax')(flat)
+
+    model = keras.Model(inputs=inputs, outputs=[value_output, policy_output, aux_head])
 
     return model

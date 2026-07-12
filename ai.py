@@ -60,8 +60,8 @@ class Config():
         visual=True, # Whether to display the training
 
         # For naming data and models
-        model_version=6.0,
-        data_version=2.7,
+        model_version=7.0,
+        data_version=3.0,
 
         ruleset='s2', # 's1' for season 1, 's2' for season 2
 
@@ -69,30 +69,10 @@ class Config():
         use_tflite=True, # If true uses tflite, otherwise uses keras directly. Only for keras models
                          # If uses tflite, then interference and training are separate classes
                          # Otherwise, interference and training are the same class
-        default_model=gen_alphasame_nn,
+        default_model=gen_auxresnet,
         move_algorithm='convolutional', # 'brute-force' for brute force, 'faster-but-loss' for faster but less accurate, 'harddrop' for harddrops only
 
-        # Architecture Parameters
-        #   Fishlike model
-        l1_neurons=256, 
-        l2_neurons=32,
-
-        #   Alphalike model
-        blocks=10,
-        pooling_blocks=2,
-        filters=16, 
-        cpool=4,
-
-        #   Only use one of dropout or l2_reg
-        dropout=0.25,
-        l2_reg=3e-5,
-
-        kernels=1,
-        o_side_neurons=16,
-        value_head_neurons=16,
-
-        use_tanh=False, # If false means using sigmoid; affects data saving and model activation
-        # Makes evaluation range from -1 to 1, while sigmoid ranges from 0 to 1
+        model_config=AuxResnetConfig,
 
         # MCTS Parameters
         training_games=100, # Number of training games per training loop
@@ -117,7 +97,7 @@ class Config():
         # Training Parameters
         training=False, # Set to true to use a variety of features
         learning_rate=0.001, 
-        loss_weights=[1, 1], 
+        loss_weights=[1, 1, 0.15], 
         epochs=1, 
         batch_size=64,
 
@@ -135,12 +115,12 @@ class Config():
         playout_cap_mult=5,
 
         use_dirichlet_noise=True,
-        DIRICHLET_ALPHA=0.05,
+        DIRICHLET_ALPHA=0.1,
         DIRICHLET_S=25,
         DIRICHLET_EXPLORATION=0.25, 
         use_dirichlet_s=True,
 
-        use_forced_playouts_and_policy_target_pruning=True,
+        use_forced_playouts_and_policy_target_pruning=False,
         CForcedPlayout=1,
     ):
         self.visual = visual
@@ -151,18 +131,7 @@ class Config():
         self.use_tflite = use_tflite
         self.default_model = default_model
         self.move_algorithm = move_algorithm
-        self.l1_neurons = l1_neurons
-        self.l2_neurons = l2_neurons
-        self.blocks = blocks
-        self.pooling_blocks = pooling_blocks
-        self.filters = filters
-        self.cpool = cpool
-        self.dropout = dropout
-        self.l2_reg = l2_reg
-        self.kernels = kernels
-        self.o_side_neurons = o_side_neurons
-        self.value_head_neurons = value_head_neurons
-        self.use_tanh = use_tanh
+        self.model_config = model_config
         self.training_games = training_games
         self.training_loops = training_loops
         self.sets_to_train_with = sets_to_train_with
@@ -220,14 +189,14 @@ class Config():
 
     @property
     def value_mid(self):
-        return (0 if self.use_tanh else 0.5)
+        return (0 if self.model_config.use_tanh else 0.5)
 
     @property
     def value_min(self):
-        return (-1 if self.use_tanh else 0)
+        return (-1 if self.model_config.use_tanh else 0)
     
     def negate_value(self, value):
-        return (-value if self.use_tanh else 1 - value)
+        return (-value if self.model_config.use_tanh else 1 - value)
 
 class NodeState():
     """Node class for storing the game in the tree.
@@ -248,7 +217,7 @@ class NodeState():
 
 def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]:
     global total_branch, number_branch
-    # Picks a move for the AI to make 
+    # Picks a move for the AI to make
 
     # Initialize the search tree
     tree = treelib.Tree()
@@ -289,9 +258,6 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
 
         DEPTH = 0
 
-        if iter == config.MAX_ITER - 1:
-            pass
-
         # Go down the tree using formula Q+U until you get to a leaf node
         # However, if using forced playouts, select a node if it has fewer than the forced playouts amount
         while not node.is_leaf():
@@ -301,14 +267,14 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             parent_visits = node.data.visit_count
 
             number_branch += 1 # debug for branching factor
-            
+
             # Debuging
             Qs = []
             Us = []
 
             # Look through each child
             for child_id in child_ids:
-                
+
                 total_branch += 1
 
                 # For each child calculate a score
@@ -336,7 +302,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                 if child_score >= max_child_score:
                     max_child_score = child_score
                     max_child_id = child_id
-            
+
             # Pick the node with the highest score
             node = tree.get_node(max_child_id)
             node_state = node.data
@@ -350,7 +316,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         # If not the root node, place piece in node
         if not node.is_root():
             prior_node = tree.get_node(node.predecessor(tree.identifier))
-            
+
             game_copy = prior_node.data.game.copy()
             node_state.game = game_copy
             node_state.game.make_move(node_state.move, add_bag=False, add_history=False)
@@ -534,8 +500,6 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
     root_child_n_list = []
     root_child_id_list = []
 
-    root_child_policy_list = [] # debugging
-
     for root_child_id in root_children_id:
         root_child = tree.get_node(root_child_id)
         root_child_n = root_child.data.visit_count
@@ -545,11 +509,8 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         if root_child_n >= max_n: # It's possible n is 0 if there are no possible moves
             max_n = root_child_n
             max_id = root_child.identifier
-        
-        root_child_policy_list.append(root_child.data.policy) # debugging
 
-    selected_id = None
-    
+
     def select_action_with_temperature(visit_counts, temperature):
         if temperature == 0:
             # Deterministic - pick most visited
@@ -579,7 +540,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
 
         most_playouts_child = tree.get_node(max_id) # Uses max_id, not selected_id
         most_playouts_CPUCT = most_playouts_child.data.value_avg + config.CPUCT * most_playouts_child.data.policy * math.sqrt(root.data.visit_count) / (config.DPUCT + most_playouts_child.data.visit_count)
-        
+
         for root_child_id in root_children_id:
             if root_child_id != max_id:
                 root_child = tree.get_node(root_child_id)
@@ -602,7 +563,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                             root_child.data.visit_count -= 1
                         
                         else: break
-        
+
             post_prune_n_list.append(tree.get_node(root_child_id).data.visit_count)
 
     if post_prune_n_list is not None and False: # debugging forced playout pruning
@@ -640,8 +601,12 @@ def get_move_list(move_matrix, policy_matrix):
 
     move_list = np.argwhere(mask != 0)
 
-    # Formats moves from (policy index, row, col) to (value, (policy index, col - 2, row))
-    move_list = [(mask[move[0]][move[1]][move[2]], (move[0], move[2] - 2, move[1])) for move in move_list]
+    # Formats moves from (policy index, row, col) to (value, (policy index, col - col_buffer, row - row_buffer))
+    move_list = [(mask[move[0]][move[1]][move[2]],
+                  (move[0],
+                   move[2] - coords_to_policy_col_buffer[move[0]],
+                   move[1] - coords_to_policy_row_buffer[move[0]]))
+                 for move in move_list]
 
     return move_list
 
@@ -649,7 +614,7 @@ def get_move_list(move_matrix, policy_matrix):
 # 
 # Player orientation: Active player, other player
 # y:
-#   Policy: (19 x 25 x 11) = 5225 (Hold x (Rows - 1) x (Columns + 1) x Rotations)
+#   Policy: (27 x 26 x 10) = 7020 ((Piece x Rotation x Spin) x Rows x Columns)
 #   Value: (1)
 
 def instantiate_network(config: Config, show_summary=True, save_network=True, plot_model=False):
@@ -659,7 +624,7 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
     # Concatenate active player's kernels/features with opponent's dense layer and non-player specific features
     # Apply value head and policy head 
 
-    model = config.default_model(config)
+    model = config.default_model(config.model_config)
 
     if config.model == 'keras':
         if plot_model == True:
@@ -668,7 +633,7 @@ def instantiate_network(config: Config, show_summary=True, save_network=True, pl
         # Loss is the sum of MSE of values and Cross entropy of policies
         model.compile(optimizer=keras.optimizers.Adam(
             learning_rate=config.learning_rate), 
-            loss=["mean_squared_error", "categorical_crossentropy"], 
+            loss=["mean_squared_error", "categorical_crossentropy", "binary_crossentropy"], 
             loss_weights=config.loss_weights
             )
 
@@ -709,16 +674,24 @@ def train_network_keras(config, model, set):
     policies = features.pop()
     values = features.pop()
 
-    # Reshape policies
-    policies = np.array(policies).reshape((-1, POLICY_SIZE))
+    # Data stores policy as (27, ROWS, COLS); the model outputs the
+    # (ROWS, COLS, 27) spatial map flattened
+    policies = np.transpose(policies, (0, 2, 3, 1)).reshape((-1, POLICY_SIZE))
+
+    y = [values, policies]
+    if config.model_config.use_aux == True:
+        # Aux targets are calculated from the active player's grid
+        aux = np.array([[metrics['avg_height'], metrics['holes']]
+                        for metrics in map(calculate_board_metrics, features[0])])
+        y.append(aux)
 
     # callback = keras.callbacks.EarlyStopping(monitor='loss', min_delta=0, patience = 20)
 
     # Adjust learning rate HOW???
     ######### K.set_value(model.optimizer.learning_rate, config.learning_rate)
 
-    history = model.fit(x=features, 
-                        y=[values, policies], 
+    history = model.fit(x=features,
+                        y=y,
                         batch_size=64, 
                         epochs=config.epochs, 
                         shuffle=config.shuffle)
@@ -788,14 +761,12 @@ def evaluate_from_tflite(game, interpreter):
             X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
         else:
             np_feature = np.expand_dims(np.float32(feature), axis=0)
-            if np_feature.shape == (1, 26, 10): # Expand grids
+            if np_feature.shape == (1, ROWS, COLS): # Expand grids
                 np_feature = np.expand_dims(np_feature, axis=-1)
             X.append(np_feature)
     
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
-
-    output_details.sort(key=lambda x: x['name'])
 
     for i in range(len(X)):
         split_str = input_details[i]['name'].split(":")[0]
@@ -811,13 +782,17 @@ def evaluate_from_tflite(game, interpreter):
 
     interpreter.invoke()
 
-    value = interpreter.get_tensor(output_details[0]['index'])
-    policies = interpreter.get_tensor(output_details[1]['index'])
+    # Identify outputs by shape: value (1, 1), policy (1, POLICY_SIZE), aux (1, 2)
+    outputs = {tuple(detail['shape']): interpreter.get_tensor(detail['index'])
+               for detail in output_details}
+    value = outputs[(1, 1)]
+    policies = outputs[(1, POLICY_SIZE)]
 
     # Both value and policies are returned as arrays
     value = value.item()
-    policies = policies.reshape(POLICY_SHAPE)
-    
+    # The flat policy is the (ROWS, COLS, 27) spatial map; MCTS wants (27, ROWS, COLS)
+    policies = np.moveaxis(policies.reshape((ROWS, COLS, POLICY_SHAPE[0])), -1, 0)
+
     return value, policies
 
 def evaluate_from_keras(game, model):
@@ -829,14 +804,15 @@ def evaluate_from_keras(game, model):
             X.append(np.expand_dims(np.float32(feature), axis=(0, 1)))
         else:
             np_feature = np.expand_dims(np.float32(feature), axis=0)
-            if np_feature.shape == (1, 26, 10): # Expand grids
+            if np_feature.shape == (1, ROWS, COLS): # Expand grids
                 np_feature = np.expand_dims(np_feature, axis=-1)
             X.append(np_feature)
-        
-    value, policies = model.predict_on_batch(X)
+
+    value, policies, *_ = model.predict_on_batch(X) # Aux output is training-only
     # Both value and policies are returned as arrays
     value = value.item()
-    policies = policies.reshape(POLICY_SHAPE)
+    # The flat policy is the (ROWS, COLS, 27) spatial map; MCTS wants (27, ROWS, COLS)
+    policies = np.moveaxis(policies.reshape((ROWS, COLS, POLICY_SHAPE[0])), -1, 0)
 
     return value, policies
 
@@ -877,8 +853,8 @@ def search_statistics(tree):
 
     Equal to Times Visited / Total Nodes looked at for each move,
     and will become the target for training policy.
-    Policy: Rows x Columns x Rotations x Hold
-    Policy: 25 x 11 x 4 x 2"""
+    Policy: (Piece x Rotation x Spin) x Rows x Columns
+    Policy: 27 x 26 x 10"""
 
     probability_matrix = np.zeros(POLICY_SHAPE, dtype=int).tolist()
 
@@ -898,10 +874,13 @@ def search_statistics(tree):
             root_child_move = root_child.data.move
             policy_index, col, row = root_child_move
 
-            assert policy_index >= 0 and row >= 0 and col + 2 >= 0 # Make sure indices are nonnegative
-
             # ACCOUNT FOR BUFFER
-            probability_matrix[policy_index][row][col + 2] = round(root_child_n / total_n, 4)
+            policy_row = row + coords_to_policy_row_buffer[policy_index]
+            policy_col = col + coords_to_policy_col_buffer[policy_index]
+
+            assert policy_index >= 0 and policy_row >= 0 and policy_col >= 0  and policy_row < ROWS and policy_col < COLS # Make sure indices are nonnegative
+
+            probability_matrix[policy_index][policy_row][policy_col] = round(root_child_n / total_n, 4)
 
     return probability_matrix
 
@@ -1018,8 +997,9 @@ def reflect_policy(policy_matrix):
     for policy_index in range(POLICY_SHAPE[0]):
         piece, rotation, t_spin_index = policy_index_to_piece[policy_index]
 
-        # Save the piece size
-        piece_size = len(piece_dict[piece])
+        # Width of the piece in minos (mirroring preserves it)
+        mino_cols = [col for col, row in mino_coords_dict[piece][rotation]]
+        piece_width = max(mino_cols) - min(mino_cols) + 1
 
         # Swap pieces that aren't the same as their mirrors
         new_piece = piece
@@ -1030,36 +1010,18 @@ def reflect_policy(policy_matrix):
         new_rotation = rotation
         if new_rotation in rotation_dict:
             new_rotation = rotation_dict[new_rotation]
-        
-        # If the new rotation is a redunant shape, adjust where the piece goes
-        post_col_adjustment = 0
-        if new_piece in ["Z", "S", "I"]:
-            # If the new rotation is 3, it needs to be shifted back after being flipped
-            if new_rotation == 3:
-                post_col_adjustment = -1
-                new_rotation -= 2
+
+        # Pieces with 2 policy rotations encode rotation 3 as rotation 1
+        new_rotation %= len(policy_pieces[new_piece])
 
         new_policy_index = policy_piece_to_index[new_piece][new_rotation][t_spin_index]
         for col in range(POLICY_SHAPE[2]):
             for row in range(POLICY_SHAPE[1]):
                 value = policy_matrix[policy_index][row][col]
                 if value > 0:
-                    new_row = row
-                    new_col = col
-
-                    # Remove buffer
-                    new_col += -2
-
-                    # Flip column
-                    new_col = 10 - new_col - piece_size # 9 - col - piece_size + 1
-                    
-                    # Add back buffer
-                    new_col += 2
-
-                    # Add column adjustment if needed
-                    new_col += post_col_adjustment
-
-                    reflected_policy_matrix[new_policy_index][new_row][new_col] = value
+                    # Policy coords are the topmost, leftmost mino of the placement:
+                    # mirror the occupied column span, rows are unchanged
+                    reflected_policy_matrix[new_policy_index][row][COLS - col - piece_width] = value
     
     return reflected_policy_matrix
 
@@ -1678,4 +1640,4 @@ def blockPrint():
 # Restore
 def enablePrint():
     sys.stdout = sys.__stdout__
-    sys.__stderr__
+    sys.stderr = sys.__stderr__
