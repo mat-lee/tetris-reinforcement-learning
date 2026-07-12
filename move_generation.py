@@ -1,7 +1,17 @@
 from const import *
 import numpy as np
+from scipy import signal
 from collections import deque
 from piece_location import PieceLocation
+
+# Binary masks for each (piece type, rotation), precomputed once
+PIECE_MASKS = {
+    piece_type: [
+        np.rot90(np.array(mask, dtype=np.int32) != 0, -rotation).astype(np.int32)
+        for rotation in range(4)
+    ]
+    for piece_type, mask in piece_dict.items()
+}
 
 
 class MoveGenerator:
@@ -28,6 +38,11 @@ class MoveGenerator:
     def generate_moves(self, algorithm='brute-force'):
         """Main entry point for move generation."""
         new_policy = np.zeros(self.POLICY_SHAPE)
+
+        # Occupancy grid (1 = blocked), shared by both piece types
+        self.occupancy = np.array(
+            [[0 if cell == 0 else 1 for cell in row] for row in self.player.board.grid],
+            dtype=np.int32)
         
         # Try both current piece and held piece
         piece_types = self._get_piece_types_to_check()
@@ -306,6 +321,41 @@ class MoveGenerator:
             
             self.place_location_queue.append(final_location)
     
+    def _try_wallkick_via_graphs(self, x, y, rotation, direction, movement_graphs):
+        """Wallkick check using precomputed movement graphs instead of per-mino collision.
+
+        Mirrors Player.try_wallkick: tries kicks in table order, first fit wins.
+        Returns (x, y, rotation, rotation_just_occurred, used_last_tspin_kick) or None.
+        """
+        piece_type = self.piece.type
+        final_rotation = (rotation + direction) % 4
+        kicktable = (i_wallkicks if piece_type == "I" else wallkicks)[rotation][final_rotation]
+        graph = movement_graphs[final_rotation]
+
+        for kick_index, kick in enumerate(kicktable):
+            new_x = x + kick[0]
+            new_y = y - kick[1]
+
+            if 0 <= new_y < len(graph) and 0 <= new_x + 2 < len(graph[0]):
+                # Graph value 1 or 2 means the position is collision-free
+                fits = graph[new_y][new_x + 2] != 0
+            elif new_y < 0:
+                # Above the graph; positions here can still be valid, check minos directly
+                fits = not self.sim_player.collision(
+                    [[new_x + col, new_y + row]
+                     for col, row in self.mino_coords_dict[piece_type][final_rotation]])
+            else:
+                # Below or beside the graph is always out of bounds
+                fits = False
+
+            if fits:
+                if piece_type == "T":
+                    used_last = kick_index == len(kicktable) - 1 and direction != 2
+                    return (new_x, new_y, final_rotation, True, used_last)
+                return (new_x, new_y, final_rotation, False, False)
+
+        return None
+
     def _convolutional_algorithm(self, check_rotations):
         """
         Advanced convolutional algorithm that finds all moves including spins.
@@ -323,53 +373,17 @@ class MoveGenerator:
         }
         axes_of_rotation = axes_of_rotation_dict[self.piece.type]
         
-        def create_piece_mask(piece_type, rotation):
-            """Create a binary mask for the piece at given rotation, preserving original coordinates"""
-            # Use the piece dictionary which already has the proper matrix representation
-            # This preserves the original piece coordinates and matrix structure
-            mask = self.piece_dict[piece_type]
-            
-            # Rotate the mask to match the requested rotation
-            rotated_mask = [row[:] for row in mask]  # Deep copy
-            for _ in range(rotation):
-                rotated_mask = np.rot90(rotated_mask, 3).tolist()  # Rotate 90 degrees clockwise
-                
-            return rotated_mask
-        
-        def convolve_grid_with_piece(grid, piece_mask):
-            """Convolve grid with piece mask to find valid placement positions."""
-            grid_height = len(grid)
-            grid_width = len(grid[0])
-            mask_height = len(piece_mask)
-            mask_width = len(piece_mask[0])
-            
-            # Result includes buffer for negative x positions (-2 to grid_width-1)
-            result = np.zeros((POLICY_SHAPE[1], POLICY_SHAPE[2]), dtype=int)  # +2 buffer for x=-2 to x=grid_width-1
-            
-            # Scan all possible positions
-            for grid_row in range(POLICY_SHAPE[1]):
-                for grid_col in range(-2, -2 + POLICY_SHAPE[2]):  # Allow negative x
-                    
-                    # Check if piece can be placed at this position
-                    can_place = True
-                    for mask_row in range(mask_height):
-                        for mask_col in range(mask_width):
-                            if piece_mask[mask_row][mask_col] != 0:  # If piece occupies this cell
-                                actual_row = grid_row + mask_row
-                                actual_col = grid_col + mask_col
-                                
-                                # Check bounds and collisions
-                                if (actual_col < 0 or actual_col >= grid_width or
-                                    actual_row < 0 or actual_row >= grid_height or
-                                    grid[actual_row][actual_col] != 0):
-                                    can_place = False
-                                    break
-                        if not can_place:
-                            break
-                    
-                    if can_place:
-                        result[grid_row][grid_col + 2] = 1  # +2 buffer offset
-                        
+        def convolve_grid_with_piece(piece_mask):
+            """Convolve grid with piece mask to find valid placement positions.
+
+            Positions map to result[y][x + 2] for x in [-2, COLS - 1].
+            Out-of-bounds cells are treated as blocked via padding with 1s.
+            """
+            mask_height, mask_width = piece_mask.shape
+            padded = np.pad(self.occupancy, ((0, mask_height - 1), (2, mask_width - 1)),
+                            constant_values=1)
+            overlaps = signal.correlate2d(padded, piece_mask, mode='valid')
+            result = (overlaps[:POLICY_SHAPE[1], :POLICY_SHAPE[2]] == 0).astype(int)
             return result.tolist()
         
         def find_reachable_positions(movement_graph, start_x, start_y, skip_start_placement):
@@ -385,30 +399,24 @@ class MoveGenerator:
             placeable_positions = list()
             queue = deque([(start_x, start_y)])
 
-            # Don't add the start position to the placement queue 
+            # Mark as visited at enqueue time so each cell enters the queue once
+            movement_graph[start_y][start_x + 2] = 2
+
+            # Don't add the start position to the placement queue
             # because it removes spin information and its placed in the main algorithm
-            
+
             directions = [(0, 1), (1, 0), (-1, 0)]  # down, right, left
 
             is_first_iteration = True
-            
+
             while queue:
                 x, y = queue.popleft()
-                
-                # Skip if already processed or invalid
-                if (x + 2 < 0 or x + 2 >= len(movement_graph[0]) or 
-                    y < 0 or y >= len(movement_graph) or
-                    movement_graph[y][x + 2] != 1):
-                    continue
-                
-                # Mark as visited in the graph
-                movement_graph[y][x + 2] = 2
-                
+
                 is_boundary = False
                 is_placeable = False
                 for dx, dy in directions:
                     new_x, new_y = x + dx, y + dy
-                    
+
                     # Check bounds
                     if (new_y >= len(movement_graph)):
                         is_placeable = True
@@ -419,17 +427,17 @@ class MoveGenerator:
                         new_x + 2 < 0 or new_x + 2 >= len(movement_graph[0])):
                         is_boundary = True
                         continue
-                        
+
                     # If position is reachable and not visited
                     if movement_graph[new_y][new_x + 2] == 1:
-                        if (new_x, new_y) not in queue:
-                            queue.append((new_x, new_y))
+                        movement_graph[new_y][new_x + 2] = 2
+                        queue.append((new_x, new_y))
                     elif movement_graph[new_y][new_x + 2] == 0:
                         is_boundary = True
-                    
+
                     # Check if it's placeable
                     if dy == 1 and movement_graph[new_y][new_x + 2] == 0:
-                        is_placeable = True 
+                        is_placeable = True
                 
                 if is_boundary:
                     boundary_positions.append((x, y))
@@ -447,33 +455,26 @@ class MoveGenerator:
         # Store all 4 rotations even if they look the same (different wallkicks/spins)
         movement_graphs = {}
         for rotation in range(4):  # Always store all 4 rotations
-            piece_mask = create_piece_mask(self.piece.type, rotation)
             movement_graphs[rotation] = convolve_grid_with_piece(
-                self.sim_player.board.grid, piece_mask
+                PIECE_MASKS[self.piece.type][rotation]
             )
         
         # Step 2: Simple position tracking for rotations
         rotation_queue = deque()
-        
+
         # Step 3: Start traversal from spawn position
         spawn_x = self.piece.location.x
         spawn_y = self.piece.location.y
         spawn_rotation = self.piece.location.rotation
-        
+
         # Add spawn position to queue
         rotation_queue.append((spawn_x, spawn_y, spawn_rotation, False, False))
-        
+
         # Perform rotations initially
         for i in range(1, 4):
-            self.piece.location.x = spawn_x
-            self.piece.location.y = spawn_y
-            self.piece.location.rotation = spawn_rotation
-            self.piece.coordinates = self.piece.get_self_coords
-
-            if self.sim_player.try_wallkick(i):
-                if self.piece.location.y >= 0:
-                    rotation_queue.append((self.piece.location.x, self.piece.location.y, self.piece.location.rotation, self.piece.location.rotation_just_occurred, 
-                                            self.piece.location.rotation_just_occurred_and_used_last_tspin_kick))
+            kick_result = self._try_wallkick_via_graphs(spawn_x, spawn_y, spawn_rotation, i, movement_graphs)
+            if kick_result is not None and kick_result[1] >= 0:
+                rotation_queue.append(kick_result)
 
         while rotation_queue:
             current_x, current_y, current_rotation, rotation_occurred, used_last_kick = rotation_queue.popleft()
@@ -522,20 +523,14 @@ class MoveGenerator:
                 for boundary_x, boundary_y in boundary:
                     # Try all 4 rotations from this boundary position (not just axes_of_rotation)
                     for i in range(1, 4):
-                        # Try all 4 rotations for wallkick purposes
-                        self.piece.location.x = boundary_x
-                        self.piece.location.y = boundary_y
-                        self.piece.location.rotation = current_rotation
-                        self.piece.coordinates = self.piece.get_self_coords
-
-                        if self.sim_player.try_wallkick(i):
-                            # Avoid negative indexing
-                            if self.piece.location.y >= 0:
-                                rotation_queue.append((self.piece.location.x, self.piece.location.y, self.piece.location.rotation, self.piece.location.rotation_just_occurred, 
-                                                        self.piece.location.rotation_just_occurred_and_used_last_tspin_kick))
+                        kick_result = self._try_wallkick_via_graphs(boundary_x, boundary_y, current_rotation, i, movement_graphs)
+                        # Avoid negative indexing
+                        if kick_result is not None and kick_result[1] >= 0:
+                            rotation_queue.append(kick_result)
 
             # Sort the rotation queue to ensure we process lower rotations first DEBUGGING
             rotation_queue = deque(sorted(rotation_queue, key=lambda x: x[1]))
+
     
     def _convert_placements_to_policy(self):
         """Convert the placement queue to policy matrix format."""

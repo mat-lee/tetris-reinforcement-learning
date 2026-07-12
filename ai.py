@@ -921,9 +921,9 @@ def reverse_if_needed(data, condition):
 # Methods for getting game data
 # All of them orient the info in the perspective of the active player
 def get_grids(game):
-    grids = [[x[:] for x in player.board.grid] for player in game.players]
-    for grid in grids:
-        simplify_grid(grid)
+    # Build the simplified copy directly instead of copying then mutating
+    grids = [[[0 if cell == 0 else 1 for cell in row] for row in player.board.grid]
+             for player in game.players]
     return reverse_if_needed(grids, game.turn == 1)
 
 def get_pieces(game):
