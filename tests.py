@@ -84,8 +84,8 @@ def test_mcts_tree_sanity(monkeypatch):
     move, tree, save = MCTS(config, game, None)
     assert save == True # No playout cap randomization outside training
 
-    root = tree.get_node("root")
-    children = [tree.get_node(cid) for cid in root.successors(tree.identifier)]
+    root = tree
+    children = root.children
 
     # Every iteration lands one playout on the root; children got the rest
     assert root.data.visit_count == config.MAX_ITER
@@ -136,8 +136,8 @@ def test_mcts_terminal_backpropagation(monkeypatch):
 
     _, tree, _ = MCTS(config, game, None)
 
-    root = tree.get_node("root")
-    children = [tree.get_node(cid) for cid in root.successors(tree.identifier)]
+    root = tree
+    children = root.children
     assert len(children) == 9  # O piece on an empty board, hold is also an O
 
     visited_grandchildren = 0
@@ -151,8 +151,8 @@ def test_mcts_terminal_backpropagation(monkeypatch):
             revisited_children += 1
             assert 0.5 < child.data.value_avg <= config.value_max
 
-        for gc_id in child.successors(tree.identifier):
-            grandchild = tree.get_node(gc_id).data
+        for gc in child.children:
+            grandchild = gc.data
             if grandchild.visit_count > 0:
                 visited_grandchildren += 1
                 # Player 1 moved and lost: terminal, player 0 wins, mover's value is a loss
@@ -256,13 +256,12 @@ def test_network_training():
 
 def test_search_statistics():
     # Visit counts become probabilities at [policy_index][row + row_buffer][col + col_buffer]
-    tree = treelib.Tree()
-    tree.create_node(identifier="root", data=NodeState())
+    tree = Node(NodeState())
 
     for move, visits in [((6, -2, 5), 6), ((5, 5, 10), 3), ((18, 0, 0), 1), ((1, 0, 0), 0)]:
         state = NodeState(move=move)
         state.visit_count = visits
-        tree.create_node(parent="root", data=state)
+        Node(state, parent=tree)
 
     matrix = search_statistics(tree)
 

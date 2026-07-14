@@ -19,7 +19,6 @@ import random
 from scipy import signal
 import sys
 import time
-import treelib
 import ujson
 
 from tensorflow import keras
@@ -79,7 +78,7 @@ class Config():
         training_loops=1, # Number of training loops before evaluation
         sets_to_train_with=10, # Number of past sets to train with
         battle_games=200, # Number of evaluation games
-        gating_threshold=0.55, # Minimum winrate to replace the best model
+        gating_threshold=0.52, # Minimum winrate to replace the best model
         gating_threshold_type='moreorequal', # 'moreorequal' or 'more'
 
         MAX_ITER=160, 
@@ -215,12 +214,28 @@ class NodeState():
         self.value_avg = 0
         self.policy = 0
 
-def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]:
+class Node():
+    """Lightweight search tree node; replaces treelib for speed."""
+    __slots__ = ('data', 'parent', 'children')
+
+    def __init__(self, data, parent=None):
+        self.data = data
+        self.parent = parent
+        self.children = []
+        if parent is not None:
+            parent.children.append(self)
+
+    def is_root(self):
+        return self.parent is None
+
+    def is_leaf(self):
+        return not self.children
+
+def MCTS(config, game, interference_network) -> tuple[tuple, Node, bool]:
     global total_branch, number_branch
     # Picks a move for the AI to make
 
     # Initialize the search tree
-    tree = treelib.Tree()
     game_copy = game.copy()
 
     # Restrict previews
@@ -231,7 +246,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
     # Create the root node
     initial_state = NodeState(game=game_copy, move=None)
 
-    tree.create_node(identifier="root", data=initial_state)
+    tree = Node(initial_state)
 
     MAX_DEPTH = 0
     iter = 0
@@ -253,7 +268,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         iter += 1
 
         # Begin at the root node
-        node = tree.get_node("root")
+        node = tree
         node_state = node.data
 
         DEPTH = 0
@@ -261,9 +276,8 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         # Go down the tree using formula Q+U until you get to a leaf node
         # However, if using forced playouts, select a node if it has fewer than the forced playouts amount
         while not node.is_leaf():
-            child_ids = node.successors(tree.identifier)
             max_child_score = -1
-            max_child_id = None
+            max_child = None
             parent_visits = node.data.visit_count
 
             number_branch += 1 # debug for branching factor
@@ -273,13 +287,13 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             Us = []
 
             # Look through each child
-            for child_id in child_ids:
+            for child in node.children:
 
                 total_branch += 1
 
                 # For each child calculate a score
                 # Polynomial upper confidence trees (PUCT)
-                child_data = tree.get_node(child_id).data
+                child_data = child.data
 
                 Q = child_data.value_avg
                 U = config.CPUCT * child_data.policy*math.sqrt(parent_visits)/(config.DPUCT+child_data.visit_count)
@@ -301,21 +315,21 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
 
                 if child_score >= max_child_score:
                     max_child_score = child_score
-                    max_child_id = child_id
+                    max_child = child
 
             # Pick the node with the highest score
-            node = tree.get_node(max_child_id)
+            node = max_child
             node_state = node.data
 
             DEPTH += 1
             if DEPTH > MAX_DEPTH:
                 MAX_DEPTH = DEPTH
 
-        playout_node_id = node.identifier
+        playout_node = node
 
         # If not the root node, place piece in node
         if not node.is_root():
-            prior_node = tree.get_node(node.predecessor(tree.identifier))
+            prior_node = node.parent
 
             game_copy = prior_node.data.game.copy()
             node_state.game = game_copy
@@ -376,7 +390,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                         # In the paper it sets FpuValue to 0 at the root node when dirichlet noise is enabled
                         # However, at the root node the policy total is always 0 for my mcts so that's reduntant
 
-                    tree.create_node(data=new_state, parent=node.identifier)
+                    Node(new_state, parent=node)
                 
                 # pn = [p/pn_s for p in pn]
                 # ps = [p/sum(ps) for p in ps]
@@ -401,8 +415,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
 
         # If root node and in self play, add exploration noise to children
         if (config.training and not fast_iter and config.use_dirichlet_noise and node.is_root()):
-            child_ids = node.successors(tree.identifier)
-            number_of_children = len(child_ids)
+            number_of_children = len(node.children)
             d_alpha = config.DIRICHLET_ALPHA
             if config.use_dirichlet_s:
                 d_alpha *= config.DIRICHLET_S / number_of_children
@@ -412,8 +425,8 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             pre_noise_policy = []
             post_noise_policy = []
 
-            for child_id, noise in zip(child_ids, noise_distribution):
-                child_data = tree.get_node(child_id).data
+            for child, noise in zip(node.children, noise_distribution):
+                child_data = child.data
                 pre_noise_policy.append(child_data.policy)
 
                 child_data.policy = child_data.policy * (1 - config.DIRICHLET_EXPLORATION) + noise * config.DIRICHLET_EXPLORATION
@@ -442,8 +455,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
             node_state.value_sum += (value if node_state.game.turn == final_node_turn else config.negate_value(value))
             node_state.value_avg = node_state.value_sum / node_state.visit_count
 
-            upwards_id = node.predecessor(tree.identifier)
-            node = tree.get_node(upwards_id)
+            node = node.parent
 
         # Repeat for root node
         node_state = node.data
@@ -459,11 +471,10 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
         # If the parent is the root, no updates will occur
         # The var 'node' is the node that was just played out
         # Go back to the parent, and update all its children's ("node"`s siblings) fpu
-        node = tree.get_node(playout_node_id)
+        node = playout_node
 
         if not node.is_root() and config.FpuStrategy == 'reduction':
-            parent_id = node.predecessor(tree.identifier)
-            parent = tree.get_node(parent_id)
+            parent = node.parent
 
             if not parent.is_root():
                 parent_value = parent.data.value_avg
@@ -471,17 +482,16 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                 node_explored_policy = 0
 
                 # 1) Find expanded policy for the parent node
-                sibling_ids = parent.successors(tree.identifier)
-                for sibling_id in sibling_ids:
-                    sibling_data = tree.get_node(sibling_id).data
+                for sibling in parent.children:
+                    sibling_data = sibling.data
 
                     # Check if node has been visited
                     if sibling_data.visit_count > 0:
                         node_explored_policy += sibling_data.policy
 
                 # 2) Update children nodes
-                for sibling_id in sibling_ids:
-                    sibling_data = tree.get_node(sibling_id).data
+                for sibling in parent.children:
+                    sibling_data = sibling.data
 
                     # Check if node hasn't been visited
                     if sibling_data.visit_count == 0:
@@ -492,23 +502,20 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
     # ----- Pick a move randomly using temperature BEFORE pruning visit counts -----
 
     # Find the move with the highest number of playouts
-    root = tree.get_node("root")
-    root_children_id = root.successors(tree.identifier)
+    root = tree
+    root_children = root.children
     max_n = 0
-    max_id = None
+    max_child = None
 
     root_child_n_list = []
-    root_child_id_list = []
 
-    for root_child_id in root_children_id:
-        root_child = tree.get_node(root_child_id)
+    for root_child in root_children:
         root_child_n = root_child.data.visit_count
         root_child_n_list.append(root_child_n)
-        root_child_id_list.append(root_child_id)
 
         if root_child_n >= max_n: # It's possible n is 0 if there are no possible moves
             max_n = root_child_n
-            max_id = root_child.identifier
+            max_child = root_child
 
 
     def select_action_with_temperature(visit_counts, temperature):
@@ -528,9 +535,8 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
     temp = config.temperature if config.training else 0
 
     selected_idx = select_action_with_temperature(np.array(root_child_n_list), temp)
-    selected_id = root_child_id_list[selected_idx]
 
-    move = tree.get_node(selected_id).data.move
+    move = root_children[selected_idx].data.move
 
     # ----- Prune policy AFTER choosing a move -----
     # Prune policy
@@ -538,12 +544,11 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
     if config.use_forced_playouts_and_policy_target_pruning and config.training and not fast_iter:
         post_prune_n_list = []
 
-        most_playouts_child = tree.get_node(max_id) # Uses max_id, not selected_id
+        most_playouts_child = max_child # Uses max_child, not the selected child
         most_playouts_CPUCT = most_playouts_child.data.value_avg + config.CPUCT * most_playouts_child.data.policy * math.sqrt(root.data.visit_count) / (config.DPUCT + most_playouts_child.data.visit_count)
 
-        for root_child_id in root_children_id:
-            if root_child_id != max_id:
-                root_child = tree.get_node(root_child_id)
+        for root_child in root_children:
+            if root_child is not max_child:
                 if root_child.data.visit_count > 0:
                     # Calculate n_forced_playouts
                     root_child_n_forced = math.sqrt(config.CForcedPlayout * root_child.data.policy * root.data.visit_count)
@@ -564,7 +569,7 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
                         
                         else: break
 
-            post_prune_n_list.append(tree.get_node(root_child_id).data.visit_count)
+            post_prune_n_list.append(root_child.data.visit_count)
 
     if post_prune_n_list is not None and False: # debugging forced playout pruning
         pre_prune_num_moves = len([x for x in root_child_n_list if x > 0])
@@ -577,16 +582,12 @@ def MCTS(config, game, interference_network) -> tuple[tuple, treelib.Tree, bool]
 
     return move, tree, save_move
 
-def pick_random_move_by_policy(tree: treelib.Tree) -> tuple:
+def pick_random_move_by_policy(tree: Node) -> tuple:
     # Sample a random move from the root node of the tree using the policy as probabilities
     moves, policies = [], []
 
-    root = tree.get_node("root")
-
-    root_children_id = root.successors(tree.identifier)
-
-    for root_child_id in root_children_id:
-        root_child_data = tree.get_node(root_child_id).data
+    for root_child in tree.children:
+        root_child_data = root_child.data
 
         moves.append(root_child_data.move)
         policies.append(root_child_data.policy)
@@ -858,17 +859,14 @@ def search_statistics(tree):
 
     probability_matrix = np.zeros(POLICY_SHAPE, dtype=int).tolist()
 
-    root = tree.get_node("root")
-    root_children_id = root.successors(tree.identifier)
     total_n = 0
 
-    for root_child_id in root_children_id:
-        total_n += tree.get_node(root_child_id).data.visit_count
+    for root_child in tree.children:
+        total_n += root_child.data.visit_count
 
     assert total_n != 0
 
-    for root_child_id in root_children_id:
-        root_child = tree.get_node(root_child_id)
+    for root_child in tree.children:
         root_child_n = root_child.data.visit_count
         if root_child_n != 0:
             root_child_move = root_child.data.move

@@ -104,11 +104,7 @@ def make_piece_coord_starting_row_dict():
 def get_attribute_list_from_tree(tree, attr):
     res = []
 
-    root = tree.get_node("root")
-    child_ids = root.successors(tree.identifier)
-
-    for child_id in child_ids:
-        child = tree.get_node(child_id)
+    for child in tree.children:
         res.append(getattr(child.data, attr))
 
     return res
@@ -1246,7 +1242,7 @@ if __name__ == "__main__":
     # profile_game()
     # test_reflected_policy()
     # visualize_policy()
-    # plot_stats(data_version=2.6, include_rank_data=True)
+    plot_stats(include_rank_data=True)
 
     # visualize_high_depth_replay(get_interference_network(c, load_best_model(c)), max_iter=16000)
 
@@ -1281,7 +1277,7 @@ if __name__ == "__main__":
     # load_data_and_train_model(c, model, last_n_sets=20)
     # model.save(f"{directory_path}/models/debug/test_model.keras")
 
-    convert_data_and_train_6_0_to_7_0()
+    # convert_data_and_train_6_0_to_7_0()
 
 # Command for running python files
 # This is for running many tests at the same time
