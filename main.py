@@ -2,7 +2,7 @@ import pygame
 import sys
 import time
 
-from ai import directory_path, MCTS, load_best_model, get_interpreter, Config
+from ai import directory_path, MCTS, load_best_model, get_interpreter, evaluate, Config
 from const import *
 from game import Game
 from mover import Mover
@@ -36,8 +36,22 @@ class Main:
 
         game.setup()
 
+        eval_value = None
+        eval_key = None
+
         while True:
+            if game.turn == 0 and not game.is_terminal:
+                key = (game.players[0].stats.pieces, game.players[1].stats.pieces)
+                if key != eval_key:
+                    eval_value, _ = evaluate(DefaultConfig, game, interpreter)
+                    eval_key = key
+
             game.show(screen)
+
+            if eval_value is not None:
+                font = pygame.font.Font('freesansbold.ttf', int(MINO_SIZE * 0.8))
+                text = font.render(f'{eval_value:.2f}', True, (255, 255, 255))
+                screen.blit(text, (E_BUFFER, N_BUFFER + (ROWS - GRID_ROWS) * MINO_SIZE + 15 * MINO_SIZE))
 
             # Player's move:
             # Keyboard inputs

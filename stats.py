@@ -26,19 +26,28 @@ class Stats:
         return new_stats
 
     def update_b2b_level(self):
+        # Thresholds match tetr.io's floor(1 + ln(1 + 0.8 * b2b)) chaining bonus
         b2b_chart = [[-1, 0],
                      [1, 1],
-                     [3, 2], 
+                     [3, 2],
                      [8, 3],
                      [24, 4],
                      [67, 5],
                      [185, 6],
                      [504, 7],
                      [1370, 8]]
-        
-        for list in b2b_chart:
-            if (self.b2b >= list[0]) and (self.b2b_level < list[1]):
-                self.b2b_level = list[1]
+
+        self.b2b_level = 0
+        for threshold, level in b2b_chart:
+            if self.b2b >= threshold:
+                self.b2b_level = level
+
+    def combo_scaled(self, base):
+        # tetr.io multiplier combo: floor(base * (1 + 0.25 * combo));
+        # a zero-base attack uses ln(1 + 1.25 * combo) from 2-combo onwards
+        if base == 0:
+            return math.floor(math.log1p(1.25 * self.combo)) if self.combo >= 2 else 0
+        return math.floor(base * (1 + 0.25 * self.combo))
 
     def get_attack(self, rows_cleared, is_tspin, is_mini, is_all_clear, piece_type):
         # Returns attack + functions as update stats for now
@@ -49,82 +58,68 @@ class Stats:
             if rows_cleared == 0:
                 self.combo = 0
             else:
-                is_b2b = False
-                if rows_cleared == 4 or is_tspin == True:
-                    is_b2b = True
-                
+                is_b2b = (rows_cleared == 4 or is_tspin == True)
+
                 if is_b2b == True:
                     self.b2b += 1
                 else:
                     self.b2b = -1
-                
+
                 self.update_b2b_level()
 
                 if rows_cleared == 1:
                     if is_tspin == False:
-                        self.b2b = -1
-                        attack += math.floor(0.5 + 0.25 * self.combo) ### formula exception
+                        attack += self.combo_scaled(0)
+                    elif is_mini == True:
+                        attack += self.combo_scaled(self.b2b_level)
                     else:
-                        if is_mini == True:
-                            if self.b2b <= 0 and self.b2b_level <= 0:
-                                attack += math.floor(0.5 + 0.25 * self.combo) ### formula exception
-                            else:
-                                attack += math.floor(self.b2b_level * (1 + 0.25 * self.combo)) ### formula exception
-                        else:
-                            attack += math.floor((2 + self.b2b_level) * (1 + 0.25 * self.combo))
-                
-                else: attack += math.floor((1 + 0.25 * self.combo) * 
-                                            (2 * rows_cleared * is_tspin * (-3/4 * is_mini + 1)
-                                                + 2**(rows_cleared-2) * (1 - is_tspin)
-                                                + self.b2b_level * (is_tspin or rows_cleared == 4))) # General formula for 2-4 rows cleared
+                        attack += self.combo_scaled(2 + self.b2b_level)
+
+                else: attack += self.combo_scaled(2 * rows_cleared * is_tspin * (-3/4 * is_mini + 1)
+                                                  + 2**(rows_cleared-2) * (1 - is_tspin)
+                                                  + self.b2b_level * is_b2b) # General formula for 2-4 rows cleared
 
                 self.combo += 1
 
                 if is_all_clear:
                     attack += 10
-        
+
         elif self.ruleset == 's2':
-            # I can get a general formula for attacks larger than 1 row
             if rows_cleared == 0:
                 self.combo = 0
             else:
-                is_b2b = False
-                if is_tspin == True or is_mini == True or rows_cleared == 4:
-                    is_b2b = True
-                
+                # All clears count as difficult clears and never break b2b
+                is_b2b = (rows_cleared == 4 or is_tspin == True or is_mini == True
+                          or is_all_clear == True)
+
                 if is_b2b == True:
                     self.b2b += 1
-
-                elif is_all_clear: # Don't lower b2b if all clear
-                    attack += 5
-                    self.b2b += 1
-
                 else:
-                    # Surge
+                    # Surge: b2b charges from x4 and releases when the streak breaks
                     if self.b2b >= 4:
                         attack += self.b2b
                     self.b2b = -1
-                
+
                 self.update_b2b_level()
 
-                if rows_cleared == 1:
-                    if is_tspin == False:
-                        attack += math.floor(0.5 + 0.25 * self.combo) ### formula exception
-                    else:
-                        if is_mini == True:
-                            if self.b2b <= 0 and self.b2b_level <= 0:
-                                attack += math.floor(0.5 + 0.25 * self.combo) ### formula exception
-                            else:
-                                attack += math.floor(min(max(self.b2b_level, 0), 1) * (1 + 0.25 * self.combo)) ### formula exception
-                        else:
-                            attack += math.floor(2 + min(max(self.b2b_level, 0), 1) * (1 + 0.25 * self.combo))
-                
-                else: attack += math.floor((1 + 0.25 * self.combo) * 
-                                            (2 * rows_cleared * is_tspin * (-3/4 * is_mini + 1)
-                                                + 2**(rows_cleared-2) * (1 - is_tspin)
-                                                + min(max(self.b2b_level, 0), 1) * is_b2b)) # General formula for 2-4 rows cleared
+                # b2b bonus is a flat +1 in s2 (no chaining chart)
+                b2b_bonus = 1 if (is_b2b and self.b2b >= 1) else 0
+
+                if is_mini == True and rows_cleared < 4:
+                    base = 0 # Minis keep b2b but don't send; a quad is still a quad
+                elif is_tspin == True:
+                    base = 2 * rows_cleared
+                elif rows_cleared == 1:
+                    base = 0
+                else:
+                    base = 2**(rows_cleared - 2)
+
+                attack += self.combo_scaled(base + b2b_bonus)
 
                 self.combo += 1
+
+                if is_all_clear:
+                    attack += 5
 
         self.lines_sent += attack
         self.lines_cleared += rows_cleared

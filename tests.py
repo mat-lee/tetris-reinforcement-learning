@@ -476,6 +476,68 @@ def test_convert_data_2_7_to_3_0():
     assert new_policy.sum() == 1.0  # nothing else set
     assert len(move) == 13  # no aux appended; targets are computed in training
 
+def test_stats_attack():
+    from stats import Stats
+
+    def attacks(ruleset, *clears):
+        # Run clears through one Stats; a (0,) entry is a non-clearing placement
+        # (resets combo, keeps b2b) used to isolate scenarios from combo scaling
+        s = Stats(ruleset)
+        out = []
+        for clear in clears:
+            rows, tspin, mini, pc = (clear + (False, False, False))[:4]
+            out.append(s.get_attack(rows, tspin, mini, pc, 'T'))
+        return s, out
+
+    Q, X = (4,), (0,)  # quad, non-clearing placement
+
+    # ---- s2 base values ----
+    _, a = attacks('s2', Q, X, Q, X, (2, True), X, (3, True), X, (1, True))
+    assert a[0] == 4        # quad
+    assert a[2] == 5        # b2b quad: 4 + 1
+    assert a[4] == 5        # b2b t-spin double: 4 + 1
+    assert a[6] == 7        # b2b t-spin triple: 6 + 1
+    assert a[8] == 3        # b2b t-spin single: 2 + 1
+    _, a = attacks('s2', (1, True))
+    assert a == [2]         # t-spin single, no b2b
+
+    # ---- s2 minis keep b2b but send only the b2b bonus ----
+    _, a = attacks('s2', (2, False, True), X, (2, False, True), X, (1, True, True))
+    assert a == [0, 0, 1, 0, 1]  # first mini double 0; then +1 b2b each
+    s, _ = attacks('s2', (2, False, True), X, Q)
+    assert s.b2b == 1            # mini maintained the streak for the quad
+
+    # ---- s2 combo: multiplier on base, ln minimum on zero base ----
+    s = Stats('s2')
+    s.combo, s.b2b = 4, 0
+    assert s.get_attack(1, True, False, False, 'T') == 6  # floor((2+1) * 2.0)
+    _, a = attacks('s2', *[(1,)] * 11)
+    assert a[:4] == [0, 0, 1, 1]              # ln(1+1.25c) from 2-combo
+    assert a[10] == 2                          # combo 10: floor(ln(13.5)) = 2
+
+    # ---- s2 surge: charges at b2b >= 4, releases on break, then resets ----
+    s, a = attacks('s2', Q, X, Q, X, Q, X, Q, X, Q, X, (1,), X, Q)
+    assert a[8] == 5    # 5th quad: b2b x4
+    assert a[10] == 4   # single: surge releases the 4 charge (single itself 0)
+    assert a[12] == 4   # fresh streak: plain quad again, no stale bonus
+    assert s.b2b == 0
+
+    # ---- s2 all clears: +5 always, count as difficult, never break b2b ----
+    _, a = attacks('s2', (4, False, False, True))
+    assert a == [9]     # quad PC: 4 + 5
+    s, a = attacks('s2', Q, X, (1, False, False, True), X, Q)
+    assert a[2] == 6    # single PC: (0+1 b2b) + 5
+    assert a[4] == 5    # b2b survived the single PC
+
+    # ---- s1: chaining chart, PC +10, level resets on break ----
+    _, a = attacks('s1', Q, X, Q, X, Q, X, Q, X, Q)
+    assert a == [4, 0, 5, 0, 5, 0, 6, 0, 6]   # levels 0,1,1,2,2
+    _, a = attacks('s1', (3, True), X, (4, False, False, True))
+    assert a == [6, 0, 15]                     # TST; then b2b quad 5 + PC 10
+    s, a = attacks('s1', Q, X, Q, X, (1,), X, Q)
+    assert a[4] == 0 and a[6] == 4             # break resets the b2b level
+    assert s.b2b_level == 0 or s.b2b == 0      # no stale level on fresh streak
+
 # pytest tests.py
 if __name__ == "__main__":
     test_reflections()
